@@ -5,12 +5,13 @@ process.env.PGLITE_DIR = "memory";
 
 import { getDb, type Db } from "@/lib/db";
 import examples from "@/data/examples.json";
-import { askFamily, createCheck, getCheckView, listChecks, openPayment, purgeSharedText, setFamilyVerdict, sharedMessageFor } from "./checks";
+import { askFamily, createCheck, deleteHistory, getCheckView, listChecks, openPayment, purgeSharedText, setFamilyVerdict, sharedMessageFor } from "./checks";
 import { ensureDemoHousehold, personaUser, resetDemo } from "./demo";
-import { decideHold, holdStatus } from "./holds";
-import { acceptInvite, addPerson } from "./people";
+import { addAdvice, cancelHold, decideHold, holdStatus, toHoldView } from "./holds";
+import { acceptInvite, addPerson, newInviteCode } from "./people";
+import { personBody } from "./schemas";
 import { receiveNext } from "./sim";
-import { familyActivity, familyState, raoState } from "./state";
+import { familyActivity, familyState, raoState, startOfToday } from "./state";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -291,5 +292,126 @@ describe("invites", () => {
     await expect(acceptInvite(db, ravi, "PB-XXXX")).rejects.toThrow("did not work");
     await expect(acceptInvite(db, ravi, "pb-7h3d")).resolves.toEqual({ protectedName: "Mr Rao" });
     await expect(acceptInvite(db, ravi, "PB-7H3D")).rejects.toThrow("did not work");
+  });
+});
+
+describe("family decisions stick", () => {
+  it("a later \"not a scam\" never undoes \"it's a scam\"", async () => {
+    await resetDemo(db);
+    const { rao, arjun, meera } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("courier"), source: "paste" });
+    await askFamily(db, rao, checkId);
+    await setFamilyVerdict(db, arjun, checkId, "scam", "It is a scam. Do not pay or reply.");
+    await expect(setFamilyVerdict(db, meera, checkId, "not_scam", "I checked. This one is fine.")).rejects.toThrow("already decided: a scam");
+    const view = await getCheckView(db, checkId, { ownerId: rao.id });
+    expect(view.familyVerdict).toBe("scam");
+    expect(view.familyVerdictByName).toBe("Arjun");
+    expect(view.advice.map((a) => a.fromName)).toEqual(["Arjun"]);
+  });
+
+  it("an expired hold can be blocked but never approved", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
+    const { holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await db.update(schema.holds).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(schema.holds.id, holdId!));
+    await expect(decideHold(db, arjun, holdId!, "approve", true)).rejects.toThrow("Time ran out");
+    expect((await decideHold(db, arjun, holdId!, "block", false)).status).toBe("blocked");
+  });
+
+  it("after a block, paying anyway is refused and nobody is alerted again", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
+    const { checkId, holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await decideHold(db, arjun, holdId!, "block", false);
+    const alertCount = async () => (await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) })).length;
+    const before = await alertCount();
+    await expect(openPayment(db, rao, checkId)).rejects.toThrow("Arjun blocked this payment");
+    expect(await alertCount()).toBe(before);
+    expect((await getCheckView(db, checkId, { ownerId: rao.id })).hold?.status).toBe("blocked");
+  });
+
+  it("after family says it is a scam, paying anyway is refused even with no hold yet", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("courier"), source: "paste" }); // SUSPICIOUS, Rs 1,850, no hold
+    await askFamily(db, rao, checkId);
+    await setFamilyVerdict(db, arjun, checkId, "scam");
+    await expect(openPayment(db, rao, checkId)).rejects.toThrow("Arjun said this is a scam");
+    expect(await db.query.holds.findFirst({ where: eq(schema.holds.checkId, checkId) })).toBeUndefined();
+  });
+
+  it("after Mr Rao cancels his own hold, paying anyway starts a new one and alerts family once", async () => {
+    await resetDemo(db);
+    const { rao } = await users();
+    const { checkId, holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await cancelHold(db, rao, holdId!);
+    const alertCount = async () => (await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) })).length;
+    const before = await alertCount();
+    const again = await openPayment(db, rao, checkId);
+    expect(again.holdId).not.toBe(holdId);
+    expect(again.status).toBe("pending");
+    expect(await alertCount()).toBe(before + 2); // Arjun and Meera, once each
+    expect((await getCheckView(db, checkId, { ownerId: rao.id })).hold?.status).toBe("pending");
+  });
+
+  it("Mr Rao sees the first advice, not the latest", async () => {
+    await resetDemo(db);
+    const { rao, arjun, meera } = await users();
+    const { holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await addAdvice(db, arjun, { holdId: holdId! }, "Papa, hang up.");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await addAdvice(db, meera, { holdId: holdId! }, "Stay on the phone with me.");
+    const hold = (await db.query.holds.findFirst({ where: eq(schema.holds.id, holdId!) }))!;
+    expect((await toHoldView(db, hold)).advice[0]).toMatchObject({ fromName: "Arjun", text: "Papa, hang up." });
+  });
+});
+
+describe("history and invites", () => {
+  it("deleting history keeps a payment that is still on hold", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
+    const safe = await createCheck(db, rao, { text: text("bank"), source: "paste" });
+    const { holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    expect(await deleteHistory(db, rao)).toEqual({ kept: 1 });
+    expect(await db.query.checks.findFirst({ where: eq(schema.checks.id, safe.checkId) })).toBeUndefined();
+    expect((await decideHold(db, arjun, holdId!, "block", false)).status).toBe("blocked");
+  });
+
+  it("a family member cannot link to the same person twice", async () => {
+    await resetDemo(db);
+    const { arjun } = await users();
+    await expect(acceptInvite(db, arjun, "PB-7H3D")).rejects.toThrow("already linked to Mr Rao");
+  });
+
+  it("two people sending one code at once: only one joins", async () => {
+    await resetDemo(db);
+    const [asha] = await db.insert(schema.users).values({ name: "Asha", phone: "+91 98400 77788" }).returning();
+    const [bala] = await db.insert(schema.users).values({ name: "Bala", phone: "+91 98400 66677" }).returning();
+    const results = await Promise.allSettled([acceptInvite(db, asha, "PB-7H3D"), acceptInvite(db, bala, "PB-7H3D")]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const winner = results[0].status === "fulfilled" ? asha : bala;
+    const link = await db.query.links.findFirst({ where: eq(schema.links.inviteCode, "PB-7H3D") });
+    expect(link?.familyId).toBe(winner.id);
+  });
+});
+
+describe("people, codes and days", () => {
+  it("trusted people need a real mobile number, once, and not his own", async () => {
+    await resetDemo(db);
+    const { rao } = await users();
+    expect(personBody.safeParse({ name: "Ravi", relation: "Friend", phone: "12345" }).success).toBe(false);
+    expect(personBody.parse({ name: "Ravi", relation: "Friend", phone: "098400-55566" }).phone).toBe("+91 98400 55566");
+    const arjunAgain = { name: "Arjun 2", relation: "Son", phone: "+91 91234 56789", earlyHeadsUp: true };
+    await expect(addPerson(db, rao, arjunAgain)).rejects.toThrow("Arjun already has this number");
+    await expect(addPerson(db, rao, { ...arjunAgain, phone: rao.phone })).rejects.toThrow("your own number");
+  });
+
+  it("new invite codes are six characters", () => {
+    expect(newInviteCode()).toMatch(/^PB-[A-HJ-NP-Z2-9]{6}$/);
+  });
+
+  it("today starts at midnight in India, whatever the server's time zone", () => {
+    expect(startOfToday(Date.parse("2026-10-09T20:00:00Z")).toISOString()).toBe("2026-10-09T18:30:00.000Z"); // 01:30 IST on the 10th
+    expect(startOfToday(Date.parse("2026-10-09T10:00:00Z")).toISOString()).toBe("2026-10-08T18:30:00.000Z"); // 15:30 IST on the 9th
   });
 });

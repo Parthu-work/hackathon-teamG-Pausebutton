@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, ToastOutlet, ToastProvider, useToast, VerdictPill } from "@/components/ui";
-import { api, broadcastWifiDrop, post } from "@/lib/client/api";
+import { api, ApiError, broadcastWifiDrop, operatorApi } from "@/lib/client/api";
 import type { TestResult, TestSummary } from "@/lib/server/testset";
 import type { EventView } from "@/lib/views";
 import { DisagreementsPanel, FamiliesPanel, OpNav } from "./operator-phase2";
@@ -40,7 +40,7 @@ export function TestsPage() {
   const [tab, setTab] = useState<"tests" | "disagreements" | "families">("tests");
   const q = useQuery({ queryKey: ["tests-latest"], queryFn: () => api<Latest>("/api/tests/latest") });
   const run = useMutation({
-    mutationFn: (mode: "rules" | "haiku" | "sonnet") => post("/api/tests/run", { mode }),
+    mutationFn: (mode: "rules" | "haiku" | "sonnet") => operatorApi("/api/tests/run", { body: { mode } }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["tests-latest"] });
       void queryClient.invalidateQueries({ queryKey: ["ops-families"] });
@@ -192,6 +192,7 @@ function DemoPanel() {
   // F2: show a family phone as locked (its lock screen, with Block built into the notification).
   const [locked, setLocked] = useState<{ arjun: boolean; meera: boolean }>({ arjun: false, meera: false });
   const ready = !!tokens;
+  const [keyError, setKeyError] = useState(false);
   const [events, setEvents] = useState<EventView[]>([]);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -200,7 +201,9 @@ function DemoPanel() {
   const logBox = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void post<{ tokens: { rao: string; mom: string; arjun: string; meera: string } }>("/api/demo/personas").then((r) => setTokens(r.tokens));
+    void operatorApi<{ tokens: { rao: string; mom: string; arjun: string; meera: string } }>("/api/demo/personas", { body: {} })
+      .then((r) => setTokens(r.tokens))
+      .catch((e) => setKeyError(e instanceof ApiError && e.status === 401));
   }, []);
 
   useEffect(() => {
@@ -208,15 +211,16 @@ function DemoPanel() {
     let stop = false;
     const tick = async () => {
       try {
-        const r = await api<{ events: EventView[] }>(`/api/demo/events?since=${since.current}`);
+        const r = await operatorApi<{ events: EventView[] }>(`/api/demo/events?since=${since.current}`, {}, false);
         if (stop) return;
         if (r.events.length) {
           since.current = r.events[r.events.length - 1].id;
           setEvents((list) => [...list, ...r.events].slice(-120));
         }
         setLastSync(Date.now());
-      } catch {
-        /* offline: shown by the sync line */
+      } catch (e) {
+        // Offline shows on the sync line; a refused key needs a reload to ask again.
+        if (e instanceof ApiError && e.status === 401) setKeyError(true);
       }
     };
     void tick();
@@ -236,14 +240,14 @@ function DemoPanel() {
   }, [events.length]);
 
   async function reset() {
-    await post("/api/demo/reset");
+    await operatorApi("/api/demo/reset", { body: {} });
     since.current = 0;
     setEvents([]);
     setFrameKey((k) => k + 1);
     toast({ title: "Demo data reset", sub: "Holds and checks cleared · Arjun and Meera still linked" });
   }
   async function sample() {
-    const r = await post<{ name: string }>("/api/demo/sample", { persona: left });
+    const r = await operatorApi<{ name: string }>("/api/demo/sample", { body: { persona: left } });
     toast({ title: "Scam sample sent", sub: `It arrives on ${r.name}'s phone`, icon: "msg" });
   }
   function wifi() {
@@ -262,7 +266,9 @@ function DemoPanel() {
         />
         <p className="sm" style={{ fontWeight: 700 }}>
           <span className="dot" style={{ display: "inline-block", background: lastSync && now - lastSync < 5000 ? "#2E7D5B" : "#C6372B", marginRight: 8 }} />
-          {lastSync && now - lastSync < 5000 ? "Online" : "Offline"} · polling every 2 s · last sync {ago} s ago
+          {keyError
+            ? "Operator key missing or wrong. Reload this page to enter it."
+            : `${lastSync && now - lastSync < 5000 ? "Online" : "Offline"} · polling every 2 s · last sync ${ago} s ago`}
         </p>
         {ready && tokens && (
           <>

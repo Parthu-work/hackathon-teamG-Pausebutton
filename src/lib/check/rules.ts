@@ -57,10 +57,29 @@ const SIGNAL_PATTERNS: Record<SignalType, RegExp> = {
 
 // Hard rule H2: asks for a code, PIN or password, or for a screen-sharing app.
 const CREDENTIAL = build([
-  String.raw`(?<!(?:not|never|n'?t|nt|na|mat|nahi) )(?:share|send|tell|give|forward|provide|enter|confirm|read out) (?:me |us )?(?:the |your |this |that )?(?:otp|one time password|pin|mpin|upi pin|atm pin|cvv|password|card number|card details|net ?banking (?:password|details))`,
+  String.raw`(?<!(?:not|never|n['’]?t|nt|na|mat|nahi) )(?:share|send|tell|give|forward|provide|enter|confirm|read out) (?:me |us )?(?:the |your |this |that )?(?:otp|one time password|pin|mpin|upi pin|atm pin|cvv|password|card number|card details|net ?banking (?:password|details))`,
   String.raw`otp (?:share|bata\p{L}*|bhej\p{L}*)(?! (?:na|mat|nahi|not))`,
   "any ?desk", "team ?viewer", "quick ?support", "rust ?desk", "screen ?shar(?:e|ing)(?: app)?",
 ]);
+
+// A bank's safety line, not a request: "SBI never asks you to share your OTP",
+// "Do not ever share your PIN", "No one from the bank will ask you to install AnyDesk".
+const NEGATED = new RegExp(
+  B +
+    String.raw`(?:never|not|don['’]?t|doesn['’]?t|won['’]?t|shouldn['’]?t|can['’]?t|cannot|nobody|no ?one(?: from(?: [\p{L}\p{N}]+){1,3})?|mat|nahi)` +
+    String.raw`(?: (?:will|would|shall|should|ever|kabhi|bhi))*` +
+    // The "to" is required: "never call you to share" is a warning, but "Do not
+    // call anyone. Share the OTP" (or the same across a line break) is a request.
+    String.raw`(?: (?:ask|asks|asked|request|requests|requested|call|calls|message|messages|need|needs|want|wants)(?: (?:you|customers|anyone))? to)?` +
+    String.raw`(?: (?:install|download|use|open))? ?$`,
+  "u",
+);
+
+/** True when the words just before a request, in the same clause, negate it. */
+function negated(text: string, start: number) {
+  const clause = text.slice(Math.max(0, start - 80), start).split(/[.!?,;:]/u).pop() ?? "";
+  return NEGATED.test(clause);
+}
 
 // A secrecy phrase right next to OTP/PIN is a bank's safety warning, not a scam.
 const CREDENTIAL_WORD = /(?<![\p{L}])(?:otp|o\.t\.p|pin|mpin|password|cvv)(?![\p{L}])|ओटीपी|పిన్/u;
@@ -90,6 +109,7 @@ export function runRules(original: string): RuleFindings {
 
   const credential: RuleHit[] = [];
   for (const m of text.matchAll(CREDENTIAL)) {
+    if (negated(text, m.index!)) continue;
     const [os, oe] = toOriginalSpan(normalized, m.index!, m.index! + m[0].length, original);
     credential.push({ phrase: original.slice(os, oe), start: os, end: oe });
   }
@@ -134,7 +154,8 @@ export function detectFamily(normalizedText: string): ScamFamily {
 
 // ---------- amount and payee (for the payment hold) ----------
 
-const AMOUNT_RE = /(?:rs\.?|₹|inr|rupees?)\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(lakh|lakhs|crore))?|(\d[\d,]*(?:\.\d+)?)\s?(lakh|lakhs|crore)?\s?(?:rupees|रुपये|రూపాయలు)/giu;
+// "rs" must start a word ("officers 98765…" is a phone number); "₹" can be glued to one ("Pay₹500").
+const AMOUNT_RE = /(?:(?<![\p{L}\p{N}])(?:rs\.?|inr|rupees?)|₹)\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(lakh|lakhs|crore))?|(\d[\d,]*(?:\.\d+)?)\s?(lakh|lakhs|crore)?\s?(?:rupees|रुपये|రూపాయలు)/giu;
 
 export function findAmount(
   original: string,

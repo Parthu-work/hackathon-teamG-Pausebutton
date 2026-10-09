@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lt, notInArray } from "drizzle-orm";
 import { familyCopy, rupees, verdictCopy } from "@/lib/check/copy";
 import { normalizeForMatch } from "@/lib/check/normalize";
 import { keyPhrases } from "@/lib/check/phrases";
@@ -17,6 +17,7 @@ import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, userNames 
 import { callNameOf, joinNames, linkedFamily, ownerView } from "./people";
 import { pushToUsers, type PushPayload } from "./push";
 import { liveBlockedDomains, reportableFor } from "./reports";
+import { secretFromEnv } from "./secrets";
 import { HttpError } from "./session";
 import { campaignFor, recordSighting } from "./sightings";
 
@@ -53,7 +54,7 @@ function defaultTitle(r: CheckResult, normalized: string) {
 
 /** A keyed hash of the normalised text: lets us spot repeats without keeping the message. */
 export function fingerprint(normalized: string) {
-  const key = process.env.FINGERPRINT_SECRET ?? "pause-button-dev-fingerprint";
+  const key = secretFromEnv("FINGERPRINT_SECRET", "pause-button-dev-fingerprint");
   return crypto.createHmac("sha256", key).update(normalized).digest("hex").slice(0, 32);
 }
 
@@ -218,18 +219,32 @@ export async function askFamily(db: Db, owner: User, checkId: string, text?: str
 export async function openPayment(db: Db, owner: User, checkId: string) {
   const check = await ownCheck(db, owner, checkId);
   if (!check.amount) throw new HttpError(400, "This message does not ask for an amount.");
-  const existing = await db.query.holds.findFirst({
-    where: and(eq(schema.holds.checkId, check.id), eq(schema.holds.status, "pending")),
+  // Family's decision sticks: a blocked payment stays blocked, and an open or
+  // approved hold is reused. Only a hold he cancelled himself can start again.
+  const latest = await db.query.holds.findFirst({
+    where: eq(schema.holds.checkId, check.id),
+    orderBy: desc(schema.holds.createdAt),
   });
-  if (existing) return { holdId: existing.id };
+  // Family already said it is a scam: no vote can settle a new hold, so it cannot be paid.
+  if (check.familyVerdict === "scam" && latest?.status !== "blocked") {
+    const names = await userNames(db, [check.familyVerdictBy ?? ""]);
+    const who = (check.familyVerdictBy && names[check.familyVerdictBy]) || "Your family";
+    throw new HttpError(409, `${who} said this is a scam. It cannot be paid.`);
+  }
+  if (latest?.status === "blocked") {
+    const names = await userNames(db, [latest.decidedById ?? ""]);
+    const who = (latest.decidedById && names[latest.decidedById]) || "Your family";
+    throw new HttpError(409, `${who} blocked this payment. It cannot be paid.`);
+  }
+  if (latest && latest.status !== "cancelled") return { holdId: latest.id, status: holdStatus(latest) };
   const hold = await createHold(db, check, owner);
   await logEvent(db, owner.id, owner.name, "pay_attempt", `${owner.name} opened the payment · ${rupees(hold.amount)} locked`, hold.id);
   const family = await linkedFamily(db, owner.id);
   await sendAlerts(db, owner, check, family.map((f) => f.familyId), "urgent", hold.id);
-  return { holdId: hold.id };
+  return { holdId: hold.id, status: holdStatus(hold) };
 }
 
-/** Family answers a heads-up or "Ask" request: "It's a scam" / "This is not a scam". */
+/** Family answers a heads-up or "Ask" request: "It's a scam" / "This is not a scam". One "scam" settles it (see answers.ts). */
 export async function setFamilyVerdict(db: Db, member: User, checkId: string, verdict: "scam" | "not_scam", note?: string) {
   const check = await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) });
   if (!check) throw new HttpError(404, "That message was not found.");
@@ -374,7 +389,15 @@ export async function listChecks(db: Db, userId: string) {
 
 export type CheckRow = Awaited<ReturnType<typeof listChecks>>[number];
 
+/** P3 "Delete my history". A payment still on hold stays until family decides, so their Block still reaches it. */
 export async function deleteHistory(db: Db, owner: User) {
-  await db.delete(schema.checks).where(eq(schema.checks.userId, owner.id));
+  const open = await db.query.holds.findMany({
+    where: and(eq(schema.holds.userId, owner.id), eq(schema.holds.status, "pending")),
+  });
+  const keep = [...new Set(open.map((h) => h.checkId))];
+  await db
+    .delete(schema.checks)
+    .where(keep.length ? and(eq(schema.checks.userId, owner.id), notInArray(schema.checks.id, keep)) : eq(schema.checks.userId, owner.id));
   await logEvent(db, owner.id, owner.name, "history_deleted", `${owner.name} deleted their check history`);
+  return { kept: keep.length };
 }

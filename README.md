@@ -89,7 +89,7 @@ All fourteen proposals are built in the simulator; the Android app carries the n
    - it uses structured output and has a 2.5 s timeout with no retries;
    - its phrases must appear word for word in the message;
    - it can **raise** the verdict, never lower it.
-   - If it is missing or slow, the screen shows "Checked by rules only — AI unavailable".
+   - If it is missing, slow, cut off or refuses, the screen shows "Checked by rules only — AI unavailable".
 
 Thresholds and points live in `src/lib/check/config.ts`. Tune them on `/tests`. All wording people see comes from templates in `copy.ts`, never from the AI.
 
@@ -109,8 +109,9 @@ What happens after the verdict (`src/lib/server/checks.ts`):
 
 Holds:
 - The first decision wins: Block, or Approve (which needs a second confirm).
-- After 10 minutes a hold reads as **expired** but the money stays held, and Block still works.
+- After 10 minutes a hold reads as **expired** but the money stays held. Block still works; Approve does not.
 - Expiry is derived from `expires_at`, so no background job is needed.
+- The first family answer to a question wins, and Mr Rao sees the first advice.
 
 **Privacy and the shared message:**
 - For every check the server stores a keyed fingerprint, the verdict and the warning phrases.
@@ -173,7 +174,8 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
 - **Deploy:** connect the repo to Vercel. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm db:migrate && pnpm build` in the Singapore region.
 - **Environment variables** for every Vercel environment:
   - `DATABASE_URL` (Neon, same region; the Neon–Vercel integration can create a branch per preview);
-  - `SESSION_SECRET`, `FINGERPRINT_SECRET`;
+  - `SESSION_SECRET`, `FINGERPRINT_SECRET` (on Vercel the app refuses to run without them; other hosts fall back to the dev values, so set them there too);
+  - `OPERATOR_KEY` (needed for any public URL; a long random value);
   - optionally `ANTHROPIC_API_KEY`.
 
 ## On a phone
@@ -217,6 +219,7 @@ Build: `cd android && ./gradlew assembleDebug -PPB_HOST=https://your-deployment`
 
 - **Calls go through the phone's dialer.** The app never places a call itself: the person confirms in the dialer. Set the demo numbers before a live demo (see "Calls" above).
 - **Still open after phase 2:** quiet hours and escalation calls (O3); FCM full-screen alerts that ring through Do Not Disturb; native call detection (the live-call guard asks questions instead of listening to the call); Play Store listing. Hindi and Telugu strings were machine-written and need a native speaker's sign-off.
-- **Operator pages are open.** `/demo`, `/tests`, `/campaigns`, `/reports` and "Reset demo data" have no login. Put them behind a password before a public deploy.
+- **Operator pages need a key on a public URL.** Set `OPERATOR_KEY`: `/demo`, the `/tests` runs, "Reset demo data" and the Block/Reject review on `/reports` then ask for it once per browser tab. The read-only operator pages (`/campaigns`, the `/reports` list) stay open, and so does everything on a laptop without the key.
+- **Demo sign-in stays open.** "Continue as Mr Rao (demo)" and the code 1234 need no key, so anyone with a public URL can still run checks (and have Claude read the unsure ones, if a key is set). Put the whole site behind a password, or remove the demo sign-in, before a real launch.
 - **The rules are a starting point.** The test set is small and team-written, and the training data is synthetic. Treat the numbers as a sanity check, not real-world accuracy.
 - **Claude refusals and timeouts fall back to rules only.** No refusal fallback model is configured.

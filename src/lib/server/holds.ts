@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { HOLD_MINUTES, TWO_KEY_AMOUNT, TWO_KEY_HOLD_MINUTES } from "@/lib/check/config";
 import { keyPhrases } from "@/lib/check/phrases";
 import { rupees } from "@/lib/check/copy";
@@ -42,10 +42,11 @@ export async function createHold(db: Db, check: Check, owner: User) {
   return hold;
 }
 
+/** Oldest first: Mr Rao's screens show advice[0], the first reply. */
 export async function adviceFor(db: Db, where: { checkId?: string; holdId?: string }): Promise<AdviceView[]> {
   const rows = await db.query.advice.findMany({
     where: where.holdId ? eq(schema.advice.holdId, where.holdId) : eq(schema.advice.checkId, where.checkId!),
-    orderBy: desc(schema.advice.createdAt),
+    orderBy: asc(schema.advice.createdAt),
   });
   if (!rows.length) return [];
   const names = await userNames(db, rows.map((r) => r.fromUserId));
@@ -122,6 +123,10 @@ export async function decideHold(db: Db, member: User, holdId: string, decision:
   if (hold.status !== "pending") {
     const view = await toHoldView(db, hold);
     throw new HttpError(409, `${view.decidedByName ?? "Someone"} already ${hold.status} this payment.`);
+  }
+  // Block still works after the 10 minutes. Approve does not: an expired hold never releases the money.
+  if (decision === "approve" && holdStatus(hold) === "expired") {
+    throw new HttpError(409, "Time ran out, so this payment can no longer be approved. You can still block it.");
   }
   const check = (await db.query.checks.findFirst({ where: eq(schema.checks.id, hold.checkId) }))!;
   const summary = await giveAnswer(db, member, check, decision === "block" ? "scam" : "not_scam", { viaHold: holdId });

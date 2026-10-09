@@ -370,7 +370,7 @@ export function VerdictScreen() {
         {!alerted && !asked && <button className="btn line" onClick={ask}><Icon name="bell" />{t("verdict.tell", { name: helper.first })}</button>}
         <div className="row" style={{ justifyContent: "center", flexWrap: "wrap", gap: 4 }}>
           <button className="ghost" onClick={() => call(t("common.helplineName"), HELPLINE)}>{t("common.helpline")}</button>
-          {c.amount && c.hold?.status !== "pending" && c.familyVerdict !== "scam" && (
+          {c.amount && (!c.hold || c.hold.status === "cancelled") && c.familyVerdict !== "scam" && (
             <button className="ghost" onClick={() => router.push(`/check/${id}/pay`)}>{t("verdict.payAnyway")}</button>
           )}
           {detected && !dismissed && (
@@ -416,7 +416,7 @@ export function VerdictScreen() {
         )}
         <button className="btn line" onClick={() => router.push(`/check/${id}/why`)}>{t("verdict.whyWeThink")}</button>
         <p className="sm center-text">{t("verdict.dontTapUntil", { name: helper.first })}</p>
-        {c.amount && c.hold?.status !== "pending" && (
+        {c.amount && (!c.hold || c.hold.status === "cancelled") && (
           <button className="ghost" style={{ alignSelf: "center" }} onClick={() => router.push(`/check/${id}/pay`)}>{t("verdict.payAnyway")}</button>
         )}
       </Screen>

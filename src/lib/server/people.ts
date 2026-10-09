@@ -13,7 +13,8 @@ type User = typeof schema.users.$inferSelect;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O or 1/I
 
 export function newInviteCode() {
-  const bytes = crypto.randomBytes(4);
+  // Six characters: about a billion codes, too many to guess. The demo codes stay short.
+  const bytes = crypto.randomBytes(6);
   return "PB-" + [...bytes].map((b) => CODE_CHARS[b % CODE_CHARS.length]).join("");
 }
 
@@ -63,7 +64,17 @@ export function joinNames(names: string[]) {
 
 export type PersonInput = { name: string; relation: string; phone: string; earlyHeadsUp: boolean };
 
+/** B2: the same number twice, or Mr Rao's own number, would send alerts to the wrong phone. */
+async function assertNewNumber(db: Db, owner: User, phone: string, exceptId?: string) {
+  if (phone === owner.phone) throw new HttpError(400, "That is your own number. Add someone you trust.");
+  const same = await db.query.links.findFirst({
+    where: and(eq(schema.links.protectedId, owner.id), eq(schema.links.phone, phone)),
+  });
+  if (same && same.id !== exceptId) throw new HttpError(409, `${same.name} already has this number.`);
+}
+
 export async function addPerson(db: Db, owner: User, input: PersonInput) {
+  await assertNewNumber(db, owner, input.phone);
   const [row] = await db
     .insert(schema.links)
     .values({ protectedId: owner.id, ...input, inviteCode: newInviteCode(), codeExpiresAt: codeExpiry() })
@@ -73,6 +84,7 @@ export async function addPerson(db: Db, owner: User, input: PersonInput) {
 }
 
 export async function updatePerson(db: Db, owner: User, id: string, input: PersonInput) {
+  await assertNewNumber(db, owner, input.phone, id);
   const [row] = await db
     .update(schema.links)
     .set(input)
@@ -101,18 +113,31 @@ export async function resendCode(db: Db, owner: User, id: string) {
   return toPersonView(row);
 }
 
+const CODE_FAILED = "That code did not work. Check each letter. Each code works once and ends in 24 hours.";
+
 /** C1: a family member enters the code Mr Rao shared. */
 export async function acceptInvite(db: Db, member: User, rawCode: string) {
   const code = rawCode.trim().toUpperCase().replace(/^PB-?/, "PB-");
   const link = await db.query.links.findFirst({ where: eq(schema.links.inviteCode, code) });
   if (!link || link.status !== "waiting" || link.codeExpiresAt.getTime() < Date.now()) {
-    throw new HttpError(400, "That code did not work. Check each letter. Each code works once and ends in 24 hours.");
+    throw new HttpError(400, CODE_FAILED);
   }
   if (link.protectedId === member.id) throw new HttpError(400, "You cannot be your own trusted person.");
-  await db
+  // Linked once per person: a second link to the same person would double every alert.
+  const current = await db.query.links.findFirst({
+    where: and(eq(schema.links.familyId, member.id), eq(schema.links.protectedId, link.protectedId), eq(schema.links.status, "linked")),
+  });
+  if (current) {
+    const linkedTo = await db.query.users.findFirst({ where: eq(schema.users.id, current.protectedId) });
+    throw new HttpError(409, `You are already linked to ${linkedTo?.name ?? "this person"}.`);
+  }
+  // Only a waiting code can be taken, so two people sending it at once cannot both join.
+  const [taken] = await db
     .update(schema.links)
     .set({ familyId: member.id, status: "linked", linkedAt: new Date() })
-    .where(eq(schema.links.id, link.id));
+    .where(and(eq(schema.links.id, link.id), eq(schema.links.status, "waiting")))
+    .returning();
+  if (!taken) throw new HttpError(400, CODE_FAILED);
   await db.update(schema.users).set({ role: "family", name: member.name === "Guest" ? link.name : member.name }).where(eq(schema.users.id, member.id));
   const owner = await db.query.users.findFirst({ where: eq(schema.users.id, link.protectedId) });
   await logEvent(db, link.protectedId, link.name, "invite_accepted", `${link.name} accepted the invite and is now linked`);
