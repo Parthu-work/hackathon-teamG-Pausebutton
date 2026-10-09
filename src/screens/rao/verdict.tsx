@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/icons";
-import { clockTime, HighlightedText, LoadingScreen, Marks, Screen, SignalBars, SignalRows, useCall, useCountdown, useToast, VerdictPill, type SignalWords } from "@/components/ui";
+import { clockTime, HighlightedText, holdTotalMs, LoadingScreen, Marks, Screen, SignalBars, SignalRows, useCall, useCountdown, useToast, VerdictPill, type SignalWords } from "@/components/ui";
 import { rupees } from "@/lib/check/copy";
 import { keyPhrases } from "@/lib/check/phrases";
 import { SIGNAL_TYPES, type SignalType } from "@/lib/check/types";
@@ -165,7 +165,7 @@ export function VerdictScreen() {
   const helper = useHelper();
   const { data: c, error } = useCheck(id);
   const [dismissed, setDismissed] = useState(false);
-  const holdClock = useCountdown(c?.hold?.status === "pending" ? c.hold.expiresAt : undefined, undefined, (c?.hold?.holdMinutes ?? 10) * 60_000);
+  const holdClock = useCountdown(c?.hold?.status === "pending" ? c.hold.expiresAt : undefined, rao.data?.serverNow, holdTotalMs(c?.hold));
   // He is looking at it: the "Possible scam from …" notification about this message is no longer needed.
   useEffect(() => {
     void closeNotifications((tag) => tag === `check-${id}`);

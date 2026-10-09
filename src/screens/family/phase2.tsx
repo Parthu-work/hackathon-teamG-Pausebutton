@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
-import { clockTime, FamilyTabs, LoadingScreen, Screen, TitleRow, useCall, useCountdown, useLeaveIfGone, useNow, useToast } from "@/components/ui";
+import { clockTime, FamilyTabs, holdTotalMs, LoadingScreen, Screen, TitleRow, useCall, useCountdown, useLeaveIfGone, useNow, useToast } from "@/components/ui";
 import { rupees, rupeesShort } from "@/lib/check/copy";
 import { api, post } from "@/lib/client/api";
 import type { CheckView, HoldView, LedgerView, LockView } from "@/lib/views";
@@ -26,7 +26,7 @@ export function LockScreen() {
   const q = useQuery({ queryKey: ["lock"], queryFn: () => api<LockView>("/api/family/lock"), refetchInterval: 2000 });
   const alert = q.data?.alert ?? null;
   const hold = q.data?.hold ?? null;
-  const clock = useCountdown(hold?.status === "pending" ? hold.expiresAt : undefined, q.data?.serverNow, (hold?.holdMinutes ?? 10) * 60_000);
+  const clock = useCountdown(hold?.status === "pending" ? hold.expiresAt : undefined, q.data?.serverNow, holdTotalMs(hold));
   const [done, setDone] = useState<{ hold: HoldView; who: string } | null>(null);
   const now = useNow(10_000);
   const block = useMutation({

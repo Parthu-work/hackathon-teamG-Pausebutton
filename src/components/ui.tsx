@@ -8,6 +8,7 @@ import { SIGNAL_TYPES, type Evidence, type LinkInfo, type SignalType, type Verdi
 import { ApiError } from "@/lib/client/api";
 import { telHref } from "@/lib/phone";
 import { Icon, type IconName } from "./icons";
+import { DEFAULT_HOLD_MINUTES } from "@/lib/check/config";
 
 // ---------------- phone frame ----------------
 
@@ -329,8 +330,13 @@ export function dayTime(iso: string) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
+/** A hold's full length, for the countdown ring: the minutes it was created with. */
+export function holdTotalMs(hold: { holdMinutes: number } | null | undefined) {
+  return (hold?.holdMinutes ?? DEFAULT_HOLD_MINUTES) * 60_000;
+}
+
 /** Counts down to an ISO time, corrected by the server clock offset. */
-export function useCountdown(expiresAt: string | undefined, serverNow?: string, totalMs = 10 * 60_000) {
+export function useCountdown(expiresAt: string | undefined, serverNow?: string, totalMs = DEFAULT_HOLD_MINUTES * 60_000) {
   // `now` is the server-corrected clock, refreshed every second.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

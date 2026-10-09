@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { HOLD_MINUTES, TWO_KEY_AMOUNT, TWO_KEY_HOLD_MINUTES } from "@/lib/check/config";
+import { DEFAULT_HOLD_MINUTES, HOLD_CHOICES, TWO_KEY_AMOUNT } from "@/lib/check/config";
 import { keyPhrases } from "@/lib/check/phrases";
 import { rupees } from "@/lib/check/copy";
 import type { Db } from "@/lib/db";
@@ -23,9 +23,12 @@ export function holdStatus(h: Hold, now = Date.now()): HoldStatus {
   return h.status;
 }
 
-/** F13: large amounts get the long hold and two keys to release. */
+/** F13: large amounts need two keys (every trusted person) to release. */
 export const twoKeysFor = (amount: number) => amount > TWO_KEY_AMOUNT;
-export const holdMinutesFor = (amount: number) => (twoKeysFor(amount) ? TWO_KEY_HOLD_MINUTES : HOLD_MINUTES);
+
+/** The person's chosen hold time (Settings › Payment hold time); anything unexpected falls back to the default. */
+export const holdMinutesOf = (owner: Pick<User, "holdMinutes">) =>
+  (HOLD_CHOICES as readonly number[]).includes(owner.holdMinutes) ? owner.holdMinutes : DEFAULT_HOLD_MINUTES;
 
 export async function createHold(db: Db, check: Check, owner: User) {
   const amount = check.amount ?? 0;
@@ -36,7 +39,7 @@ export async function createHold(db: Db, check: Check, owner: User) {
       userId: owner.id,
       payee: check.payee ?? "Unknown account",
       amount,
-      expiresAt: new Date(Date.now() + holdMinutesFor(amount) * 60_000),
+      expiresAt: new Date(Date.now() + holdMinutesOf(owner) * 60_000),
     })
     .returning();
   return hold;
@@ -124,7 +127,7 @@ export async function decideHold(db: Db, member: User, holdId: string, decision:
     const view = await toHoldView(db, hold);
     throw new HttpError(409, `${view.decidedByName ?? "Someone"} already ${hold.status} this payment.`);
   }
-  // Block still works after the 10 minutes. Approve does not: an expired hold never releases the money.
+  // Block still works after the time runs out. Approve does not: an expired hold never releases the money.
   if (decision === "approve" && holdStatus(hold) === "expired") {
     throw new HttpError(409, "Time ran out, so this payment can no longer be approved. You can still block it.");
   }

@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Icon } from "@/components/icons";
 import {
   Avatar, BackButton, clockTime, FamilyTabs, HighlightedText, LoadingScreen, Marks, Screen, Sheet, StatusPill, TitleRow, Toggle,
-  useCall, useCountdown, useLeaveIfGone, useToast, VerdictPill,
+  holdTotalMs, useCall, useCountdown, useLeaveIfGone, useToast, VerdictPill,
 } from "@/components/ui";
 import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
@@ -255,7 +255,7 @@ export function FamilyHomeScreen() {
 /** J0 · one protected person on the "Who you protect" list, with what needs doing. */
 function PersonCard({ p, me, serverNow, onOpen }: { p: ProtectedView; me: string; serverNow: string; onOpen: () => void }) {
   const hold = p.activeHold;
-  const clock = useCountdown(hold?.expiresAt, serverNow);
+  const clock = useCountdown(hold?.expiresAt, serverNow, holdTotalMs(hold));
   const needsMe = !!hold && !hold.approvedBy.includes(me) && !clock.expired;
   const status = hold
     ? clock.expired
@@ -304,7 +304,7 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
   const ledger = useLedger();
   const callName = p.callName;
   const hold = p.activeHold;
-  const clock = useCountdown(hold?.expiresAt, data?.serverNow, (hold?.holdMinutes ?? 10) * 60_000);
+  const clock = useCountdown(hold?.expiresAt, data?.serverNow, holdTotalMs(hold));
   if (!data) return <LoadingScreen />;
   const me = data.me.name;
   // Questions, heads-ups, and scam alerts with no payment to block (e.g. a fake KYC link).
@@ -500,7 +500,7 @@ export function FamilyHoldScreen() {
   const hold = q.data?.hold;
   const callName = hold?.owner.callName ?? "Papa";
   const papaPhone = hold?.owner.phone ?? null;
-  const clock = useCountdown(hold?.expiresAt, q.data?.serverNow, (hold?.holdMinutes ?? 10) * 60_000);
+  const clock = useCountdown(hold?.expiresAt, q.data?.serverNow, holdTotalMs(hold));
   // F2 "Call Papa" on the lock screen's "You blocked it" notification.
   useCallOnArrival(search.get("call") === "1", callName, papaPhone);
   // Advice is oldest first (Mr Rao sees the first reply), so the one just sent is last.

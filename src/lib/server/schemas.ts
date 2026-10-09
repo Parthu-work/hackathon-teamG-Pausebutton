@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { toIndianMobile } from "@/lib/phone";
+import { HOLD_CHOICES } from "@/lib/check/config";
 
 export const personBody = z.object({
   name: z.string().trim().min(1, "Please type a name.").max(40),
@@ -11,3 +12,20 @@ export const personBody = z.object({
     .transform((v) => toIndianMobile(v)!),
   earlyHeadsUp: z.boolean().default(true),
 });
+
+/** A2: the role, and the name the home screen greets by (required since sign-up asks for it). */
+export const roleBody = z.object({
+  role: z.enum(["protected", "family"]),
+  name: z
+    .string({ error: "Please enter your name." })
+    .trim()
+    .min(1, "Please enter your name.")
+    .max(40, "Please keep your name under 40 letters.")
+    .refine((v) => v.toLowerCase() !== "guest", "Please enter your name."),
+});
+
+/** Settings › Payment hold time: one of the fixed choices, in minutes. */
+export const holdMinutesField = z
+  .number()
+  .int()
+  .refine((v) => (HOLD_CHOICES as readonly number[]).includes(v), "Please pick 5, 10, 15, 30 or 60 minutes.");

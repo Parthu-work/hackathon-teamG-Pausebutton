@@ -13,7 +13,7 @@ import type { Language } from "@/lib/views";
 import type { CheckView, SharedMessage } from "@/lib/views";
 import { answerSummary, giveAnswer } from "./answers";
 import { logEvent } from "./events";
-import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, userNames } from "./holds";
+import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, twoKeysFor, userNames } from "./holds";
 import { log } from "./log";
 import { logPush, notifyOwnerOfMessage } from "./notify";
 import { callNameOf, joinNames, linkedFamily, ownerView } from "./people";
@@ -76,7 +76,8 @@ export type NewCheck = {
  * the verdict calls for:
  *  - a message the person brought us (pasted, forwarded, spoken) that is a
  *    SCAM: urgent alert to every linked family member, plus a payment hold
- *    when the message asks for an amount (10 minutes; an hour above Rs 50,000);
+ *    when the message asks for an amount (the person's hold time, 10 minutes
+ *    unless changed in Settings; above Rs 50,000 everyone must approve);
  *  - detected SCAM (simulated inbox, Android watcher): a quiet heads-up, if
  *    Mr Rao turned on "Tell Arjun automatically"; the hold starts if he then
  *    tries to pay.
@@ -154,7 +155,7 @@ export async function storeCheck(
         const hold = await createHold(db, check, owner);
         holdId = hold.id;
         const minutes = Math.round((hold.expiresAt.getTime() - hold.createdAt.getTime()) / 60_000);
-        await logEvent(db, owner.id, "Check service", "hold", `Hold created automatically · ${rupees(hold.amount)} paused for ${minutes} min${minutes > 10 ? " · two keys to release" : ""}`, hold.id);
+        await logEvent(db, owner.id, "Check service", "hold", `Hold created automatically · ${rupees(hold.amount)} paused for ${minutes} min${twoKeysFor(hold.amount) ? " · two keys to release" : ""}`, hold.id);
       }
       await sendAlerts(db, owner, check, family.map((f) => f.familyId), "urgent", holdId);
     } else if (owner.autoTellFamily) {

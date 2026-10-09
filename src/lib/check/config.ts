@@ -21,17 +21,21 @@ export const LINK_POINTS: Record<LinkStatus, number> = {
 export const SCAM_AT = 70;
 export const SUSPICIOUS_AT = 30;
 
-// Payment holds and invites.
-export const HOLD_MINUTES = 10;
+// Payment holds: every pause has a countdown, whose length is a setting
+// (Settings › Payment hold time) chosen from these minutes.
+export const HOLD_CHOICES = [5, 10, 15, 30, 60] as const;
+export type HoldChoice = (typeof HOLD_CHOICES)[number];
+export const DEFAULT_HOLD_MINUTES: HoldChoice = 10;
+
+export const INVITE_HOURS = 24;
 export const INVITE_HOURS = 24;
 
 // "Today" on the family home starts at midnight in India (IST is UTC+5:30, no daylight saving).
 export const APP_UTC_OFFSET_MINUTES = 330;
 
-// Two keys for large amounts (F13): above this, the hold lasts an hour and
-// release needs every trusted person (one Block is still enough to stop it).
+// Two keys for large amounts (F13): above this, release needs every trusted
+// person (one Block is still enough to stop it). The timer is the same setting.
 export const TWO_KEY_AMOUNT = 50_000;
-export const TWO_KEY_HOLD_MINUTES = 60;
 
 // Campaign radar (F3): "N other families got this today" counts sightings in this window.
 export const CAMPAIGN_HOURS = 24;
