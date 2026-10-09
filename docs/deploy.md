@@ -16,14 +16,14 @@
 
 **Main deploy: Vercel Hobby + Neon Free.** Both are free with no time limit and need no card, and the repo is already set up for them (`vercel.json`). Every PR gets its own preview URL.
 
-**Railway: use it if the team wants it, with Neon for the database.** Railway's free terms are a one-time $5 trial credit (30 days), then $1 of credit a month. An always-on Next.js server plus a Railway Postgres costs more than $1 a month, so on the free plan Railway lasts about as long as the trial: enough for the hackathon week, not after. Keeping the database on Neon (free, no expiry) and turning on App Sleeping makes the Railway credit last longest. The repo is ready for it (`railway.json`).
+**Railway: use it if the team wants it, with Neon for the database.** Railway's free terms are a one-time $5 trial credit (30 days), then $1 of credit a month. An always-on Next.js server plus a Railway Postgres costs more than $1 a month, so on the free plan Railway lasts about as long as the trial: enough for the hackathon week, not after. Keeping the database on Neon (free, no expiry) and turning on App Sleeping makes the Railway credit last longest. The live deployment runs there: `https://hackathon-teamg-pausebutton-production.up.railway.app`.
 
 **Backup on demo day: `pnpm share`** (Cloudflare quick tunnel from a laptop). Free, HTTPS, no account; the URL changes each run.
 
 | Option | Cost | Limits that matter here | Verdict |
 |---|---|---|---|
 | **Vercel Hobby + Neon Free** | $0, no expiry | Hobby is for non-commercial use. About 1M function calls a month: one phone left open polls about 1,800 times an hour, so about 550 phone-hours a month. Neon: 0.5 GB storage, 100 compute-hours a month, sleeps after 5 min (first query after that takes about 1 s). | **Best fit.** Already configured. |
-| **Railway (+ Neon)** | $5 trial credit for 30 days, then $1/month | Free plan: 0.5 GB RAM, 1 vCPU per service. A Next.js server uses roughly $2–4/month of RAM, so after the trial it needs the $5 Hobby plan. | Good for the hackathon week. Configured in `railway.json`. |
+| **Railway (+ Neon)** | $5 trial credit for 30 days, then $1/month | Free plan: 0.5 GB RAM, 1 vCPU per service. A Next.js server uses roughly $2–4/month of RAM, so after the trial it needs the $5 Hobby plan. | Good for the hackathon week. **Live here.** |
 | **Render Free (+ Neon)** | $0 | The server sleeps after 15 min idle and takes about a minute to wake: a family member who taps a scam alert waits a minute. Render's free Postgres is deleted after 30 days. | Only as a fallback. |
 | **Fly.io** | Pay as you go (no free allowance for new accounts) | Needs a card. | Skip. |
 | **Laptop + `pnpm share`** | $0 | Only up while the laptop runs; the link changes each time. | Demo-day backup. |
@@ -57,7 +57,16 @@ Free-plan terms change often. These figures were checked in October 2026; confir
 
 ## Option B: Railway (+ Neon)
 
-`railway.json` already sets: build `pnpm build`, pre-deploy `pnpm db:migrate`, start `pnpm start` (Next reads Railway's `PORT`), health check `/api/health` (fails the deploy if the database can't be reached), restart on failure. `.nvmrc` pins Node 24, the version CI uses.
+Railway has deprecated `railway.json` (Config as Code), and new services ignore it, so these settings live on the service itself (**Settings → Deploy**). Without the pre-deploy command the database has no tables, and without the health check Railway puts a broken build live:
+
+| Setting | Value |
+|---|---|
+| Pre-deploy command | `pnpm db:migrate` |
+| Health check path | `/api/health` (timeout 120 s) |
+| Restart policy | On failure, 3 retries |
+| Build / start | Railpack defaults: `pnpm build`, `pnpm start` (Next reads Railway's `PORT`) |
+
+`.nvmrc` pins Node 24, the version CI uses.
 
 1. railway.com → **New Project → Deploy from GitHub repo** → pick the repo.
 2. Service **Settings**:
@@ -66,7 +75,7 @@ Free-plan terms change often. These figures were checked in October 2026; confir
    - **Serverless / App Sleeping:** on. The server stops after about 10 min without traffic and wakes on the next request in a few seconds. This stretches the free credit; push is sent inside the request, so nothing is lost while it sleeps.
 3. **Variables:** the same list as Vercel, with the **direct** Neon string as `DATABASE_URL`.
    - Using Railway's own Postgres instead: **New → Database → PostgreSQL**, then set `DATABASE_URL=${{Postgres.DATABASE_URL}}`. Simpler, but it uses credit around the clock and doesn't sleep.
-4. Deploy, then open `/api/health`.
+4. Set the deploy settings in the table above, deploy, then open `/api/health`: it must answer `{"ok":true}`.
 5. Watch **Usage** in the Railway dashboard. When the trial credit runs out, either upgrade to Hobby ($5/month) or move to Option A; the database and secrets stay the same, so phones keep working once the URL changes on them (the Android app lets the person change the host).
 
 ## Other hosts

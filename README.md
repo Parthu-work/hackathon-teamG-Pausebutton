@@ -171,7 +171,7 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
 
 - **Every PR:** lint → type check → `pnpm test` (including the quality gate) → build → Playwright three-phone e2e.
 - **On `main`, or a PR labelled `ai-eval`:** `pnpm eval --ai haiku`, run when the `ANTHROPIC_API_KEY` secret is set.
-- **Deploy:** see [`docs/deploy.md`](docs/deploy.md) for the free-tier options (Vercel + Neon recommended, Railway configured in `railway.json`). On Vercel: connect the repo. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm db:migrate && pnpm build` in the Singapore region.
+- **Deploy:** see [`docs/deploy.md`](docs/deploy.md) for the free-tier options (Vercel + Neon recommended, Railway, where it is live; its deploy settings are listed there). On Vercel: connect the repo. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm db:migrate && pnpm build` in the Singapore region.
 - **Environment variables** for every Vercel environment:
   - `DATABASE_URL` (Neon, same region; the Neon–Vercel integration can create a branch per preview);
   - `SESSION_SECRET`, `FINGERPRINT_SECRET` (on Vercel, Railway, Render, Fly.io and Cloud Run the app refuses to run without them; on any other host set `DEPLOYED=1` to get the same check);
