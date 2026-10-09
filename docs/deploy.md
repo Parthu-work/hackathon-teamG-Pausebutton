@@ -75,6 +75,14 @@ The app checks for `VERCEL`, `RAILWAY_ENVIRONMENT_NAME`, `RENDER`, `FLY_APP_NAME
 
 - **Render:** Web Service, build `pnpm install --frozen-lockfile && pnpm build`, pre-deploy `pnpm db:migrate` (or run it in the build command on the free plan), start `pnpm start`, health check `/api/health`, region Singapore.
 
+## Sharing the Android app with a QR code
+
+1. Set the repository variable `PB_HOST` to the deployed URL (GitHub → Settings → Secrets and variables → Actions → Variables).
+2. Actions → **Publish APK to the website** → **Run workflow**. It builds the app for `PB_HOST` and commits it as `public/pause-button.apk`; the host redeploys.
+3. Share `https://<your-site>/download/qr` (print it, or put it on a slide). Scanning it opens `/download`, which has the download button and install steps.
+
+The QR encodes whatever address the site is opened on, so it needs no setup and stays right if the URL changes.
+
 ## After deploying: checklist
 
 - [ ] `/api/health` → `{"ok":true}`
@@ -82,3 +90,4 @@ The app checks for `VERCEL`, `RAILWAY_ENVIRONMENT_NAME`, `RENDER`, `FLY_APP_NAME
 - [ ] Family phone: the alerts setup screen's "Send me a test alert" arrives as a push notification
 - [ ] `/demo` asks for the operator key
 - [ ] Android APK built with `PB_HOST` set to this URL
+- [ ] `/download` downloads the APK, and `/download/qr` scans to `/download`

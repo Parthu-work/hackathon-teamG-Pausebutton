@@ -1,0 +1,43 @@
+name: Publish APK to the website
+
+# Builds the Android app for the deployed site (repository variable PB_HOST) and
+# commits it as public/pause-button.apk, so <site>/download serves it to anyone
+# who scans the QR code. Run it from the Actions tab after changing the app or
+# the deployment address.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-apk
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish the APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: PB_HOST must point at the deployment
+        run: |
+          if [ -z "${{ vars.PB_HOST }}" ]; then echo "Set the repository variable PB_HOST (e.g. https://<app>.up.railway.app) first."; exit 1; fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37.2 build-tools;36.0.0
+      - name: Build the APK
+        run: cd android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug -PPB_HOST="${{ vars.PB_HOST }}"
+      - name: Commit it to the website
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk public/pause-button.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add public/pause-button.apk
+          git commit -m "Publish the Android app for ${{ vars.PB_HOST }}" || { echo "No change."; exit 0; }
+          git push
