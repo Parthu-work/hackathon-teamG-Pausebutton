@@ -74,6 +74,7 @@ Railway has deprecated `railway.json` (Config as Code), and new services ignore 
    - **Networking → Generate Domain** (gives `https://<name>.up.railway.app`).
    - **Serverless / App Sleeping:** on. The server stops after about 10 min without traffic and wakes on the next request in a few seconds. This stretches the free credit; push is sent inside the request, so nothing is lost while it sleeps.
 3. **Variables:** the same list as Vercel, with the **direct** Neon string as `DATABASE_URL`.
+   - `ANDROID_CERT_SHA256=E1:5A:42:AC:11:84:2D:CA:5A:4D:E0:CC:B5:2F:85:A5:A3:EA:4C:49:3C:12:90:40:8E:ED:D2:D0:E8:C7:63:B0` (the shared debug key in `android/debug.keystore`), so the Android app opens full screen.
    - Using Railway's own Postgres instead: **New → Database → PostgreSQL**, then set `DATABASE_URL=${{Postgres.DATABASE_URL}}`. Simpler, but it uses credit around the clock and doesn't sleep.
 4. Set the deploy settings in the table above, deploy, then open `/api/health`: it must answer `{"ok":true}`.
 5. Watch **Usage** in the Railway dashboard. When the trial credit runs out, either upgrade to Hobby ($5/month) or move to Option A; the database and secrets stay the same, so phones keep working once the URL changes on them (the Android app lets the person change the host).
@@ -87,7 +88,7 @@ The app checks for `VERCEL`, `RAILWAY_ENVIRONMENT_NAME`, `RENDER`, `FLY_APP_NAME
 ## Sharing the Android app with a QR code
 
 1. Optional: set the repository variable `PB_HOST` to the deployed URL (GitHub → Settings → Secrets and variables → Actions → Variables). Without it, the workflows use the Railway URL.
-2. **Publish APK to the website** builds the app for that address and commits it as `public/pause-button.apk`; the host redeploys, and the workflow waits until the site serves that exact file. It runs by itself whenever `android/` changes on `main`. Run it by hand (Actions → Publish APK to the website → Run workflow) after changing the deployment address.
+2. **Publish APK to the website** builds the app for that address, signed with the shared debug key (`android/debug.keystore`, so updates install over older copies) and commits it as `public/pause-button.apk`; the host redeploys, and the workflow waits until the site serves that exact file. It runs by itself whenever `android/` changes on `main`. Run it by hand (Actions → Publish APK to the website → Run workflow) after changing the deployment address.
 3. Share `https://<your-site>/download/qr` (print it, or put it on a slide), or the poster in `share/`. Scanning it opens `/download`, which has the download button and install steps.
 
 The QR encodes whatever address the site is opened on, so it needs no setup and stays right if the URL changes.

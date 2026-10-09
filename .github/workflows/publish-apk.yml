@@ -68,6 +68,10 @@ jobs:
           ls -l "$apk"
           unzip -p "$apk" resources.arsc | strings | grep -F "${HOST%/}" || { echo "::error::The APK does not contain $HOST"; exit 1; }
 
+      - name: The APK is signed with the shared debug key
+        # Same key every build, so a newer APK installs over an older one.
+        run: bash scripts/check-apk-signer.sh android/app/build/outputs/apk/debug/app-debug.apk
+
       - name: Commit it to the website
         id: commit
         run: |
@@ -101,3 +105,14 @@ jobs:
           done
           echo "::error::$HOST still does not serve the new APK after 20 minutes. Check that Railway deploys main automatically, and its latest deployment's logs."
           exit 1
+
+      - name: Full screen (the site vouches for the app's key)
+        # A warning, not a failure: without it the app works, with Chrome's address bar.
+        run: |
+          HOST="${HOST%/}"
+          print=$(keytool -list -v -keystore android/debug.keystore -storepass android -alias androiddebugkey | sed -n 's/.*SHA256: //p' | tr -d ' ')
+          if curl -s -m 30 "$HOST/.well-known/assetlinks.json" | grep -qF "$print"; then
+            echo "$HOST/.well-known/assetlinks.json lists $print: the app opens full screen."
+          else
+            echo "::warning::$HOST/.well-known/assetlinks.json does not list $print. Set ANDROID_CERT_SHA256=$print on the host; until then the app shows Chrome's address bar."
+          fi

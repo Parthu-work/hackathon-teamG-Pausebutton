@@ -24,6 +24,17 @@ android {
     }
 
     signingConfigs {
+        // One shared debug key, committed (android/debug.keystore, the standard
+        // debug password), so every build, on any laptop or CI run, has the same
+        // signature: a newer APK installs over an older one, and the site's
+        // assetlinks.json (ANDROID_CERT_SHA256) can name it for full screen.
+        // Anyone with the repo can sign with it: use PB_KEYSTORE for a public release.
+        debug {
+            storeFile rootProject.file("debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
         // A real release key when PB_KEYSTORE is set; otherwise the debug key, so
         // "assembleRelease" always produces an installable APK for the demo.
         release {

@@ -65,5 +65,7 @@ next-env.d.ts
 /android/app/build
 /android/local.properties
 /android/*.keystore
+# ...except the shared debug key, so every build has the same signature (see android/app/build.gradle)
+!/android/debug.keystore
 /android/.kotlin
 # /android/dist
