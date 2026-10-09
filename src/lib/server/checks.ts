@@ -301,6 +301,29 @@ async function ownCheck(db: Db, owner: User, checkId: string) {
   return check;
 }
 
+type Alert = typeof schema.alerts.$inferSelect;
+
+/**
+ * Who was told about a message but whose phones the push never reached: the
+ * delivery log has attempts for their alert and none of them was sent. Someone
+ * who already opened or handled the alert is fine, and someone with no phone
+ * registered at all (no attempt) is not flagged: their alert still rings while
+ * the app is open, and in a demo without push nobody would be.
+ */
+async function unreachableFamily(db: Db, alertRows: Alert[], family: { familyId: string; name: string }[], names: Record<string, string>) {
+  const waiting = alertRows.filter((a) => !a.openedAt && !a.handledAt && family.some((f) => f.familyId === a.recipientId));
+  if (!waiting.length) return [];
+  const deliveries = await db.query.pushDeliveries.findMany({
+    where: inArray(schema.pushDeliveries.key, waiting.map((a) => `alert:${a.id}`)),
+  });
+  const unreachable = new Set<string>();
+  for (const a of waiting) {
+    const mine = deliveries.filter((d) => d.key === `alert:${a.id}` && d.userId === a.recipientId);
+    if (mine.length && mine.every((d) => d.status !== "sent")) unreachable.add(a.recipientId);
+  }
+  return family.filter((f) => unreachable.has(f.familyId)).map((f) => names[f.familyId] ?? f.name);
+}
+
 export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: string; member?: User }): Promise<CheckView> {
   const check = await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) });
   if (!check) throw new HttpError(404, "That check was not found.");
@@ -356,6 +379,7 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
     reportable: opts.member && !memberNotAlerted ? await reportableFor(db, check, opts.member) : null,
     createdAt: check.createdAt.toISOString(),
     alertedNames: family.filter((f) => alertRows.some((a) => a.kind !== "ask" && a.recipientId === f.familyId)).map((f) => names[f.familyId] ?? f.name),
+    unreachableNames: opts.member ? [] : await unreachableFamily(db, alertRows, family, names),
     askedFamilyAt: check.askedFamilyAt?.toISOString() ?? null,
     familyVerdict: check.familyVerdict,
     familyVerdictByName: said.final ? joinNames(said.decidedBy) : null,

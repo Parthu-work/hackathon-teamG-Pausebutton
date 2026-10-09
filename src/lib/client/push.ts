@@ -81,9 +81,25 @@ function register(app: PushApp, sub: PushSubscription, previousEndpoint: string 
   return post("/api/push/subscribe", { subscription: sub.toJSON(), previousEndpoint, app });
 }
 
+/**
+ * The demo panel shows several phones as frames in one browser, and they share
+ * that browser's one push subscription. Only a real (top-level) window
+ * registers it; otherwise every frame's start would move the subscription to
+ * its own persona (Papa, Arjun, Meera) in turn.
+ */
+export function inFrame() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.top !== window.self;
+  } catch {
+    return true; // a cross-origin parent: certainly a frame
+  }
+}
+
 /** Asks for permission (must follow a tap) and registers this phone with the server for the signed-in person. */
 export async function subscribeToPush(app: PushApp): Promise<PushStatus> {
   if (!pushSupported()) return needsInstall() ? "needs-install" : "unsupported";
+  if (inFrame()) return "unsupported";
   const { publicKey } = await api<{ publicKey: string | null }>("/api/push/key");
   if (!publicKey) return "off";
   const permission = await Notification.requestPermission();
@@ -116,7 +132,7 @@ export async function unsubscribeFromPush(app: PushApp) {
  * rotate, another person may have signed out on this phone). Never prompts.
  */
 export async function resyncPush(app: PushApp) {
-  if (!pushSupported() || Notification.permission !== "granted") return;
+  if (!pushSupported() || Notification.permission !== "granted" || inFrame()) return;
   try {
     const reg = await registerServiceWorker();
     if (!reg) return;

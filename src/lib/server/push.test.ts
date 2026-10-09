@@ -24,13 +24,13 @@ vi.mock("web-push", () => {
   return { default: { setVapidDetails: vi.fn(), sendNotification }, WebPushError };
 });
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import webpush, { WebPushError } from "web-push";
 import { getDb, type Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import examples from "@/data/examples.json";
 import { markAlertOpened, openAlertFromNotification } from "./alerts";
-import { createCheck, openPayment } from "./checks";
+import { createCheck, getCheckView, openPayment } from "./checks";
 import { personaUser, resetDemo } from "./demo";
 import { decideHold } from "./holds";
 import { pushEnabled, pushToUsers, removeSubscription, saveSubscription, type PushPayload } from "./push";
@@ -261,5 +261,35 @@ describe("web push", () => {
     const safe = await deliverMessage(db, papa, { channel: "sms", sender: "HDFCBK", fromContact: false, text: text("bank") });
     expect(payloadsSent().filter((p) => p.kind === "message" && p.checkId === safe.checkId)).toHaveLength(0);
     await db.update(schema.users).set({ language: "en" }).where(eq(schema.users.id, rao.id));
+  });
+
+  it("Papa's screen names whoever the alert could not reach, until they open it", async () => {
+    await resetDemo(db);
+    const { rao, arjun, meera } = await users();
+    // Start clean: earlier tests moved phones between people and switched Notifications off.
+    await db.delete(schema.pushSubscriptions);
+    await db.update(schema.users).set({ alertNotify: true }).where(inArray(schema.users.id, [arjun.id, meera.id]));
+    await saveSubscription(db, arjun.id, sub(21), "test");
+    await saveSubscription(db, meera.id, sub(22), "test");
+    // Arjun's phone takes the push; Meera's push service keeps refusing it.
+    sendNotification.mockImplementation(async (s) => {
+      if ((s as { endpoint: string }).endpoint.endsWith("/22")) throw new WebPushError("bad request", 400, {}, "", "");
+      return { statusCode: 201 };
+    });
+    const { checkId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    sendNotification.mockImplementation(async () => ({ statusCode: 201 }));
+
+    expect((await getCheckView(db, checkId, { ownerId: rao.id })).unreachableNames).toEqual(["Meera"]);
+    // Family screens never carry it.
+    expect((await getCheckView(db, checkId, { member: arjun })).unreachableNames).toEqual([]);
+    // Once Meera opens the alert in the app, she is no longer unreachable.
+    const alert = (await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) })).find((a) => a.recipientId === meera.id)!;
+    await db.update(schema.alerts).set({ openedAt: new Date() }).where(eq(schema.alerts.id, alert.id));
+    expect((await getCheckView(db, checkId, { ownerId: rao.id })).unreachableNames).toEqual([]);
+    // Someone with no phone registered (no push attempted) is not flagged.
+    const mom = (await personaUser(db, "mom"))!;
+    await db.delete(schema.pushSubscriptions);
+    const quiet = await createCheck(db, mom, { text: text("cbi"), source: "paste" });
+    expect((await getCheckView(db, quiet.checkId, { ownerId: mom.id })).unreachableNames).toEqual([]);
   });
 });
