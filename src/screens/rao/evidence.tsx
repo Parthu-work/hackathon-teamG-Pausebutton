@@ -148,10 +148,7 @@ export function WhyScreen() {
           <p className="sm" style={{ fontSize: 13, color: "var(--text)" }}>{c.familyStory}</p>
         </div>
       )}
-      <p className="sm">
-        Spam score {c.score}% · warning signs {c.rulesScore}%{c.modelScore !== null ? ` · pattern model ${c.modelScore}%` : ""}
-        {c.decidedBy === "ai" ? " · confirmed by AI" : ""}
-      </p>
+      {c.decidedBy === "ai" && <p className="sm">Confirmed by AI.</p>}
       <div className="spacer" />
       {c.verdict === "SAFE" ? (
         <button className="btn green" onClick={() => router.push("/")}>Done</button>

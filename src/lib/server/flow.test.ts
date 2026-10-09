@@ -8,7 +8,8 @@ import examples from "@/data/examples.json";
 import { askFamily, createCheck, deleteHistory, getCheckView, openPayment, setFamilyVerdict } from "./checks";
 import { personaUser, resetDemo } from "./demo";
 import { addAdvice, decideHold, holdStatus, toHoldView } from "./holds";
-import { acceptInvite } from "./people";
+import { acceptInvite, addPerson } from "./people";
+import { personBody } from "./schemas";
 import { receiveNext } from "./sim";
 import { familyState, raoState } from "./state";
 import * as schema from "@/lib/db/schema";
@@ -194,5 +195,17 @@ describe("history and invites", () => {
     const winner = results[0].status === "fulfilled" ? asha : bala;
     const link = await db.query.links.findFirst({ where: eq(schema.links.inviteCode, "PB-7H3D") });
     expect(link?.familyId).toBe(winner.id);
+  });
+});
+
+describe("people, codes and days", () => {
+  it("trusted people need a real mobile number, once, and not his own", async () => {
+    await resetDemo(db);
+    const { rao } = await users();
+    expect(personBody.safeParse({ name: "Ravi", relation: "Friend", phone: "12345" }).success).toBe(false);
+    expect(personBody.parse({ name: "Ravi", relation: "Friend", phone: "098400-55566" }).phone).toBe("+91 98400 55566");
+    const arjunAgain = { name: "Arjun 2", relation: "Son", phone: "+91 91234 56789", earlyHeadsUp: true };
+    await expect(addPerson(db, rao, arjunAgain)).rejects.toThrow("Arjun already has this number");
+    await expect(addPerson(db, rao, { ...arjunAgain, phone: rao.phone })).rejects.toThrow("your own number");
   });
 });

@@ -86,3 +86,23 @@ test("scam with no amount: Arjun's home keeps the alert until he answers", async
   await expect(arjun.getByText("Papa got a scam message")).toBeVisible();
   await expect(arjun.getByText("Papa is protected")).toHaveCount(0);
 });
+
+test("the evidence screen shows no percentages", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByRole("button", { name: "Check this message" }).click();
+  await rao.getByRole("button", { name: "I will not do anything" }).click();
+  await rao.getByRole("button", { name: "Why we think so" }).click();
+  await expect(rao.getByRole("heading", { name: "Why we think so" })).toBeVisible();
+  await expect(rao.getByText(/\d\s?%/)).toHaveCount(0);
+});
+
+test("removing the last linked person warns that nobody will be told", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  await rao.goto("/setup");
+  await rao.getByRole("button", { name: "Remove Meera" }).click();
+  await expect(rao.getByText("Nobody will be told")).toHaveCount(0);
+  await rao.getByRole("button", { name: "Yes, remove Meera" }).click();
+  await rao.getByRole("button", { name: "Remove Arjun" }).click();
+  await expect(rao.getByText("Nobody will be told")).toBeVisible();
+});

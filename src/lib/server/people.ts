@@ -54,7 +54,17 @@ export function joinNames(names: string[]) {
 
 export type PersonInput = { name: string; relation: string; phone: string; earlyHeadsUp: boolean };
 
+/** B2: the same number twice, or Mr Rao's own number, would send alerts to the wrong phone. */
+async function assertNewNumber(db: Db, owner: User, phone: string, exceptId?: string) {
+  if (phone === owner.phone) throw new HttpError(400, "That is your own number. Add someone you trust.");
+  const same = await db.query.links.findFirst({
+    where: and(eq(schema.links.protectedId, owner.id), eq(schema.links.phone, phone)),
+  });
+  if (same && same.id !== exceptId) throw new HttpError(409, `${same.name} already has this number.`);
+}
+
 export async function addPerson(db: Db, owner: User, input: PersonInput) {
+  await assertNewNumber(db, owner, input.phone);
   const [row] = await db
     .insert(schema.links)
     .values({ protectedId: owner.id, ...input, inviteCode: newInviteCode(), codeExpiresAt: codeExpiry() })
@@ -64,6 +74,7 @@ export async function addPerson(db: Db, owner: User, input: PersonInput) {
 }
 
 export async function updatePerson(db: Db, owner: User, id: string, input: PersonInput) {
+  await assertNewNumber(db, owner, input.phone, id);
   const [row] = await db
     .update(schema.links)
     .set(input)
