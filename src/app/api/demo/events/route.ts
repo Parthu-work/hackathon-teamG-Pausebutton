@@ -2,9 +2,11 @@ import { getDb } from "@/lib/db";
 import { personaUser } from "@/lib/server/demo";
 import { listEvents } from "@/lib/server/events";
 import { route } from "@/lib/server/http";
+import { requireOperator } from "@/lib/server/operator";
 
 /** L2 live event log for the demo household. */
 export const GET = route(async (req) => {
+  requireOperator(req);
   const db = await getDb();
   const rao = await personaUser(db, "rao");
   const since = Number(new URL(req.url).searchParams.get("since") ?? 0);

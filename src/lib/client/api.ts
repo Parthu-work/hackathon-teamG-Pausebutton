@@ -30,13 +30,16 @@ export function isSimulatedOffline() {
   return Date.now() < offlineUntil;
 }
 
-export async function api<T = unknown>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+export async function api<T = unknown>(
+  path: string,
+  init?: { method?: string; body?: unknown; headers?: Record<string, string> },
+): Promise<T> {
   if (isSimulatedOffline()) throw new ApiError(0, "We could not reach the check service.");
   let res: Response;
   try {
     res = await fetch(path, {
       method: init?.method ?? (init?.body !== undefined ? "POST" : "GET"),
-      headers: init?.body !== undefined ? { "content-type": "application/json" } : undefined,
+      headers: { ...(init?.body !== undefined ? { "content-type": "application/json" } : {}), ...init?.headers },
       body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
       cache: "no-store",
     });
@@ -49,3 +52,32 @@ export async function api<T = unknown>(path: string, init?: { method?: string; b
 }
 
 export const post = <T = unknown>(path: string, body: unknown = {}) => api<T>(path, { method: "POST", body });
+
+const OPERATOR_KEY = "pb-operator-key";
+
+/**
+ * Calls an operator route (/demo, /tests runs, reset). Sends the key saved in
+ * this tab. If the server asks for one (401) and `ask` is on, it asks once and retries.
+ */
+export async function operatorApi<T = unknown>(path: string, init: { method?: string; body?: unknown } = {}, ask = true): Promise<T> {
+  const withKey = (key: string | null) => api<T>(path, { ...init, headers: key ? { "x-operator-key": key } : undefined });
+  let saved: string | null = null;
+  try {
+    saved = sessionStorage.getItem(OPERATOR_KEY);
+  } catch {
+    /* storage blocked */
+  }
+  try {
+    return await withKey(saved);
+  } catch (error) {
+    if (!ask || !(error instanceof ApiError) || error.status !== 401) throw error;
+    const key = window.prompt("Operator key")?.trim();
+    if (!key) throw error;
+    try {
+      sessionStorage.setItem(OPERATOR_KEY, key);
+    } catch {
+      /* storage blocked */
+    }
+    return withKey(key);
+  }
+}

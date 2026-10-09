@@ -1,4 +1,5 @@
 import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { APP_UTC_OFFSET_MINUTES } from "@/lib/check/config";
 import { keyPhrases } from "@/lib/check/phrases";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
@@ -22,6 +23,13 @@ export function toMeView(u: User): MeView {
     unknownOnly: u.unknownOnly,
     autoTellFamily: u.autoTellFamily,
   };
+}
+
+/** Midnight today in India, whatever time zone the server runs in (Vercel runs in UTC). */
+export function startOfToday(now = Date.now()) {
+  const offset = APP_UTC_OFFSET_MINUTES * 60_000;
+  const local = now + offset;
+  return new Date(local - (local % 86_400_000) - offset);
 }
 
 /** Polled every 2 s by Mr Rao's phone. */
@@ -105,9 +113,7 @@ export async function familyState(db: Db, me: User): Promise<FamilyState> {
   });
 
   const pending = await latestHoldFor(db, owner.id, ["pending"]);
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todays = await db.query.checks.findMany({ where: and(eq(schema.checks.userId, owner.id), gte(schema.checks.createdAt, todayStart)) });
+  const todays = await db.query.checks.findMany({ where: and(eq(schema.checks.userId, owner.id), gte(schema.checks.createdAt, startOfToday())) });
   const last = await db.query.checks.findFirst({ where: eq(schema.checks.userId, owner.id), orderBy: desc(schema.checks.createdAt) });
 
   return {

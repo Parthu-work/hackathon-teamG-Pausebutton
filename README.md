@@ -50,7 +50,7 @@ Nothing else is needed. Without `DATABASE_URL` the app runs an embedded Postgres
    - it uses structured output and has a 2.5 s timeout with no retries;
    - its phrases must appear word for word in the message;
    - it can **raise** the verdict, never lower it.
-   - If it is missing or slow, the screen shows "Checked by rules only — AI unavailable".
+   - If it is missing, slow, cut off or refuses, the screen shows "Checked by rules only — AI unavailable".
 
 Thresholds and points live in `src/lib/check/config.ts`. Tune them on `/tests`. All wording people see comes from templates in `copy.ts`, never from the AI.
 
@@ -66,6 +66,8 @@ Holds:
 - The first decision wins: Block, or Approve (which needs a second confirm).
 - After 10 minutes a hold reads as **expired** but the money stays held, and Block still works.
 - Expiry is derived from `expires_at`, so no background job is needed.
+- After 10 minutes only Block works; an expired hold is never approved.
+- The first family answer to a question wins, and Mr Rao sees the first advice.
 
 **Privacy:** the server stores a keyed fingerprint, the verdict and the warning phrases, never the message text. Pasted text stays in the phone's `sessionStorage`, so "Why we think so" can highlight it. The simulated inbox stores text because it stands in for the phone's own SMS app, and it only holds made-up messages.
 
@@ -102,7 +104,7 @@ e2e/                   two-phone Playwright test
 ## Tests
 
 ```bash
-pnpm test        # 35 tests: rules, pipeline, model parity, server flow, quality gate
+pnpm test        # 64 tests: rules, pipeline, model parity, server flow, quality gate
 pnpm eval        # prints every example and test message with its verdict and scores
 pnpm build && pnpm e2e   # two browser "phones" against a fresh in-memory database
 ```
@@ -117,6 +119,7 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
 - **Environment variables** for every Vercel environment:
   - `DATABASE_URL` (Neon, same region; the Neon–Vercel integration can create a branch per preview);
   - `SESSION_SECRET`, `FINGERPRINT_SECRET`;
+  - `OPERATOR_KEY` (needed for any public URL);
   - optionally `ANTHROPIC_API_KEY`.
 
 ## Deliberate choices and limits in phase 1
@@ -126,6 +129,6 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
   - the Android notification reader (screens M1–M4);
   - lock-screen notifications (N2), Web Push, quiet hours and escalation calls (O3), and the weekly summary (O4);
   - Hindi and Telugu screens (K3). The language chips say "Phase 2". The checker already reads Hindi, Telugu and Hinglish.
-- **Operator pages are open.** `/demo`, `/tests` and "Reset demo data" have no login. Put them behind a password before a public deploy.
+- **Operator pages need a key on a public URL.** Set `OPERATOR_KEY`: `/demo`, the `/tests` runs and "Reset demo data" then ask for it once per browser tab. Without it (on a laptop) they stay open.
 - **The rules are a starting point.** The test set is small and team-written, and the training data is synthetic. Treat the numbers as a sanity check, not real-world accuracy.
 - **Claude refusals and timeouts fall back to rules only.** No refusal fallback model is configured.

@@ -11,6 +11,7 @@ import type { CheckView } from "@/lib/views";
 import { logEvent } from "./events";
 import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, userNames } from "./holds";
 import { joinNames, linkedFamily } from "./people";
+import { secretFromEnv } from "./secrets";
 import { HttpError } from "./session";
 
 type User = typeof schema.users.$inferSelect;
@@ -43,7 +44,7 @@ function defaultTitle(r: CheckResult, normalized: string) {
 
 /** A keyed hash of the normalised text: lets us spot repeats without keeping the message. */
 function fingerprint(normalized: string) {
-  const key = process.env.FINGERPRINT_SECRET ?? "pause-button-dev-fingerprint";
+  const key = secretFromEnv("FINGERPRINT_SECRET", "pause-button-dev-fingerprint");
   return crypto.createHmac("sha256", key).update(normalized).digest("hex").slice(0, 32);
 }
 

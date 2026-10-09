@@ -10,7 +10,7 @@ import {
 } from "@/components/ui";
 import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
-import { api, post } from "@/lib/client/api";
+import { api, operatorApi, post } from "@/lib/client/api";
 import type { ActivityItem, CheckView, EventView, HoldView } from "@/lib/views";
 import { useCallName, useFamily } from "./shell";
 
@@ -593,7 +593,7 @@ export function FamilySettingsScreen() {
   const p = data?.protectedUser;
 
   async function reset() {
-    await post("/api/demo/reset");
+    await operatorApi("/api/demo/reset", { body: {} });
     await queryClient.invalidateQueries();
     toast({ title: "Demo data reset", sub: "Holds and checks cleared", icon: "check" });
   }

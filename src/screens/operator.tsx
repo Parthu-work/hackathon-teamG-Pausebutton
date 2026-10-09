@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, ToastOutlet, ToastProvider, useToast, VerdictPill } from "@/components/ui";
-import { api, broadcastWifiDrop, post } from "@/lib/client/api";
+import { api, broadcastWifiDrop, operatorApi } from "@/lib/client/api";
 import type { TestResult, TestSummary } from "@/lib/server/testset";
 import type { EventView } from "@/lib/views";
 
@@ -44,7 +44,7 @@ export function TestsPage() {
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ["tests-latest"], queryFn: () => api<Latest>("/api/tests/latest") });
   const run = useMutation({
-    mutationFn: (mode: "rules" | "haiku" | "sonnet") => post("/api/tests/run", { mode }),
+    mutationFn: (mode: "rules" | "haiku" | "sonnet") => operatorApi("/api/tests/run", { body: { mode } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tests-latest"] }),
   });
   const r = q.data?.run;
@@ -172,7 +172,9 @@ function DemoPanel() {
   const logEnd = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void post("/api/demo/personas").then(() => setReady(true));
+    void operatorApi("/api/demo/personas", { body: {} })
+      .then(() => setReady(true))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -180,7 +182,7 @@ function DemoPanel() {
     let stop = false;
     const tick = async () => {
       try {
-        const r = await api<{ events: EventView[] }>(`/api/demo/events?since=${since.current}`);
+        const r = await operatorApi<{ events: EventView[] }>(`/api/demo/events?since=${since.current}`, {}, false);
         if (stop) return;
         if (r.events.length) {
           since.current = r.events[r.events.length - 1].id;
@@ -206,14 +208,14 @@ function DemoPanel() {
   }, [events.length]);
 
   async function reset() {
-    await post("/api/demo/reset");
+    await operatorApi("/api/demo/reset", { body: {} });
     since.current = 0;
     setEvents([]);
     setFrameKey((k) => k + 1);
     toast({ title: "Demo data reset", sub: "Holds and checks cleared · Arjun still linked" });
   }
   async function sample() {
-    await post("/api/demo/sample");
+    await operatorApi("/api/demo/sample", { body: {} });
     toast({ title: "Scam sample sent", sub: "It arrives on Mr Rao's phone", icon: "msg" });
   }
   function wifi() {

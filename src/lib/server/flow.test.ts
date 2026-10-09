@@ -8,10 +8,10 @@ import examples from "@/data/examples.json";
 import { askFamily, createCheck, deleteHistory, getCheckView, openPayment, setFamilyVerdict } from "./checks";
 import { personaUser, resetDemo } from "./demo";
 import { addAdvice, decideHold, holdStatus, toHoldView } from "./holds";
-import { acceptInvite, addPerson } from "./people";
+import { acceptInvite, addPerson, newInviteCode } from "./people";
 import { personBody } from "./schemas";
 import { receiveNext } from "./sim";
-import { familyState, raoState } from "./state";
+import { familyState, raoState, startOfToday } from "./state";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -207,5 +207,14 @@ describe("people, codes and days", () => {
     const arjunAgain = { name: "Arjun 2", relation: "Son", phone: "+91 91234 56789", earlyHeadsUp: true };
     await expect(addPerson(db, rao, arjunAgain)).rejects.toThrow("Arjun already has this number");
     await expect(addPerson(db, rao, { ...arjunAgain, phone: rao.phone })).rejects.toThrow("your own number");
+  });
+
+  it("new invite codes are six characters", () => {
+    expect(newInviteCode()).toMatch(/^PB-[A-HJ-NP-Z2-9]{6}$/);
+  });
+
+  it("today starts at midnight in India, whatever the server's time zone", () => {
+    expect(startOfToday(Date.parse("2026-10-09T20:00:00Z")).toISOString()).toBe("2026-10-09T18:30:00.000Z"); // 01:30 IST on the 10th
+    expect(startOfToday(Date.parse("2026-10-09T10:00:00Z")).toISOString()).toBe("2026-10-08T18:30:00.000Z"); // 15:30 IST on the 9th
   });
 });

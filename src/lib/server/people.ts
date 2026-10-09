@@ -13,7 +13,8 @@ type User = typeof schema.users.$inferSelect;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O or 1/I
 
 export function newInviteCode() {
-  const bytes = crypto.randomBytes(4);
+  // Six characters: about a billion codes, too many to guess. The demo codes stay short.
+  const bytes = crypto.randomBytes(6);
   return "PB-" + [...bytes].map((b) => CODE_CHARS[b % CODE_CHARS.length]).join("");
 }
 
