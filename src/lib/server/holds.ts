@@ -8,6 +8,7 @@ import type { AdviceView, HoldStatus, HoldView } from "@/lib/views";
 import { answerSummary, giveAnswer } from "./answers";
 import { ownerView } from "./people";
 import { logEvent } from "./events";
+import { notifyOwnerOfAdvice } from "./notify";
 import { HttpError } from "./session";
 
 type Hold = typeof schema.holds.$inferSelect;
@@ -144,8 +145,9 @@ export async function addAdvice(db: Db, member: User, target: { holdId?: string;
     ownerId = check.userId;
   }
   await assertLinked(db, member, ownerId);
-  await db.insert(schema.advice).values({ checkId: checkId!, holdId: target.holdId ?? null, fromUserId: member.id, text });
+  const [row] = await db.insert(schema.advice).values({ checkId: checkId!, holdId: target.holdId ?? null, fromUserId: member.id, text }).returning();
   await logEvent(db, ownerId, member.name, "advice", `${member.name} sent advice: “${text}”`, target.holdId ?? null);
+  await notifyOwnerOfAdvice(db, row, ownerId, member.name);
 }
 
 /** G2 "Cancel this payment" by Mr Rao himself. */

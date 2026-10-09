@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
 import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
 import { api, ApiError, post } from "@/lib/client/api";
+import { onPushWhileOpen, registerServiceWorker, resyncPush } from "@/lib/client/push";
 import type { RaoState } from "@/lib/views";
 
 const RaoContext = createContext<UseQueryResult<RaoState, Error> | null>(null);
@@ -50,6 +51,14 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (q.error instanceof ApiError && q.error.status === 401 && q.fetchStatus === "idle") router.replace("/welcome");
   }, [q.error, q.fetchStatus, router]);
+
+  // Notifications when family acts: install the service worker, re-register this
+  // phone if it already has permission (push endpoints can change), and refresh
+  // at once when a push arrives while the app is open.
+  useEffect(() => {
+    void registerServiceWorker().then(() => resyncPush());
+  }, []);
+  useEffect(() => onPushWhileOpen(() => void queryClient.invalidateQueries()), [queryClient]);
 
   useEffect(() => {
     if (offline) wasOffline.current = true;

@@ -3,11 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Icon } from "@/components/icons";
-import { Avatar, dayTime, Marks, RaoTabs, Screen, Sheet, TitleRow, useToast, VerdictPill } from "@/components/ui";
+import { Avatar, dayTime, Marks, RaoTabs, Screen, Sheet, TitleRow, Toggle, useToast, VerdictPill } from "@/components/ui";
 import type { Verdict } from "@/lib/check/types";
 import { api, post } from "@/lib/client/api";
+import { pushStatusText, signOutApp, subscribeToPush, unsubscribeFromPush } from "@/lib/client/push";
 import { useRao } from "./shell";
 
 type CheckRow = { id: string; title: string; verdict: Verdict; checkedBy: string | null; createdAt: string; phrases: string[]; source: string };
@@ -74,6 +75,49 @@ export function HistoryScreen() {
   );
 }
 
+const noSubscribe = () => () => {};
+const pushStatusNow = () => pushStatusText();
+const pushStatusServer = () => "";
+
+/** Notifications when family acts (they answer, block a payment, send advice), even with the app closed. */
+function NotificationsCard() {
+  const { data } = useRao();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  // Reads Notification.permission on every render; "" while rendering on the server.
+  const status = useSyncExternalStore(noSubscribe, pushStatusNow, pushStatusServer);
+  const helper = data?.helperNames[0] ?? "your family";
+  if (!data) return null;
+  async function onChange(on: boolean) {
+    if (on) {
+      const result = await subscribeToPush(); // asks the phone's permission: must follow the tap
+      if (result === "denied") toast({ title: "Notifications are blocked", sub: "Allow them in your phone's settings for this site", icon: "warn", tone: "red" });
+      else if (result !== "subscribed" && result !== "off") toast({ title: "This phone cannot show notifications", sub: "You still see answers when the app is open", icon: "warn" });
+    } else {
+      await unsubscribeFromPush();
+    }
+    await api("/api/me/settings", { method: "PATCH", body: { alertNotify: on } });
+    await queryClient.invalidateQueries({ queryKey: ["rao-state"] });
+  }
+  function test() {
+    void post<{ sent: number }>("/api/push/test", { app: "rao" })
+      .then((r) => toast({ title: r.sent ? "Test notification sent" : "No notification went out", sub: r.sent ? "Check your notification bar" : "Turn on Notifications first", icon: "bell" }))
+      .catch(() => toast({ title: "Could not send a test", sub: "Try again", icon: "warn" }));
+  }
+  return (
+    <div className="card" style={{ gap: 12 }}>
+      <div className="row">
+        <div className="grow">
+          <b style={{ fontSize: 17 }}>Notifications</b>
+          <p className="sm">{status || `When ${helper} answers or sends advice, even if the app is closed.`}</p>
+        </div>
+        <Toggle on={data.me.alertNotify} label="Notifications" onChange={(v) => void onChange(v)} />
+      </div>
+      {data.me.alertNotify && <button className="btn line md-btn" onClick={test}>Send me a test notification</button>}
+    </div>
+  );
+}
+
 /** K2 · Settings */
 export function SettingsScreen() {
   const router = useRouter();
@@ -89,7 +133,7 @@ export function SettingsScreen() {
   const watching = data.me.watchSms || data.me.watchWhatsapp;
 
   async function signOut() {
-    await post("/api/auth/sign-out", { app: "rao" });
+    await signOutApp("rao");
     queryClient.clear();
     router.push("/welcome");
   }
@@ -124,6 +168,7 @@ export function SettingsScreen() {
           ))}
         </div>
       </div>
+      <NotificationsCard />
       <Link href="/watch" className="card row-card" style={{ textDecoration: "none" }}>
         <div className="grow">
           <b style={{ fontSize: 17 }}>Watch my messages</b>

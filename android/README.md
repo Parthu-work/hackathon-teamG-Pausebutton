@@ -2,7 +2,7 @@
 
 A small native app around the web app:
 
-- **`LauncherActivity`** opens the web app as a *Trusted Web Activity*: full screen inside Chrome, so everything the web app does (push notifications, the dialer, vibration, the family screens) works unchanged. No Firebase and no WebView quirks.
+- **`LauncherActivity`** opens the web app as a *Trusted Web Activity*: full screen inside Chrome, so everything the web app does (push notifications, the dialer, vibration, the family screens) works unchanged. No Firebase and no WebView quirks. Web Push notifications are delegated to the app (`DelegationService`): they show as Pause Button notifications and a tap opens the app on the alert (see `docs/push-notifications.md`).
 - **`MessageWatcherService`** is the real version of the simulated inbox (screens M1–M4): once the person allows notification access, it reads new SMS and WhatsApp notifications and posts their text to `POST /api/device/inbox`, where the same check runs and the family gets its heads-up.
 - **`PairActivity`** ("Connect this phone") connects the phone to the person's account with a short code from the web app (`Settings › Watch my messages › Connect this phone`), and helps with the two Android permissions (notification access, battery).
 

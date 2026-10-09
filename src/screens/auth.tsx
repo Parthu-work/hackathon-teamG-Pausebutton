@@ -1,22 +1,43 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { Screen } from "@/components/ui";
 import { post } from "@/lib/client/api";
 
+/**
+ * A tapped notification while signed out: /open sends the person here with
+ * ?next=/open?…; after signing in they continue to that alert. Only our own
+ * /open links are accepted (no open redirect), and only for the matching app.
+ */
+function useNext() {
+  const raw = useSearchParams().get("next");
+  const next = raw && raw.startsWith("/open?") && !raw.includes("//") ? raw : null;
+  const router = useRouter();
+  return {
+    query: next ? `?next=${encodeURIComponent(next)}` : "",
+    /** Goes where sign-in says, or on to the notification's screen. /open is a server redirect: load it in full. */
+    go: (redirect: string) => {
+      const forFamily = next ? new URLSearchParams(next.slice(next.indexOf("?") + 1)).has("alert") : false;
+      if (next && (redirect === "/" || redirect === "/family") && forFamily === (redirect === "/family")) window.location.assign(next);
+      else router.push(redirect);
+    },
+  };
+}
+
 /** A0 · Welcome */
 export function WelcomeScreen() {
   const router = useRouter();
+  const { query } = useNext();
   return (
     <Screen tone="ink" center bodyStyle={{ gap: 22, color: "#fff" }}>
       <span className="pm big"><i /><i /></span>
       <h1 className="h1" style={{ fontSize: 44, color: "#fff" }}>Pause Button</h1>
       <p className="p" style={{ fontSize: 22, color: "#ECE8E0" }}>A calm second opinion, before the money moves.</p>
       <div style={{ height: 24 }} />
-      <button className="btn amber" onClick={() => router.push("/sign-in")}>Get started</button>
-      <button className="btn whiteline" onClick={() => router.push("/sign-in")}>I already have an account</button>
+      <button className="btn amber" onClick={() => router.push(`/sign-in${query}`)}>Get started</button>
+      <button className="btn whiteline" onClick={() => router.push(`/sign-in${query}`)}>I already have an account</button>
       <p className="sm" style={{ color: "#B9C4CD" }}>Apty Hackathon 2026 prototype. No real messages. No real money.</p>
     </Screen>
   );
@@ -24,7 +45,7 @@ export function WelcomeScreen() {
 
 /** A1 · Sign in (mock, no real auth) */
 export function SignInScreen() {
-  const router = useRouter();
+  const next = useNext();
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState(["", "", "", ""]);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +65,7 @@ export function SignInScreen() {
     setError(null);
     try {
       const r = await post<{ redirect: string }>("/api/auth/sign-in", { phone, code: code.join("") });
-      router.push(r.redirect);
+      next.go(r.redirect);
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -58,7 +79,7 @@ export function SignInScreen() {
       setBusy(false);
       return null;
     });
-    if (r) router.push(r.redirect);
+    if (r) next.go(r.redirect);
   }
 
   return (

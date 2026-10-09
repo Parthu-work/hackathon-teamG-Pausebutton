@@ -1,4 +1,4 @@
-import { boolean, integer, jsonb, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
 import type { AiStatus, Evidence, HardRule, LinkInfo, ScamFamily, Verdict } from "../check/types";
 
 const id = () => text("id").primaryKey().$defaultFn(() => crypto.randomUUID());
@@ -174,8 +174,56 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
   auth: text("auth").notNull(),
   userAgent: text("user_agent"),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  /** Consecutive failed sends; reset by a successful one. The phone is forgotten after a few permanent failures. */
+  failureCount: integer("failure_count").notNull().default(0),
+  lastError: text("last_error"),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
+
+export type PushPayload = {
+  title: string;
+  body: string;
+  /** Where a tap leads: a same-origin path, usually /open?… (resolved on the server). */
+  url: string;
+  /** Notifications with the same tag replace each other on the phone instead of stacking. */
+  tag: string;
+  urgent: boolean;
+  /** Which app the notification is for: the service worker skips it while that app is on screen. */
+  app: "family" | "rao";
+};
+
+export type PushStatus = "sending" | "sent" | "retrying" | "failed" | "no_device" | "disabled";
+
+/**
+ * One push notification to one person (all their phones). The delivery log
+ * for debugging, the retry queue for transient failures, and the idempotency
+ * key: a dedupe key (e.g. "alert:<id>") is sent at most once per person.
+ */
+export const pushNotifications = pgTable(
+  "push_notifications",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    /** Household (protected person) the notification is about, so their polling can retry it. */
+    householdId: text("household_id"),
+    dedupeKey: text("dedupe_key"),
+    payload: jsonb("payload").$type<PushPayload>().notNull(),
+    status: text("status").$type<PushStatus>().notNull().default("sending"),
+    devices: integer("devices").notNull().default(0),
+    delivered: integer("delivered").notNull().default(0),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("push_notifications_user_dedupe").on(t.userId, t.dedupeKey),
+    index("push_notifications_retry").on(t.householdId, t.status),
+  ],
+);
 
 /**
  * A paired Android phone that watches incoming messages (M1–M4). Pairing is a

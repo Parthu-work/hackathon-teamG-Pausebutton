@@ -14,7 +14,8 @@ import { answerSummary, giveAnswer } from "./answers";
 import { logEvent } from "./events";
 import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, userNames } from "./holds";
 import { callNameOf, joinNames, linkedFamily, ownerView } from "./people";
-import { pushToUsers } from "./push";
+import { logPushOutcome, notifyOwnerOfAdvice } from "./notify";
+import { pushStatusByKey, pushToUsers } from "./push";
 import { HttpError } from "./session";
 
 type User = typeof schema.users.$inferSelect;
@@ -50,6 +51,9 @@ function fingerprint(normalized: string) {
   const key = process.env.FINGERPRINT_SECRET ?? "pause-button-dev-fingerprint";
   return crypto.createHmac("sha256", key).update(normalized).digest("hex").slice(0, 32);
 }
+
+/** Push states after which an alerted person may not notice in time: the sender should call them. */
+const UNREACHABLE = new Set(["no_device", "disabled", "failed"]);
 
 export type NewCheck = {
   text: string;
@@ -138,10 +142,13 @@ async function sendAlerts(
   const what = kind === "urgent" ? "Urgent alert" : kind === "headsup" ? "Quiet heads-up" : "“Ask” request";
   await logEvent(db, owner.id, "Check service", "alert", `${what} sent to ${joinNames(names)}`, holdId);
 
-  // Push notifications reach the family phones even when the app is closed.
+  // Push notifications reach the family phones even when the app is closed or the
+  // phone is locked. A tap opens this alert (/open resolves it, signed in or not).
+  // One notification per check on each phone: an urgent alert replaces the earlier
+  // heads-up about the same message instead of stacking next to it.
   const family = await linkedFamily(db, owner.id);
   const phrases = keyPhrases(check.signals, check.link, check.hardPhrases, 2).map((p) => `“${p}”`).join(" ");
-  const sent = await Promise.all(
+  const pushed = await Promise.all(
     rows.map((a) => {
       const who = callNameOf(owner, family.find((f) => f.familyId === a.recipientId)?.relation);
       const text =
@@ -150,11 +157,15 @@ async function sendAlerts(
           : kind === "headsup"
             ? { title: `Heads-up: ${who} got a ${check.verdict === "SCAM" ? "scam" : "suspicious"} message`, body: `${phrases || check.title}. ${who} has not tried to pay.`, urgent: false }
             : { title: `${who} is asking: is this message safe?`, body: phrases || check.title, urgent: false };
-      return pushToUsers(db, [a.recipientId], { ...text, url: `/family/alert/${a.id}`, tag: `alert-${a.id}` });
+      return pushToUsers(
+        db,
+        [a.recipientId],
+        { ...text, url: `/open?alert=${a.id}`, tag: `check-${check.id}`, app: "family" },
+        { dedupeKey: `alert:${a.id}`, householdId: owner.id },
+      );
     }),
   );
-  const pushed = sent.reduce((n, r) => n + r.sent, 0);
-  if (pushed) await logEvent(db, owner.id, "Check service", "push", `Push notification sent to ${pushed} phone${pushed === 1 ? "" : "s"}`, holdId);
+  await logPushOutcome(db, owner.id, pushed.flatMap((p) => p.results), holdId);
 }
 
 /** E2 "Ask Arjun": a suspicious (or safe) message goes to family for a decision. */
@@ -199,7 +210,10 @@ export async function setFamilyVerdict(db: Db, member: User, checkId: string, ve
   const paused = await db.query.holds.findFirst({ where: and(eq(schema.holds.checkId, checkId), eq(schema.holds.status, "pending")) });
   if (paused) throw new HttpError(409, "A payment is paused for this message. Block or approve it on the payment screen.");
   const summary = await giveAnswer(db, member, check, verdict);
-  if (note) await db.insert(schema.advice).values({ checkId, fromUserId: member.id, text: note });
+  if (note) {
+    const [row] = await db.insert(schema.advice).values({ checkId, fromUserId: member.id, text: note }).returning();
+    await notifyOwnerOfAdvice(db, row, check.userId, member.name);
+  }
   return { final: summary.final, waitingFor: summary.waitingFor };
 }
 
@@ -253,6 +267,7 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
   const sim = check.source === "paste" ? null : await db.query.simMessages.findFirst({ where: eq(schema.simMessages.checkId, check.id) });
   const copy = verdictCopy(check, helperFirst, check.safeHint === "bank" ? "debited" : "");
   const said = await answerSummary(db, check.id);
+  const pushState = opts.ownerId ? await pushStatusByKey(db, alertRows.map((a) => `alert:${a.id}`)) : new Map();
   // Family members read the exact message only if they were alerted or asked about it.
   const memberNotAlerted = !!opts.member && !alertRows.some((a) => a.recipientId === opts.member!.id);
   const fc = check.verdict === "SAFE" ? null : familyCopy(check.family);
@@ -286,6 +301,9 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
     degraded: check.degraded,
     createdAt: check.createdAt.toISOString(),
     alertedNames: family.filter((f) => alertRows.some((a) => a.kind !== "ask" && a.recipientId === f.familyId)).map((f) => names[f.familyId] ?? f.name),
+    unreachableNames: family
+      .filter((f) => alertRows.some((a) => a.recipientId === f.familyId && !a.openedAt && !a.handledAt && UNREACHABLE.has(pushState.get(`alert:${a.id}|${f.familyId}`)?.status ?? "")))
+      .map((f) => names[f.familyId] ?? f.name),
     askedFamilyAt: check.askedFamilyAt?.toISOString() ?? null,
     familyVerdict: check.familyVerdict,
     familyVerdictByName: said.final ? joinNames(said.decidedBy) : null,

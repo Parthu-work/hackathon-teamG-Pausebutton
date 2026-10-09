@@ -5,6 +5,7 @@ import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import type { ActivityItem, AlertView, FamilyState, MeView, ProtectedView, RaoState } from "@/lib/views";
 import { logEvent } from "./events";
+import { retryDuePushes } from "./push";
 import { holdStatus, latestHoldFor, toHoldView, userNames } from "./holds";
 import { linkedFamily, listPeople, ownerView } from "./people";
 import { latestBanner } from "./sim";
@@ -22,12 +23,15 @@ export function toMeView(u: User): MeView {
     watchWhatsapp: u.watchWhatsapp,
     unknownOnly: u.unknownOnly,
     autoTellFamily: u.autoTellFamily,
+    alertNotify: u.alertNotify,
   };
 }
 
 /** Polled every 2 s by Mr Rao's phone. */
 export async function raoState(db: Db, me: User): Promise<RaoState> {
   await db.update(schema.users).set({ lastSeenAt: new Date() }).where(eq(schema.users.id, me.id));
+  // Alerts to family whose push failed for a passing reason go out again from here (no background job needed).
+  await retryDuePushes(db, me.id);
   const [people, family, pending, decided, banner] = await Promise.all([
     listPeople(db, me.id),
     linkedFamily(db, me.id),

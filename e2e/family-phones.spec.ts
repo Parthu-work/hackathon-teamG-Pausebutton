@@ -245,3 +245,77 @@ test("on a laptop, Call shows the number instead of dialing", async ({ browser }
   await page.getByRole("button", { name: "Call Arjun" }).click();
   await expect(page.getByText(/^Call Arjun: \+91 \d{5} \d{5}$/)).toBeVisible();
 });
+
+// ---------------- push notifications: tapping one opens the right screen ----------------
+// The browser cannot receive a real push here; a tap opens the notification's
+// link (/open?…), which is exactly what these tests open.
+
+async function arjunsAlert(arjun: Page) {
+  await expect(arjun.getByRole("heading", { name: "Papa got a scam message" })).toBeVisible({ timeout: 10_000 });
+  const state = await (await arjun.request.get("/api/family/state")).json();
+  const alert = state.alerts.find((a: { kind: string }) => a.kind === "urgent");
+  return { alertId: alert.id as string, holdId: alert.holdId as string };
+}
+
+test("notification tap: opens the payment even when the app was closed and signed out", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByRole("button", { name: "Check this message" }).click();
+  const { alertId, holdId } = await arjunsAlert(arjun);
+
+  // App closed, still signed in: a new window starts straight on the payment.
+  const fresh = await arjun.context().newPage();
+  await fresh.goto(`/open?alert=${alertId}`);
+  await expect(fresh).toHaveURL(`/family/hold/${holdId}?via=push`);
+  await expect(fresh.getByRole("heading", { name: "Papa's payment" })).toBeVisible();
+
+  // Signed out (or a new phone): sign in first, then land on the same payment, not the home screen.
+  const signedOut = await (await browser.newContext()).newPage();
+  await signedOut.goto(`/open?alert=${alertId}`);
+  await expect(signedOut).toHaveURL(/\/welcome\?next=/);
+  await signedOut.getByRole("button", { name: "I already have an account" }).click();
+  await signedOut.getByRole("button", { name: "Continue as Arjun (demo)" }).click();
+  await expect(signedOut).toHaveURL(`/family/hold/${holdId}?via=push`);
+  await expect(signedOut.getByRole("heading", { name: "Papa's payment" })).toBeVisible();
+
+  // Papa's own notifications ("Arjun blocked the payment") open his payment screen.
+  await fresh.getByRole("button", { name: "Block this payment" }).click();
+  const papa = await rao.context().newPage();
+  await papa.goto(`/open?app=rao&to=${encodeURIComponent(`/hold/${holdId}`)}`);
+  await expect(papa).toHaveURL(`/hold/${holdId}`);
+  await expect(papa.getByRole("heading", { name: "Payment cancelled" })).toBeVisible({ timeout: 10_000 });
+});
+
+test("notification tap: someone else signed in on the phone never sees that alert", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  const meera = await phone(browser, "Meera");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByRole("button", { name: "Check this message" }).click();
+  const { alertId, holdId } = await arjunsAlert(arjun);
+
+  const page = await meera.context().newPage();
+  await page.goto(`/open?alert=${alertId}`);
+  await expect(page).toHaveURL(/\/family/);
+  await expect(page).not.toHaveURL(new RegExp(`hold/${holdId}\\?via=push`));
+});
+
+test("notification tap: a second alert rings but does not pull Arjun off the payment he opened", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const mom = await phone(browser, "Mrs Rao");
+  const arjun = await phone(browser, "Arjun");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByRole("button", { name: "Check this message" }).click();
+  await expect(arjun.getByRole("heading", { name: "Papa got a scam message" })).toBeVisible({ timeout: 10_000 });
+  const state = await (await arjun.request.get("/api/family/state")).json();
+  const { id: alertId, holdId } = state.alerts[0];
+  await arjun.goto(`/open?alert=${alertId}`);
+  await expect(arjun).toHaveURL(`/family/hold/${holdId}?via=push`);
+
+  await mom.getByRole("button", { name: "CBI parcel call" }).click();
+  await mom.getByRole("button", { name: "Check this message" }).click();
+  await expect(arjun.getByText("Another alert. It is on your home screen.")).toBeVisible({ timeout: 10_000 });
+  await expect(arjun).toHaveURL(`/family/hold/${holdId}?via=push`);
+  await expect(arjun.getByRole("heading", { name: "Papa's payment" })).toBeVisible();
+});

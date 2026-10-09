@@ -15,6 +15,8 @@ export const PATCH = route(async (req) => {
       watchWhatsapp: z.boolean().optional(),
       unknownOnly: z.boolean().optional(),
       autoTellFamily: z.boolean().optional(),
+      /** Push notifications when family acts (answers, blocks, sends advice). */
+      alertNotify: z.boolean().optional(),
     }),
   );
   await db.update(schema.users).set(body).where(eq(schema.users.id, user.id));

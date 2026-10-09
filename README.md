@@ -127,7 +127,7 @@ e2e/                   three-phone Playwright test
 ## Tests
 
 ```bash
-pnpm test        # 35 tests: rules, pipeline, model parity, server flow, quality gate
+pnpm test        # rules, pipeline, model parity, server flow, push notifications, service worker, quality gate
 pnpm eval        # prints every example and test message with its verdict and scores
 pnpm build && pnpm e2e   # two browser "phones" against a fresh in-memory database
 pnpm e2e:headed          # same, in visible windows side by side, slowed down to watch
@@ -171,7 +171,7 @@ Everyone (Mr Rao, Mrs Rao, Arjun, Meera, or your own teammates with their own nu
 - Each trusted person: sign in with the number Mr Rao entered, choose "I protect someone", enter the code, turn on **Notifications** on the "So we can reach you fast" screen (the phone asks for permission), tap **Send me a test alert**: it should ring *and* appear in the notification bar.
 - iPhones: push only works once the app is installed (Share → Add to Home Screen); the screen says so.
 
-**Alerts when the app is closed (Web Push)** are built in: the family phone registers `public/sw.js`, subscribes with the server's VAPID key (`/api/push/key`, `/api/push/subscribe`), and every alert in `src/lib/server/checks.ts` also goes out as a system notification that opens the alert screen. Dead subscriptions are forgotten automatically. Without VAPID keys the app simply skips push.
+**Alerts when the app is closed (Web Push)** reach family phones, and Mr Rao's phone when family answers or sends advice, even when the app is closed, in the background or the phone is locked. A tap opens the exact payment or message (`/open?…`, which also works signed out: sign in, then land on it). Pushes are deduplicated, retried on temporary failures, logged in `push_notifications`, follow sign-in and sign-out on a phone, and respect each person's Notifications setting; when a phone cannot be reached the sender is told to call. Without VAPID keys the app simply skips push. Details, setup and the test matrix: [docs/push-notifications.md](docs/push-notifications.md).
 
 ## The Android app (APK)
 
@@ -190,7 +190,7 @@ Build: `cd android && ./gradlew assembleDebug -PPB_HOST=https://your-deployment`
 - **Calls go through the phone's dialer.** The app never places a call itself: the person confirms in the dialer. Set the demo numbers before a live demo (see "Calls" above).
 - **Phase 2 or later:**
   - the Android notification reader (screens M1–M4);
-  - lock-screen notifications (N2), Web Push, quiet hours and escalation calls (O3), and the weekly summary (O4);
+  - quiet hours and escalation calls (O3), and the weekly summary (O4);
   - Hindi and Telugu screens (K3). The language chips say "Phase 2". The checker already reads Hindi, Telugu and Hinglish.
 - **Operator pages are open.** `/demo`, `/tests` and "Reset demo data" have no login. Put them behind a password before a public deploy.
 - **The rules are a starting point.** The test set is small and team-written, and the training data is synthetic. Treat the numbers as a sanity check, not real-world accuracy.

@@ -32,9 +32,23 @@ export async function registerServiceWorker() {
   }
 }
 
+/**
+ * The demo panel shows several phones as frames in one browser, which share one
+ * push subscription: only a real (top-level) window registers it, so the frames
+ * do not keep moving it between personas.
+ */
+function inFrame() {
+  try {
+    return window.top !== window.self;
+  } catch {
+    return true;
+  }
+}
+
 /** Asks for permission (must follow a tap) and registers this phone with the server. */
 export async function subscribeToPush(): Promise<PushStatus> {
   if (!pushSupported()) return needsInstall() ? "needs-install" : "unsupported";
+  if (inFrame()) return "unsupported";
   const { publicKey } = await api<{ publicKey: string | null }>("/api/push/key");
   if (!publicKey) return "off";
   const permission = await Notification.requestPermission();
@@ -64,7 +78,7 @@ export async function unsubscribeFromPush() {
 
 /** Keeps the server's copy fresh when permission was already given (endpoints can change). */
 export async function resyncPush() {
-  if (!pushSupported() || Notification.permission !== "granted") return;
+  if (!pushSupported() || Notification.permission !== "granted" || inFrame()) return;
   const reg = await registerServiceWorker();
   const sub = await reg?.pushManager.getSubscription();
   if (sub) await post("/api/push/subscribe", { subscription: sub.toJSON() }).catch(() => {});
@@ -76,4 +90,37 @@ export function pushStatusText(): string {
   if (Notification.permission === "granted") return "Alerts reach this phone even when the app is closed.";
   if (Notification.permission === "denied") return "Alerts are blocked in your phone's settings for this site.";
   return "Turn on Notifications so alerts reach you when the app is closed.";
+}
+
+/** This phone's push endpoint, if it has one (sent along on sign-out so the phone stops getting alerts). */
+export async function currentPushEndpoint(): Promise<string | null> {
+  if (!pushSupported()) return null;
+  const lookup = (async () => (await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription())?.endpoint ?? null)();
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
+  return Promise.race([lookup.catch(() => null), timeout]);
+}
+
+/**
+ * The service worker skips the system notification while the app is on screen
+ * and tells the page instead: refresh at once rather than at the next 2 s poll.
+ */
+export function onPushWhileOpen(handler: () => void) {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return () => {};
+  const listener = (e: MessageEvent) => {
+    if (e.data?.type === "pb-push") handler();
+  };
+  navigator.serviceWorker.addEventListener("message", listener);
+  return () => navigator.serviceWorker.removeEventListener("message", listener);
+}
+
+/** Signs this app out and unregisters this phone from the person's alerts. */
+export async function signOutApp(app: "rao" | "family") {
+  const endpoint = await currentPushEndpoint();
+  await post("/api/auth/sign-out", { app, ...(endpoint ? { endpoint } : {}) });
+}
+
+/** "granted" | "denied" | "default", or "unsupported" (no push here, or a demo-panel frame). */
+export function pushPermission(): NotificationPermission | "unsupported" {
+  if (!pushSupported() || inFrame()) return "unsupported";
+  return Notification.permission;
 }

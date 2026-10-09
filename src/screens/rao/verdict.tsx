@@ -202,6 +202,15 @@ export function VerdictScreen() {
             </div>
           </div>
         )}
+        {c.unreachableNames.length > 0 && (
+          <div className="card row-card tint-amber" data-testid="unreachable">
+            <Icon name="phone" />
+            <div className="grow">
+              <b style={{ fontSize: 17 }}>{names(c.unreachableNames)} may not see it quickly</b>
+              <p className="sm" style={{ color: "var(--text)" }}>Their phone could not be alerted. Call them.</p>
+            </div>
+          </div>
+        )}
         <div className="spacer" />
         {detected ? (
           <button className="btn ink" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />Call {helper.first}</button>
@@ -326,6 +335,11 @@ export function StopScreen() {
           ? `${names(alerted)} ${alerted.length > 1 ? "have" : "has"} been told. They will reply with what to do.`
           : "Call someone you trust before you do anything."}
       </p>
+      {c && c.unreachableNames.length > 0 && (
+        <p className="sm center-text" style={{ color: "#fff", fontSize: 15, fontWeight: 800 }} data-testid="unreachable">
+          {names(c.unreachableNames)}&apos;s phone could not be alerted. Call {c.unreachableNames.length > 1 ? "them" : names(c.unreachableNames)}.
+        </p>
+      )}
       <div className="spacer" />
       <button className="btn white" onClick={() => router.replace(`/check/${id}`)}>I will not do anything</button>
       <button className="btn whiteline md-btn" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />Call {helper.first}</button>

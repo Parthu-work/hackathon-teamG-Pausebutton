@@ -67,6 +67,8 @@ export type CheckView = {
   degraded: boolean;
   createdAt: string;
   alertedNames: string[];
+  /** Alerted people whose phones could not be notified (no phone registered, notifications off, push failed) and who have not opened it yet. */
+  unreachableNames: string[];
   askedFamilyAt: string | null;
   familyVerdict: "scam" | "not_scam" | null;
   /** Who settled it: whoever said scam, or everyone who said it is fine ("Arjun and Meera"). */
@@ -108,6 +110,8 @@ export type MeView = {
   watchWhatsapp: boolean;
   unknownOnly: boolean;
   autoTellFamily: boolean;
+  /** Push notifications when family acts. */
+  alertNotify: boolean;
 };
 
 export type SimMessageView = {

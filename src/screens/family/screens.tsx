@@ -10,7 +10,7 @@ import {
 } from "@/components/ui";
 import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
-import { pushStatusText, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
+import { needsInstall, pushPermission, pushStatusText, signOutApp, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
 import { api, post } from "@/lib/client/api";
 import type { ActivityItem, CheckView, EventView, HoldView, ProtectedView, SharedMessage } from "@/lib/views";
 import { useFamily, useTabLabel } from "./shell";
@@ -47,7 +47,7 @@ export function JoinScreen() {
 
   async function notNow() {
     if (addingAnother) return router.push("/family/settings");
-    await post("/api/auth/sign-out", { app: "family" });
+    await signOutApp("family");
     router.push("/welcome");
   }
 
@@ -185,6 +185,48 @@ export function AlertsSetupScreen() {
 
 // ---------------- C3 / J1 · family home ----------------
 
+const pushPermissionNow = () => pushPermission();
+
+/**
+ * Fallback when this phone will not ring while the app is closed (permission
+ * denied, notifications off, or not installed on iPhone): say so, and offer the
+ * fix. Alerts still ring while the app is open. Hidden when push is not set up
+ * on the server, since there is nothing to fix on the phone then.
+ */
+function PushWarning() {
+  const { data } = useFamily();
+  const queryClient = useQueryClient();
+  const pushToast = usePushToast();
+  const key = useQuery({ queryKey: ["push-key"], queryFn: () => api<{ publicKey: string | null }>("/api/push/key"), staleTime: Infinity });
+  const permission = useSyncExternalStore(noSubscribe, pushPermissionNow, pushStatusServer);
+  if (!data || !key.data?.publicKey || !permission) return null;
+  if (permission === "granted" && data.me.alertNotify) return null;
+  if (permission === "unsupported" && !needsInstall()) return null;
+  async function turnOn() {
+    const result = await subscribeToPush();
+    pushToast(result);
+    if (result === "subscribed") {
+      await api("/api/family/settings", { method: "PATCH", body: { alertNotify: true } });
+      await queryClient.invalidateQueries({ queryKey: ["family-state"] });
+    }
+  }
+  const text =
+    permission === "denied"
+      ? "Notifications are blocked for this site. Allow them in your phone's settings."
+      : permission === "unsupported"
+        ? "On iPhone, add this app to your Home Screen (Share › Add to Home Screen) to get alerts."
+        : "Turn on notifications so alerts reach you when this app is closed.";
+  return (
+    <div className="card tint-amber" style={{ gap: 8 }} data-testid="push-warning">
+      <div className="row" style={{ gap: 8 }}><Icon name="warn" size={20} /><b style={{ fontSize: 17 }}>Alerts only ring while this app is open</b></div>
+      <p className="sm" style={{ color: "var(--text)" }}>{text}</p>
+      {permission === "default" || (permission === "granted" && !data.me.alertNotify) ? (
+        <button className="btn ink md-btn" onClick={() => void turnOn()}><Icon name="bell" />Turn on notifications</button>
+      ) : null}
+    </div>
+  );
+}
+
 export function FamilyHomeScreen() {
   const router = useRouter();
   const label = useTabLabel();
@@ -196,6 +238,7 @@ export function FamilyHomeScreen() {
     <Screen tabs={<FamilyTabs active="home" callName={label} />}>
       <h1 className="h1">Who you protect</h1>
       <p className="sm">You get an alert when any of them gets a scam message or is about to pay.</p>
+      <PushWarning />
       {data.people.map((p) => (
         <PersonCard key={p.id} p={p} me={data.me.name} serverNow={data.serverNow} onOpen={() => router.push(`/family/person/${p.id}`)} />
       ))}
@@ -273,6 +316,7 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
         </div>
         <span className="tag g">LINKED</span>
       </div>
+      <PushWarning />
 
       {hold && !clock.expired && hold.approvedBy.includes(me) && (
         <div className="card tint-amber" style={{ gap: 10, padding: 18 }}>
@@ -849,7 +893,7 @@ export function FamilySettingsScreen() {
     if ((data?.people.length ?? 0) <= 1) router.push("/family/join");
   }
   async function signOut() {
-    await post("/api/auth/sign-out", { app: "family" });
+    await signOutApp("family");
     queryClient.clear();
     router.push("/welcome");
   }

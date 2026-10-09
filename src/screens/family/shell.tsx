@@ -1,12 +1,12 @@
 "use client";
 
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { usePathname, useRouter } from "next/navigation";
+import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useContext, useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
 import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
-import { registerServiceWorker, resyncPush } from "@/lib/client/push";
+import { onPushWhileOpen, registerServiceWorker, resyncPush } from "@/lib/client/push";
 import { api, ApiError, post } from "@/lib/client/api";
 import type { FamilyState } from "@/lib/views";
 
@@ -53,7 +53,10 @@ export function FamilyShell({ children }: { children: React.ReactNode }) {
 function FamilyShellInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  // Opened from a tapped notification: stay on that screen (see below).
+  const fromPush = useSearchParams().get("via") === "push";
   const toast = useToast();
+  const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ["family-state"], queryFn: () => api<FamilyState>("/api/family/state"), refetchInterval: 2000 });
   const offline = q.error instanceof ApiError && q.error.status === 0;
   const wasOffline = useRef(false);
@@ -63,6 +66,10 @@ function FamilyShellInner({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void registerServiceWorker().then(() => resyncPush());
   }, []);
+
+  // A push arrived while this screen is open (the service worker shows no
+  // notification then): fetch the new alert now instead of at the next poll.
+  useEffect(() => onPushWhileOpen(() => void queryClient.invalidateQueries()), [queryClient]);
 
   useEffect(() => {
     const unlock = () => unlockAudio();
@@ -105,8 +112,15 @@ function FamilyShellInner({ children }: { children: React.ReactNode }) {
     playAlarm(fresh.kind === "urgent" ? "urgent" : "quiet", { sound: q.data.me.alertSound, vibrate: q.data.me.alertVibrate });
     void post(`/api/family/alerts/${fresh.id}/played`).catch(() => {});
     const busyOnIt = fresh.holdId && pathname === `/family/hold/${fresh.holdId}`;
-    if (!busyOnIt) router.push(`/family/alert/${fresh.id}`);
-  }, [alerts, q.data, pathname, router]);
+    if (busyOnIt) return;
+    // The person tapped a notification to get here: another alert must not
+    // pull them away. It rings, and its own notification and the home list stay.
+    if (fromPush) {
+      toast({ title: `${fresh.owner.callName}: ${fresh.kind === "urgent" ? "scam message" : fresh.kind === "ask" ? "is asking you" : "heads-up"}`, sub: "Another alert. It is on your home screen.", icon: "bell", tone: "red" });
+      return;
+    }
+    router.push(`/family/alert/${fresh.id}`);
+  }, [alerts, q.data, pathname, router, fromPush, toast]);
 
   return (
     <FamilyContext.Provider value={q}>

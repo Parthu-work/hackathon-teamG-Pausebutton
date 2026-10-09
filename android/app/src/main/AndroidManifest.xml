@@ -56,6 +56,25 @@
                 android:value="@string/default_host" />
         </activity>
 
+        <!--
+          Notification delegation: the web app's push notifications (alerts, family
+          answers) show as Pause Button notifications, and a tap opens this app on
+          the alert instead of opening Chrome. On Android 13+ the web app's
+          "Turn on notifications" asks through the activity below.
+        -->
+        <service
+            android:name="com.google.androidbrowserhelper.trusted.DelegationService"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+        <activity
+            android:name="com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity"
+            android:exported="false" />
+
         <!-- "Connect this phone": receives pausebutton://pair?code=…&host=… from the web app. -->
         <activity
             android:name=".PairActivity"
