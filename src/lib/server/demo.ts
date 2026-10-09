@@ -175,5 +175,7 @@ export async function resetDemo(db: Db) {
   // Real sightings of the demo household go too; the synthetic other households come back fresh.
   await db.delete(schema.sightings).where(eq(schema.sightings.synthetic, false));
   await seedOtherHouseholds(db);
+  // Rate-limit counters start fresh, so a run of demos (or the browser tests) is not throttled.
+  await db.delete(schema.rateLimits);
   return (await personaUser(db, "rao"))!;
 }

@@ -14,7 +14,10 @@ export function route<T>(fn: (req: Request, params: Record<string, string>) => P
       return Response.json(data ?? { ok: true });
     } catch (error) {
       unstable_rethrow(error);
-      if (error instanceof HttpError) return Response.json({ error: error.message }, { status: error.status });
+      if (error instanceof HttpError) {
+        const headers = error.retryAfter ? { "retry-after": String(error.retryAfter) } : undefined;
+        return Response.json({ error: error.message }, { status: error.status, headers });
+      }
       if (error instanceof z.ZodError) {
         return Response.json({ error: error.issues[0]?.message ?? "Please check what you typed." }, { status: 400 });
       }

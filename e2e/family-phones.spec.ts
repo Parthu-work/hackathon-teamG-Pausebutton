@@ -233,6 +233,11 @@ test("F9 reported domains: Arjun reports the fake bank link, a reviewer blocks i
   await row.getByRole("button", { name: "Block" }).click();
   await expect(row).toContainText("BLOCKED");
   await expect(arjun.getByText("Blocked for everyone")).toBeVisible({ timeout: 10_000 });
+
+  // Blocked in error? The same screen takes it off the live blocklist, no database edit.
+  await row.getByRole("button", { name: "Unblock", exact: true }).click();
+  await expect(row).toContainText("REJECTED");
+  await expect(ops.getByText("sbi-kyc-verify.in is no longer blocked")).toBeVisible();
 });
 
 test("F5 Hindi: every screen and the verdict speak Hindi after the switch", async ({ browser }) => {

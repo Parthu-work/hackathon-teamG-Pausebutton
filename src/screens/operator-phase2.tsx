@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, Marks, ToastOutlet, ToastProvider, useToast } from "@/components/ui";
-import { api, operatorApi } from "@/lib/client/api";
+import { operatorApi, operatorRead } from "@/lib/client/api";
 import type { CampaignsView, DisagreementsView, FamiliesView, ReportView } from "@/lib/views";
 
 // Operator pages for phase 2: F3b campaigns, F4 disagreements, F7 families, F9b reported links.
@@ -36,12 +36,21 @@ function OpHeader({ title, sub }: { title: string; sub: string }) {
   );
 }
 
+/** "Loading…", or why the data did not come (most often: the operator key). */
+export function OpLoading({ error }: { error: Error | null }) {
+  return (
+    <div className="card">
+      <p className="p">{error ? error.message : "Loading…"}</p>
+    </div>
+  );
+}
+
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 
 // ---------------- F3b · /campaigns ----------------
 
 export function CampaignsPage() {
-  const q = useQuery({ queryKey: ["ops-campaigns"], queryFn: () => api<CampaignsView>("/api/ops/campaigns"), refetchInterval: 5000 });
+  const q = useQuery({ queryKey: ["ops-campaigns"], queryFn: () => operatorRead<CampaignsView>("/api/ops/campaigns"), refetchInterval: 5000 });
   const v = q.data;
   function exportCsv() {
     if (!v) return;
@@ -64,7 +73,7 @@ export function CampaignsPage() {
           {v && <span className="sm">{v.synthetic.toLocaleString("en-IN")} synthetic sightings stand in for other households in this demo.</span>}
         </div>
         {!v ? (
-          <div className="card"><p className="p">Loading…</p></div>
+          <OpLoading error={q.error} />
         ) : (
           <>
             <div className="grid-3">
@@ -107,9 +116,9 @@ export function CampaignsPage() {
 // ---------------- F4 · /tests → Disagreements ----------------
 
 export function DisagreementsPanel() {
-  const q = useQuery({ queryKey: ["ops-disagreements"], queryFn: () => api<DisagreementsView>("/api/ops/disagreements") });
+  const q = useQuery({ queryKey: ["ops-disagreements"], queryFn: () => operatorRead<DisagreementsView>("/api/ops/disagreements") });
   const v = q.data;
-  if (!v) return <div className="card"><p className="p">Loading…</p></div>;
+  if (!v) return <OpLoading error={q.error} />;
   return (
     <>
       <div className="row wrap" style={{ alignItems: "flex-end" }}>
@@ -170,9 +179,9 @@ const OUTCOME: Record<FamiliesView["rows"][number]["outcome"], { label: string; 
 };
 
 export function FamiliesPanel() {
-  const q = useQuery({ queryKey: ["ops-families"], queryFn: () => api<FamiliesView>("/api/ops/families") });
+  const q = useQuery({ queryKey: ["ops-families"], queryFn: () => operatorRead<FamiliesView>("/api/ops/families") });
   const v = q.data;
-  if (!v) return <div className="card"><p className="p">Loading…</p></div>;
+  if (!v) return <OpLoading error={q.error} />;
   return (
     <>
       <div className="grow">
@@ -235,12 +244,13 @@ const AUTO: Record<string, string> = { lookalike: "a", risky: "", unknown: "", o
 function ReportsInner() {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const q = useQuery({ queryKey: ["ops-reports"], queryFn: () => api<{ waiting: number; rows: ReportView[]; officialCount: number }>("/api/ops/reports"), refetchInterval: 5000 });
+  const q = useQuery({ queryKey: ["ops-reports"], queryFn: () => operatorRead<{ waiting: number; rows: ReportView[]; officialCount: number }>("/api/ops/reports"), refetchInterval: 5000 });
   const review = useMutation({
-    mutationFn: (v: { id: string; decision: "block" | "reject" }) => operatorApi<{ domain: string; status: string }>(`/api/ops/reports/${v.id}`, { body: { decision: v.decision } }),
+    mutationFn: (v: { id: string; decision: "block" | "reject" | "unblock" }) => operatorApi<{ domain: string; status: string }>(`/api/ops/reports/${v.id}`, { body: { decision: v.decision } }),
     onSuccess: async (r) => {
       await queryClient.invalidateQueries({ queryKey: ["ops-reports"] });
-      toast({ title: r.status === "blocked" ? `${r.domain} is now blocked` : `${r.domain} left open`, sub: r.status === "blocked" ? "Live for every family, no redeploy" : "Reports of it are closed", icon: r.status === "blocked" ? "shield" : "x" });
+      if (r.status === "unblocked") toast({ title: `${r.domain} is no longer blocked`, sub: "Off the live blocklist, no redeploy", icon: "x" });
+      else toast({ title: r.status === "blocked" ? `${r.domain} is now blocked` : `${r.domain} left open`, sub: r.status === "blocked" ? "Live for every family, no redeploy" : "Reports of it are closed", icon: r.status === "blocked" ? "shield" : "x" });
     },
     onError: (e) => toast({ title: "Not changed", sub: e.message, icon: "warn", tone: "red" }),
   });
@@ -252,7 +262,7 @@ function ReportsInner() {
       <main className="op-main">
         <OpHeader title="Reported links" sub="Family reports waiting for review. Approving adds the domain to the live blocklist with no redeploy. Route: /reports" />
         {!v ? (
-          <div className="card"><p className="p">Loading…</p></div>
+          <OpLoading error={q.error} />
         ) : (
           <>
             <div className="row"><span className="pill medium amber">{v.waiting} WAITING</span></div>
@@ -274,8 +284,13 @@ function ReportsInner() {
                             <button className="btn red" disabled={review.isPending && busyId === r.id} onClick={() => { setBusyId(r.id); review.mutate({ id: r.id, decision: "block" }); }}>Block</button>
                             <button className="btn line" disabled={review.isPending && busyId === r.id} onClick={() => { setBusyId(r.id); review.mutate({ id: r.id, decision: "reject" }); }}>Reject</button>
                           </div>
+                        ) : r.status === "blocked" ? (
+                          <div className="row" style={{ gap: 6 }}>
+                            <span className="pill small red">BLOCKED</span>
+                            <button className="btn line" disabled={review.isPending && busyId === r.id} onClick={() => { setBusyId(r.id); review.mutate({ id: r.id, decision: "unblock" }); }}>Unblock</button>
+                          </div>
                         ) : (
-                          <span className={`pill small ${r.status === "blocked" ? "red" : "ink"}`}>{r.status.toUpperCase()}</span>
+                          <span className="pill small ink">{r.status.toUpperCase()}</span>
                         )}
                       </td>
                     </tr>

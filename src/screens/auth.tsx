@@ -1,10 +1,11 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { Screen } from "@/components/ui";
-import { post } from "@/lib/client/api";
+import { api, post } from "@/lib/client/api";
 
 /** A0 · Welcome */
 export function WelcomeScreen() {
@@ -30,6 +31,8 @@ export function SignInScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const boxes = useRef<(HTMLInputElement | null)[]>([]);
+  // Demo sign-in is off on a public deploy (DEMO_SIGNIN); the form shows until we know.
+  const open = useQuery({ queryKey: ["sign-in-open"], queryFn: () => api<{ open: boolean }>("/api/auth/demo") });
 
   function setDigit(i: number, v: string) {
     const d = v.replace(/\D/g, "").slice(-1);
@@ -59,6 +62,19 @@ export function SignInScreen() {
       return null;
     });
     if (r) router.push(r.redirect);
+  }
+
+  if (open.data?.open === false) {
+    return (
+      <Screen>
+        <div className="row">
+          <span className="pm"><i /><i /></span>
+          <b className="display" style={{ fontSize: 20 }}>Pause Button</b>
+        </div>
+        <h1 className="h1">Sign-in is not open yet</h1>
+        <p className="p">This site is not taking new sign-ins. If your family set it up for you, ask them for help.</p>
+      </Screen>
+    );
   }
 
   return (

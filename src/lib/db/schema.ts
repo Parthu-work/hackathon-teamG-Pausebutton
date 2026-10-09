@@ -277,3 +277,14 @@ export const testRuns = pgTable("test_runs", {
   results: jsonb("results").$type<unknown[]>().notNull(),
   createdAt: createdAt(),
 });
+
+/**
+ * Rate-limit counters: one row per (rule, who) key, a fixed window each.
+ * Keys hold a user, device or phone id, or a hash of the caller's IP, never
+ * message text. Rows older than two days are swept as calls come in.
+ */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull().default(0),
+});
