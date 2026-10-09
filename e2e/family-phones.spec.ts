@@ -1,4 +1,4 @@
-import { devices, expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { chromium, devices, expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import examples from "../src/data/examples.json";
 
 // Mr Rao, Arjun and Meera on three "phones" (browser contexts), one service.
@@ -18,8 +18,10 @@ async function newContext(browser: Browser, options?: Parameters<Browser["newCon
   contexts.push(ctx);
   return ctx;
 }
+const browsers: Browser[] = [];
 test.afterEach(async () => {
   await Promise.all(contexts.splice(0).map((c) => c.close().catch(() => {})));
+  await Promise.all(browsers.splice(0).map((b) => b.close().catch(() => {})));
 });
 
 /** Taps a "Call …" button and returns the number the phone's dialer was opened with. */
@@ -538,6 +540,20 @@ test("removing the last linked person warns that nobody will be told", async ({ 
 
 const cbi = examples.find((e) => e.id === "cbi")!.text;
 
+/**
+ * A browser that can show notifications. Playwright's default headless
+ * Chromium is the "headless shell", which has none: Notification.permission
+ * stays "denied" whatever is granted, so showNotification throws. Channel
+ * "chromium" runs the full build headless (CI installs both); a Chromium set
+ * with executablePath in the config is used as it is.
+ */
+async function browserWithNotifications() {
+  const options = test.info().project.use.launchOptions ?? {};
+  const b = await chromium.launch({ ...options, headless: !HEADED, ...(options.executablePath ? {} : { channel: "chromium" }) });
+  browsers.push(b);
+  return b;
+}
+
 test("a real service worker shows the alert, confirms it, and its tap target opens the paused payment", async ({ browser, baseURL }) => {
   // Mr Rao pastes the CBI scam: the payment is paused and Arjun gets an urgent alert.
   const raoCtx = await newContext(browser);
@@ -545,8 +561,8 @@ test("a real service worker shows the alert, confirms it, and its tap target ope
   const check = await (await raoCtx.request.post("/api/me/checks", { data: { text: cbi } })).json();
   expect(check.holdId).toBeTruthy();
 
-  // Arjun's phone: signed in, the service worker installed, notifications allowed.
-  const ctx = await newContext(browser);
+  // Arjun's phone, in a browser that can show notifications: signed in, the service worker installed, notifications allowed.
+  const ctx = await (await browserWithNotifications()).newContext({ baseURL });
   await ctx.grantPermissions(["notifications"], { origin: baseURL });
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
