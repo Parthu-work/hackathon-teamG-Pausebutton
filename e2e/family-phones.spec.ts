@@ -448,6 +448,46 @@ test("on a laptop, Call shows the number instead of dialing", async ({ browser }
   await expect(page.getByText(/^Call Arjun: \+91 \d{5} \d{5}$/)).toBeVisible();
 });
 
+test("push notification tap: /open/<alert> lands on the paused payment, with the app closed or signed out", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  const meera = await phone(browser, "Meera");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByTestId("check-button").click();
+  await rao.getByTestId("stop-continue").click();
+  await expect(arjun.getByRole("heading", { name: "Papa got a scam message" })).toBeVisible({ timeout: 10_000 });
+
+  // What the push payload carries: each phone's own alert id.
+  type State = { alerts: { id: string; kind: string; holdId: string | null }[] };
+  const mine = ((await (await arjun.request.get("/api/family/state")).json()) as State).alerts.find((a) => a.kind === "urgent")!;
+  const hers = ((await (await meera.request.get("/api/family/state")).json()) as State).alerts.find((a) => a.kind === "urgent")!;
+  expect(mine.holdId).toBeTruthy();
+
+  // The app was in the background or closed: the tap opens a fresh page straight on the payment, not the home screen.
+  const tapped = await arjun.context().newPage();
+  await tapped.goto(`/open/${mine.id}`);
+  await tapped.waitForURL(`/family/hold/${mine.holdId}`);
+  await expect(tapped.getByText("Rs 80,000 paused")).toBeVisible();
+
+  // Someone else's alert never opens on this phone.
+  await tapped.goto(`/open/${hers.id}`);
+  await tapped.waitForURL("/family");
+
+  // A signed-out phone keeps the destination through the welcome and sign-in screens.
+  const fresh = await (await newContext(browser)).newPage();
+  await fresh.goto(`/open/${mine.id}`);
+  await fresh.waitForURL("/welcome");
+  await fresh.getByRole("button", { name: "Get started" }).click();
+  await fresh.getByRole("button", { name: "Continue as Arjun (demo)" }).click();
+  await fresh.waitForURL(`/family/hold/${mine.holdId}`, { timeout: 15_000 });
+  await expect(fresh.getByText("Rs 80,000 paused")).toBeVisible();
+
+  // Mr Rao's own phone has the Notifications setting, in his language.
+  await rao.goto("/settings");
+  await expect(rao.getByTestId("notify-row")).toContainText("Notifications");
+  await expect(rao.getByRole("switch", { name: "Notifications" })).toBeVisible();
+});
+
 test("scam with no amount: it stays on Arjun's home until he answers", async ({ browser }) => {
   const rao = await phone(browser, "Mr Rao");
   const arjun = await phone(browser, "Arjun");

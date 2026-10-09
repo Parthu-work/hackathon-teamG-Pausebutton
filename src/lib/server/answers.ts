@@ -3,6 +3,7 @@ import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import type { AnswerView } from "@/lib/views";
 import { logEvent } from "./events";
+import { notifyOwnerOfOutcome } from "./notify";
 import { HttpError } from "./session";
 
 // Several trusted people can be alerted about one message (Arjun and Meera).
@@ -119,5 +120,7 @@ async function settle(db: Db, check: Check, opts: { viaHold?: string }) {
     "family_verdict",
     summary.final === "scam" ? `Family answer: SCAM (${who})` : `Family answer: not a scam (everyone agreed: ${who})`,
   );
+  // His own phone hears the outcome even when the app is closed: "Payment cancelled", or what the family said.
+  await notifyOwnerOfOutcome(db, check, summary.final, summary.decidedBy, held);
   return summary;
 }

@@ -157,6 +157,8 @@ export async function resetDemo(db: Db) {
   await ensureDemoHousehold(db);
   const familyIds = (await Promise.all([personaUser(db, "arjun"), personaUser(db, "meera")])).map((u) => u!.id);
   await db.update(schema.users).set({ alertsReady: true }).where(inArray(schema.users.id, familyIds));
+  // The push delivery log of the demo household starts fresh too (alert rows cascade; test alerts do not).
+  await db.delete(schema.pushDeliveries).where(inArray(schema.pushDeliveries.userId, [...familyIds, ...(await Promise.all(PROTECTED_PERSONAS.map((k) => personaUser(db, k)))).map((u) => u!.id)]));
   for (const key of PROTECTED_PERSONAS) {
     const owner = (await personaUser(db, key))!;
     await db.delete(schema.checks).where(eq(schema.checks.userId, owner.id)); // cascades to holds, alerts, answers, advice

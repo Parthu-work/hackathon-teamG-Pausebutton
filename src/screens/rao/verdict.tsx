@@ -12,6 +12,7 @@ import { SIGNAL_TYPES, type SignalType } from "@/lib/check/types";
 import { bcp47 } from "@/lib/i18n";
 import { api, post } from "@/lib/client/api";
 import { loadMessage } from "@/lib/client/messages";
+import { closeNotifications } from "@/lib/client/push";
 import { canSpeak, speak, stopSpeaking } from "@/lib/client/speech";
 import type { CheckView } from "@/lib/views";
 import { HELPLINE } from "@/lib/phone";
@@ -139,6 +140,10 @@ export function VerdictScreen() {
   const { data: c, error } = useCheck(id);
   const [dismissed, setDismissed] = useState(false);
   const holdClock = useCountdown(c?.hold?.status === "pending" ? c.hold.expiresAt : undefined, undefined, (c?.hold?.holdMinutes ?? 10) * 60_000);
+  // He is looking at it: the "Possible scam from …" notification about this message is no longer needed.
+  useEffect(() => {
+    void closeNotifications((tag) => tag === `check-${id}`);
+  }, [id]);
 
   if (error) {
     return (

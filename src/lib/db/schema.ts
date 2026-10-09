@@ -1,4 +1,4 @@
-import { boolean, integer, jsonb, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
 import type { AiStatus, CallAnswers, CheckSource, Evidence, HardRule, LinkInfo, ScamFamily, Verdict } from "../check/types";
 
 const id = () => text("id").primaryKey().$defaultFn(() => crypto.randomUUID());
@@ -183,6 +183,33 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
+
+/**
+ * One row per push notification handed to a phone's push service: what was
+ * sent, to which endpoint, and how it went (sent, failed with the error, or
+ * gone when the phone had unsubscribed). The idempotency `key` ("alert:<id>")
+ * stops the same alert being pushed twice to one phone; rows cascade away
+ * with their alert or check, so "Reset demo data" clears them too.
+ */
+export const pushDeliveries = pgTable(
+  "push_deliveries",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    alertId: text("alert_id").references(() => alerts.id, { onDelete: "cascade" }),
+    checkId: text("check_id").references(() => checks.id, { onDelete: "cascade" }),
+    /** Idempotency key: one successful delivery per key and endpoint. Null for test alerts. */
+    key: text("key"),
+    tag: text("tag").notNull(),
+    endpoint: text("endpoint").notNull(),
+    status: text("status").$type<"sent" | "failed" | "gone">().notNull(),
+    statusCode: integer("status_code"),
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(1),
+    createdAt: createdAt(),
+  },
+  (t) => [index("push_deliveries_key_endpoint").on(t.key, t.endpoint), index("push_deliveries_user").on(t.userId)],
+);
 
 /**
  * A paired Android phone that watches incoming messages (M1–M4). Pairing is a

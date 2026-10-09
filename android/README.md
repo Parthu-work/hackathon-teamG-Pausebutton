@@ -11,6 +11,8 @@ The web app's address is baked in at build time (`PB_HOST`) and can be changed o
 
 Phase 2 features that need nothing native, and so work in this app as they do in the browser: lock-screen notifications with **Block payment** built in (F2, Web Push actions handled by `public/sw.js`), the live-call guard (F6), reading aloud and speaking (F10, Chrome's Web Speech), Hindi and Telugu (F5).
 
+**Push notifications** need nothing native either. Because the web app runs inside Chrome, Chrome asks for the notification permission (the app's "Notifications" toggle), shows the system notifications while the app is in the background, closed or the phone locked, and a tap opens the app straight on the alert (`/open/<alertId>` on a family phone, `/check/<id>` or `/hold/<id>` on the protected person's phone). With the site's `/.well-known/assetlinks.json` verified for this app's signing key, the tap opens full screen inside the app; otherwise it opens in Chrome. The message watcher's own uploads (`POST /api/device/inbox`) are what trigger the "Possible scam from …" notification on the protected person's phone and the heads-up on the family's. There is no Firebase and no FCM: see the main README, "Push notifications".
+
 ## Build
 
 Needs Android Studio (for its JDK and SDK) or any JDK 17+ plus the SDK packages `platforms;android-37.2`, `build-tools;36.0.0`, `platform-tools`.

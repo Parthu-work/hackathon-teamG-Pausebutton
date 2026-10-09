@@ -7,6 +7,7 @@ import { Icon } from "@/components/icons";
 import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
 import { bcp47, joinNamesIn, translator, type T } from "@/lib/i18n";
 import { api, ApiError, post } from "@/lib/client/api";
+import { registerServiceWorker, resyncPush } from "@/lib/client/push";
 import type { Language, RaoState } from "@/lib/views";
 
 const RaoContext = createContext<UseQueryResult<RaoState, Error> | null>(null);
@@ -72,6 +73,13 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     document.documentElement.lang = bcp47(lang).slice(0, 2);
   }, [lang]);
+
+  // Alerts while the app is closed (a message the watcher caught, the family's
+  // decision): install the service worker now, and re-register this phone for
+  // him if it already has permission (endpoints and keys can change).
+  useEffect(() => {
+    void registerServiceWorker().then(() => resyncPush("rao"));
+  }, []);
 
   useEffect(() => {
     if (q.error instanceof ApiError && q.error.status === 401 && q.fetchStatus === "idle") router.replace("/welcome");

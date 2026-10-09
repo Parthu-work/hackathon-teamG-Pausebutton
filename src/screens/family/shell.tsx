@@ -6,7 +6,8 @@ import { createContext, useContext, useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
 import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
-import { registerServiceWorker, resyncPush } from "@/lib/client/push";
+import { takePendingOpen } from "@/lib/client/pending-open";
+import { closeNotifications, registerServiceWorker, resyncPush } from "@/lib/client/push";
 import { api, ApiError, post } from "@/lib/client/api";
 import type { FamilyState } from "@/lib/views";
 
@@ -59,10 +60,18 @@ function FamilyShellInner({ children }: { children: React.ReactNode }) {
   const wasOffline = useRef(false);
 
   // Alerts while the app is closed: install the service worker now, and re-register
-  // this phone if it already has permission (push endpoints can change).
+  // this phone for the person signed in if it already has permission (endpoints
+  // change, keys rotate, someone else may have signed out on this phone).
   useEffect(() => {
-    void registerServiceWorker().then(() => resyncPush());
+    void registerServiceWorker().then(() => resyncPush("family"));
   }, []);
+
+  // A notification tapped while signed out: now that they are signed in, go where it pointed.
+  useEffect(() => {
+    if (!q.data) return;
+    const next = takePendingOpen();
+    if (next) router.replace(next);
+  }, [q.data, router]);
 
   useEffect(() => {
     const unlock = () => unlockAudio();
@@ -114,6 +123,16 @@ function FamilyShellInner({ children }: { children: React.ReactNode }) {
     const onUrgent = top.kind !== "urgent" && alerts.some((a) => a.kind === "urgent" && (pathname === `/family/alert/${a.id}` || (a.holdId && pathname === `/family/hold/${a.holdId}`)));
     if (!busyOnIt && !onUrgent) router.push(`/family/alert/${top.id}`);
   }, [alerts, q.data, pathname, router]);
+
+  // System notifications for alerts that are no longer waiting on this person
+  // (handled here or by the other sibling) are cleared from the tray. Keyed on
+  // the ids, so it runs when the list changes, not on every poll.
+  const pendingIds = alerts?.map((a) => a.id).join(",");
+  useEffect(() => {
+    if (pendingIds === undefined) return;
+    const pending = new Set(pendingIds.split(",").filter(Boolean).map((id) => `alert-${id}`));
+    void closeNotifications((tag) => tag.startsWith("alert-") && !pending.has(tag));
+  }, [pendingIds]);
 
   return (
     <FamilyContext.Provider value={q}>

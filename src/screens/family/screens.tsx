@@ -10,7 +10,8 @@ import {
 } from "@/components/ui";
 import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
-import { pushStatusText, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
+import { closeNotifications, pushPermission, pushStatusText, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
+import { signOut } from "@/lib/client/sign-out";
 import { api, operatorApi, post } from "@/lib/client/api";
 import type { ActivityItem, CheckView, EventView, HoldView, ProtectedView, SharedMessage } from "@/lib/views";
 import { LedgerCards, useCallOnArrival, useLedger } from "./phase2";
@@ -51,7 +52,7 @@ export function JoinScreen() {
 
   async function notNow() {
     if (addingAnother) return router.push("/family/settings");
-    await post("/api/auth/sign-out", { app: "family" });
+    await signOut("family");
     router.push("/welcome");
   }
 
@@ -123,10 +124,10 @@ function AlertToggles() {
   ];
   async function onNotify(on: boolean) {
     if (on) {
-      const result = await subscribeToPush(); // asks the phone's permission: must follow the tap
+      const result = await subscribeToPush("family"); // asks the phone's permission: must follow the tap
       pushToast(result);
     } else {
-      await unsubscribeFromPush();
+      await unsubscribeFromPush("family");
     }
     save.mutate({ alertNotify: on });
   }
@@ -139,6 +140,43 @@ function AlertToggles() {
         </div>
       ))}
     </>
+  );
+}
+
+const pushPermissionNow = () => pushPermission();
+const pushPermissionServer = () => "" as const;
+const inFrameNow = () => window.self !== window.top;
+const notFramed = () => false;
+
+/**
+ * Until this phone allows notifications, alerts reach it only while the app is
+ * open: the home screen says so and offers the one tap that fixes it. Hidden in
+ * the demo panel's frames, where the phones are simulated.
+ */
+function PushHint() {
+  const { data } = useFamily();
+  const pushToast = usePushToast();
+  const permission = useSyncExternalStore(noSubscribe, pushPermissionNow, pushPermissionServer);
+  const framed = useSyncExternalStore(noSubscribe, inFrameNow, notFramed);
+  const [, bump] = useState(0);
+  if (!data || !data.me.alertNotify || framed) return null;
+  if (permission !== "default" && permission !== "denied" && permission !== "needs-install") return null;
+  async function turnOn() {
+    pushToast(await subscribeToPush("family"));
+    bump((n) => n + 1); // re-read the permission
+  }
+  const copy =
+    permission === "denied"
+      ? { title: "Notifications are blocked on this phone", sub: "Allow them for this site in your phone's settings, then come back here. Until then alerts reach you only while the app is open." }
+      : permission === "needs-install"
+        ? { title: "Install the app to get alerts when it is closed", sub: "Share → Add to Home Screen, then turn on Notifications in Settings." }
+        : { title: "Alerts reach you only while the app is open", sub: "Turn on Notifications so a scam alert reaches you even when the app is closed or your phone is locked." };
+  return (
+    <div className="card tint-amber" style={{ gap: 8 }} data-testid="push-hint">
+      <div className="row"><Icon name="bell" /><b className="grow" style={{ fontSize: 16 }}>{copy.title}</b></div>
+      <p className="sm" style={{ color: "var(--text)" }}>{copy.sub}</p>
+      {permission === "default" && <button className="btn amber" style={{ minHeight: 48 }} onClick={turnOn}>Turn on notifications</button>}
+    </div>
   );
 }
 
@@ -164,7 +202,7 @@ export function AlertsSetupScreen() {
   async function done() {
     // "Done" is the tap that lets us ask for notification permission.
     if (data?.me.alertNotify ?? true) {
-      const result = await subscribeToPush();
+      const result = await subscribeToPush("family");
       if (result !== "subscribed") pushToast(result);
     }
     await api("/api/family/settings", { method: "PATCH", body: { alertsReady: true } });
@@ -201,6 +239,7 @@ export function FamilyHomeScreen() {
     <Screen tabs={<FamilyTabs active="home" callName={label} />}>
       <h1 className="h1">Who you protect</h1>
       <p className="sm">You get an alert when any of them gets a scam message or is about to pay.</p>
+      <PushHint />
       {data.people.map((p) => (
         <PersonCard key={p.id} p={p} me={data.me.name} serverNow={data.serverNow} onOpen={() => router.push(`/family/person/${p.id}`)} />
       ))}
@@ -283,6 +322,7 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
         </div>
         <span className="tag g">LINKED</span>
       </div>
+      <PushHint />
 
       {hold && !clock.expired && hold.approvedBy.includes(me) && (
         <div className="card tint-amber" style={{ gap: 10, padding: 18 }}>
@@ -386,6 +426,7 @@ export function AlertScreen() {
 
   async function open() {
     await post(`/api/family/alerts/${id}/opened`).catch(() => {});
+    void closeNotifications((tag) => tag === `alert-${id}`);
     router.push(alert!.holdId ? `/family/hold/${alert!.holdId}` : `/family/check/${alert!.checkId}?alert=${id}`);
   }
   const others = alert.otherRecipients;
@@ -471,6 +512,7 @@ export function FamilyHoldScreen() {
     if (a && !opened.current) {
       opened.current = true;
       void post(`/api/family/alerts/${a.id}/opened`);
+      void closeNotifications((tag) => tag === `alert-${a.id}`);
     }
   }, [fam, id]);
 
@@ -747,7 +789,9 @@ export function FamilyCheckScreen() {
   const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
-    if (alertId) void post(`/api/family/alerts/${alertId}/opened`).catch(() => {});
+    if (!alertId) return;
+    void post(`/api/family/alerts/${alertId}/opened`).catch(() => {});
+    void closeNotifications((tag) => tag === `alert-${alertId}`);
   }, [alertId]);
 
   const answer = useMutation({
@@ -971,8 +1015,8 @@ export function FamilySettingsScreen() {
     await queryClient.invalidateQueries();
     if ((data?.people.length ?? 0) <= 1) router.push("/family/join");
   }
-  async function signOut() {
-    await post("/api/auth/sign-out", { app: "family" });
+  async function leave() {
+    await signOut("family");
     queryClient.clear();
     router.push("/welcome");
   }
@@ -1014,7 +1058,7 @@ export function FamilySettingsScreen() {
         <p className="sm">What an urgent alert looks like with the phone locked: Block works without unlocking.</p>
       </div>
       <div className="spacer" />
-      <button className="ghost" style={{ alignSelf: "center" }} onClick={signOut}>Sign out</button>
+      <button className="ghost" style={{ alignSelf: "center" }} onClick={leave}>Sign out</button>
     </Screen>
   );
 }

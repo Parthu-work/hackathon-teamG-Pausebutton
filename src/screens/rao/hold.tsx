@@ -7,6 +7,7 @@ import { Icon } from "@/components/icons";
 import { clockTime, LoadingScreen, Marks, Ring, Screen, TitleRow, useCountdown, useLeaveIfGone } from "@/components/ui";
 import { rupees } from "@/lib/check/copy";
 import { api, ApiError, post } from "@/lib/client/api";
+import { closeNotifications } from "@/lib/client/push";
 import type { HoldView } from "@/lib/views";
 import { HELPLINE } from "@/lib/phone";
 import { useHelper, useJoinNames, useT } from "./shell";
@@ -29,6 +30,10 @@ export function HoldScreen() {
   useLeaveIfGone(q.error, "/");
   const hold = q.data?.hold;
   const clock = useCountdown(hold?.expiresAt, q.data?.serverNow, (hold?.holdMinutes ?? 10) * 60_000);
+  // He is looking at it: the "Payment cancelled" notification about this payment is no longer needed.
+  useEffect(() => {
+    void closeNotifications((tag) => tag === `hold-${id}`);
+  }, [id]);
 
   // Seeing the outcome once is enough; the shell stops jumping here after this.
   const seen = useRef(false);
