@@ -7,7 +7,7 @@ import { getDb, type Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import examples from "@/data/examples.json";
 import { personaUser, resetDemo } from "./demo";
-import { assetLinks, createPairing, deviceByToken, deviceInbox, listDevices, pairDevice, removeDevice, setDeviceStatus } from "./devices";
+import { assetLinks, createPairing, deviceByToken, deviceInbox, disconnectDevice, listDevices, pairDevice, removeDevice, setDeviceStatus, watchSettings } from "./devices";
 import { familyState } from "./state";
 
 let db: Db;
@@ -57,6 +57,24 @@ describe("the Android message watcher", () => {
 
     await removeDevice(db, rao, view.id);
     await expect(deviceByToken(db, `Bearer ${token}`)).rejects.toThrow("no longer connected");
+  });
+
+  it("the phone learns what to leave out, and can disconnect itself so the web app forgets it", async () => {
+    const rao = (await personaUser(db, "rao"))!;
+    expect(watchSettings(rao)).toEqual({ watchSms: true, watchWhatsapp: true, unknownOnly: true });
+    await db.update(schema.users).set({ watchWhatsapp: false, unknownOnly: false }).where(eq(schema.users.id, rao.id));
+    const changed = (await personaUser(db, "rao"))!;
+    expect(watchSettings(changed)).toEqual({ watchSms: true, watchWhatsapp: false, unknownOnly: false });
+
+    const pairing = await createPairing(db, rao, "https://pause.example.com");
+    const { token } = await pairDevice(db, pairing.code, "Pixel 8");
+    const { device, user } = await deviceByToken(db, `Bearer ${token}`);
+    await disconnectDevice(db, device, user);
+    await expect(deviceByToken(db, `Bearer ${token}`)).rejects.toThrow("no longer connected");
+    expect((await listDevices(db, rao)).some((d) => d.name === "Pixel 8")).toBe(false);
+    const events = await db.query.events.findMany({ where: eq(schema.events.householdId, rao.id) });
+    expect(events.some((e) => e.message === "Mr Rao's Android phone (Pixel 8) disconnected itself")).toBe(true);
+    await db.update(schema.users).set({ watchWhatsapp: true, unknownOnly: true }).where(eq(schema.users.id, rao.id));
   });
 
   it("an expired code cannot pair", async () => {

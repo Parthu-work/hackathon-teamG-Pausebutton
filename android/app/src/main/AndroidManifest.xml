@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- The message watcher: send what waited once the network is back, and come back after a reboot. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- So the app can find a browser that supports Trusted Web Activities (Chrome). -->
     <queries>
@@ -103,7 +106,23 @@
             </intent-filter>
         </activity>
 
-        <!-- Reads new SMS and WhatsApp notifications once the person allows notification access. -->
+        <!-- What the watcher reads, sends and keeps; "I agree" comes before notification access. -->
+        <activity
+            android:name=".ConsentActivity"
+            android:exported="false"
+            android:label="@string/connect_title" />
+
+        <!-- After a reboot or an update: asks Android to bind the watcher again, so waiting messages go out. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Reads new SMS and WhatsApp notifications once the person agreed and allowed notification access. -->
         <service
             android:name=".MessageWatcherService"
             android:exported="true"
