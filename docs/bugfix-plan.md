@@ -17,9 +17,11 @@ The code in this plan is the code that passed. Copy it as written.
 
 ## How to hand this over
 
+This plan lives on the branch `claude/focused-planck-936p2i`, not on `main`. The agent works on that branch, or on a new branch made from it, and never on `main`. `main` changes only when you merge a pull request after reviewing the work.
+
 Give the agent this prompt:
 
-> Implement `docs/bugfix-plan.md` in this repository, task by task, in the order given. Follow the ground rules in section 1. Run each task's checks before you commit it, and commit each task with the message the plan gives. If a check fails and the plan does not say what to do, stop and report the failing output.
+> Check out the branch `claude/focused-planck-936p2i` and implement `docs/bugfix-plan.md` from it, task by task, in the order given. Follow the ground rules in section 1. Run each task's checks before you commit it, and commit each task with the message the plan gives. Never push to `main`. If a check fails and the plan does not say what to do, stop and report the failing output.
 
 ---
 
@@ -41,8 +43,9 @@ Give the agent this prompt:
 
    Screen text and error messages are short, calm, plain sentences for a 71-year-old. Never show a percentage on Mr Rao's screens.
 6. Run the task's checks before each commit and use the commit message given.
-   - Work on the branch your environment gives you. If it gives none, create `fix/phase-1-bugs` from `main`.
-   - Never push to `main`.
+   - Work on `claude/focused-planck-936p2i`, the branch this plan is on, or on a new branch made from it.
+   - If your environment assigns you a different branch, use that one and first copy the plan in: `git fetch origin claude/focused-planck-936p2i && git checkout FETCH_HEAD -- docs/bugfix-plan.md`.
+   - Never push to `main`. It changes only when someone merges a pull request.
    - Open a pull request only if asked.
 
 ## 2. Setup and baseline
