@@ -7,7 +7,7 @@ import { getDb, type Db } from "@/lib/db";
 import examples from "@/data/examples.json";
 import { askFamily, createCheck, deleteHistory, getCheckView, openPayment, setFamilyVerdict } from "./checks";
 import { personaUser, resetDemo } from "./demo";
-import { addAdvice, decideHold, holdStatus, toHoldView } from "./holds";
+import { addAdvice, cancelHold, decideHold, holdStatus, toHoldView } from "./holds";
 import { acceptInvite, addPerson, newInviteCode } from "./people";
 import { personBody } from "./schemas";
 import { receiveNext } from "./sim";
@@ -155,6 +155,20 @@ describe("family decisions stick", () => {
     await expect(openPayment(db, rao, checkId)).rejects.toThrow("Arjun blocked this payment");
     expect(await alertCount()).toBe(before);
     expect((await getCheckView(db, checkId, { ownerId: rao.id })).hold?.status).toBe("blocked");
+  });
+
+  it("after Mr Rao cancels his own hold, paying anyway starts a new one and alerts family once", async () => {
+    await resetDemo(db);
+    const { rao } = await users();
+    const { checkId, holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await cancelHold(db, rao, holdId!);
+    const alertCount = async () => (await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) })).length;
+    const before = await alertCount();
+    const again = await openPayment(db, rao, checkId);
+    expect(again.holdId).not.toBe(holdId);
+    expect(again.status).toBe("pending");
+    expect(await alertCount()).toBe(before + 2); // Arjun and Meera, once each
+    expect((await getCheckView(db, checkId, { ownerId: rao.id })).hold?.status).toBe("pending");
   });
 
   it("Mr Rao sees the first advice, not the latest", async () => {

@@ -276,7 +276,7 @@ export async function deleteHistory(db: Db, owner: User) {
   const open = await db.query.holds.findMany({
     where: and(eq(schema.holds.userId, owner.id), eq(schema.holds.status, "pending")),
   });
-  const keep = open.map((h) => h.checkId);
+  const keep = [...new Set(open.map((h) => h.checkId))];
   await db
     .delete(schema.checks)
     .where(keep.length ? and(eq(schema.checks.userId, owner.id), notInArray(schema.checks.id, keep)) : eq(schema.checks.userId, owner.id));
