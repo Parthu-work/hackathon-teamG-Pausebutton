@@ -183,7 +183,7 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
   - `OPERATOR_KEY` (needed for any public URL; a long random value);
   - `DEMO_SIGNIN` only if this deployment should offer demo sign-in (`on`); unset, every deployment keeps it off;
   - optionally `ANTHROPIC_API_KEY`.
-- **Database migrations** for this change: `drizzle/0008_rate_limits.sql` (the Vercel build runs `pnpm db:migrate`).
+- **Database migrations** run in order on every deploy (`pnpm db:migrate`; Railway's pre-deploy command, the Vercel build): `drizzle/0008_rate_limits.sql` (rate limits) and `drizzle/0009_push_receipts.sql` (push receipts) are the latest.
 
 ## On a phone
 
@@ -209,6 +209,37 @@ Everyone (Mr Rao, Mrs Rao, Arjun, Meera, or your own teammates with their own nu
 - iPhones: push only works once the app is installed (Share → Add to Home Screen); the screen says so.
 
 **Alerts when the app is closed (Web Push)** are built in: see "Push notifications" below. Without VAPID keys the app simply skips push.
+
+## Before a release: three real phones
+
+CI proves the logic (unit tests, the 40-message quality gate, three browser "phones", a real Chromium service worker, a push service speaking the real protocol, the Android watcher on an emulator). What only real hardware shows (Android's battery saver, a phone off the network, Apple's push service, a lock screen) is checked by hand before every release, on a deployment with VAPID keys set:
+
+| Phone | Plays | Set up |
+|---|---|---|
+| **Android A** | Mr Rao, with the **Pause Button app** (the watcher) | Install the APK from `/download`, sign in as Mr Rao, Settings › Watch my messages › Connect this phone, agree, allow notification access and background running |
+| **Android B** | Arjun (family), in **Chrome** or the app | Sign in as Arjun, link to Mr Rao, turn Notifications on, "Send me a test alert" |
+| **iPhone** (iOS 16.4+) | Meera (family), as an **installed web app** | Safari → Share → Add to Home Screen, open it from the Home Screen, sign in as Meera, link, turn Notifications on |
+
+Keep `/api/ops/push-health` open on a laptop (operator key): every step below should move its counts as noted.
+
+**Push (Android B and the iPhone)**
+1. Phones locked. On Android A paste the "CBI parcel call" sample. Both family phones show "Papa needs you now" on the lock screen within seconds; health: `sent` +2, `shown` +2.
+2. On Android B's lock screen tap **Block payment**: "You blocked it" shows without unlocking; Android A shows "Payment cancelled"; opening the app on the iPhone shows the payment settled ("Papa is protected").
+3. Swipe the app away on Android B and kill Safari's web app on the iPhone, paste again: both still ring, and a tap opens the paused payment straight away.
+4. Airplane mode on both family phones, paste again, wait 3 minutes, airplane mode off. The push services still accepted both pushes, so health shows them as `silent` while the phones are offline; urgent alerts live 5 minutes, so they arrive if the phones come back within that.
+5. Sign out on both family phones (that removes their push setup) and paste again: after 30 s Android A says **"Nobody has seen this yet"**, with a call button.
+6. Sign Android B back in with Notifications on, then turn off Chrome's notifications in its system settings and paste again: nothing shows; health shows `received` +1 and either `notShown` +1 or `shown` +1 (Android hides it after Chrome showed it, which no web code can see).
+
+**The watcher (Android A)**
+7. Send Android A an SMS from an unknown number with a scam text: it appears in Pause Button and Android B gets the heads-up; the Connect screen's "What we saw today" counts it as sent.
+8. Send one from a saved contact: it stays on the phone (counted "from saved contacts, not sent"). Send one from a bank-style header if you can (e.g. a real bank alert): it is checked.
+9. Airplane mode on Android A, receive two SMS, wait a minute, airplane mode off: both arrive, oldest first ("waiting for the internet" while offline).
+10. Reboot Android A and receive an SMS without opening the app: it arrives. Then `adb shell am kill ai.apty.pausebutton` and receive another: it arrives.
+11. Leave Android A locked on battery-optimised for 30 minutes, then receive an SMS. If it does not arrive, the Connect screen's battery step is the fix; note the phone model.
+12. In a busy WhatsApp group, at most 4 messages a minute are sent; an SMS from an unknown number still gets through.
+13. Remove Android A on the web app (Settings › Watch my messages): the phone shows "Pause Button stopped checking messages". Connect again, then **Disconnect this phone** on the phone: the web app no longer lists it.
+
+**Record** the date, the three phones' models and OS versions, the build (`git rev-parse --short HEAD`) and any step that failed in the release's PR. Details and the reasoning behind each step: [`docs/push.md`](docs/push.md) (push) and [`android/README.md`](android/README.md) (the watcher).
 
 ## Push notifications (alerts when the app is closed)
 
@@ -236,7 +267,7 @@ Safe messages are never pushed. A newer notification about the same message repl
 
 **Setup and deployment**
 - Environment variables, on every Vercel environment: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (print a pair with `pnpm push:keys`). Rotating the keys is safe: phones re-subscribe on their next app start.
-- Database: migrations `drizzle/0007_push_deliveries.sql` and `drizzle/0008_push_receipts.sql` (`pnpm db:migrate`, which the deploy runs; the embedded database migrates itself).
+- Database: migrations `drizzle/0007_push_deliveries.sql` and `drizzle/0009_push_receipts.sql` (`pnpm db:migrate`, which the deploy runs; the embedded database migrates itself).
 - HTTPS is required (Web Push works on `localhost` and over `pnpm share`, not on a LAN `http://` address).
 - Android: the Android app opens the site in Chrome (Trusted Web Activity), so Chrome asks for the notification permission, shows the notifications and the tap opens the app on the alert. No Firebase. With `/.well-known/assetlinks.json` verified (`ANDROID_CERT_SHA256`) it opens full screen inside the app.
 - iPhone: install to the home screen first (iOS 16.4+), then turn Notifications on; the screen says so.
