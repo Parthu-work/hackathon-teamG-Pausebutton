@@ -58,3 +58,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Android app build output and machine-specific SDK path (android/)
+/android/.gradle
+/android/build
+/android/app/build
+/android/local.properties
+/android/*.keystore
+/android/.kotlin
+# /android/dist

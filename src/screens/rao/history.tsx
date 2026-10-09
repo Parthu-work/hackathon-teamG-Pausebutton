@@ -10,7 +10,7 @@ import type { Verdict } from "@/lib/check/types";
 import { api, post } from "@/lib/client/api";
 import { useRao } from "./shell";
 
-type CheckRow = { id: string; title: string; verdict: Verdict; createdAt: string; phrases: string[]; source: string };
+type CheckRow = { id: string; title: string; verdict: Verdict; checkedBy: string | null; createdAt: string; phrases: string[]; source: string };
 
 /** K1 · My checks · Q1 empty · Q2 loading */
 export function HistoryScreen() {
@@ -46,7 +46,7 @@ export function HistoryScreen() {
           </span>
         </div>
         <h1 className="h1 center-text">No checks yet</h1>
-        <p className="p center-text" style={{ color: "var(--muted)" }}>Messages you check will show up here. We keep only the verdict and the warning phrases.</p>
+        <p className="p center-text" style={{ color: "var(--muted)" }}>Messages you check will show up here. We keep the verdict and the warning phrases.</p>
         <div className="spacer" />
         <button className="btn amber" onClick={() => router.push("/")}>Check a message</button>
       </Screen>
@@ -60,11 +60,16 @@ export function HistoryScreen() {
         <Link key={r.id} href={`/check/${r.id}`} className="card" style={{ textDecoration: "none" }}>
           <div className="row"><VerdictPill verdict={r.verdict} size="small" icon={false} /><span className="grow" /><span className="sm">{dayTime(r.createdAt)}</span></div>
           <b style={{ fontSize: 17 }}>{r.title}</b>
-          {r.phrases.length ? <Marks phrases={r.phrases} size={15} /> : r.verdict === "SAFE" && <p className="sm">No warning signs found.</p>}
+          {r.checkedBy && (
+            <p className="sm" style={{ color: "var(--text)", fontWeight: 700 }}>
+              Checked by {r.checkedBy}: {r.verdict === "SAFE" ? "not a scam" : "a scam"}
+            </p>
+          )}
+          {r.phrases.length ? <Marks phrases={r.phrases} size={15} /> : r.verdict === "SAFE" && !r.checkedBy && <p className="sm">No warning signs found.</p>}
         </Link>
       ))}
       <div className="spacer" />
-      <p className="sm center-text">We keep the warning phrases, not your messages. Tap a check to see why.</p>
+      <p className="sm center-text">We keep the warning phrases. Scam and suspicious messages are shared with your family for 24 hours. Tap a check to see why.</p>
     </Screen>
   );
 }
@@ -119,10 +124,10 @@ export function SettingsScreen() {
           ))}
         </div>
       </div>
-      <Link href="/inbox" className="card row-card" style={{ textDecoration: "none" }}>
+      <Link href="/watch" className="card row-card" style={{ textDecoration: "none" }}>
         <div className="grow">
           <b style={{ fontSize: 17 }}>Watch my messages</b>
-          <p className="sm">Warn me when a message arrives. Simulated inbox in this demo.</p>
+          <p className="sm">Warn me when a message arrives. Needs the Android app.</p>
         </div>
         <span className={`tag ${watching ? "g" : ""}`}>{watching ? "ON" : "OFF"}</span>
         <Icon name="chev" />
@@ -163,8 +168,13 @@ export function PrivacyScreen() {
     toast({ title: watching ? "Watching is off" : "Watching is on", sub: watching ? "New messages are not checked" : "New messages are checked", icon: "eye" });
   }
 
-  const keep = ["A short fingerprint of each message", "The verdict and the warning phrases", `Payment holds and ${helper}'s decision`];
-  const never = ["The message text", "Your contacts or old chats", "Your bank details"];
+  const keep = [
+    "A short fingerprint of each message",
+    "The verdict and the warning phrases",
+    `The text of a scam or suspicious message, for 24 hours, so ${helper} can read exactly what you got`,
+    `Payment holds and ${helper}'s decision`,
+  ];
+  const never = ["The text of safe messages", "Your contacts or old chats", "Your bank details"];
   return (
     <Screen
       overlay={
@@ -191,7 +201,10 @@ export function PrivacyScreen() {
           <div className="row" key={t}><span className="no-icon"><Icon name="x" /></span><span className="p" style={{ fontSize: 17 }}>{t}</span></div>
         ))}
       </div>
-      <p className="sm">In this demo every message is made up. Please do not type real messages. Messages that need a closer look are read by Claude (Anthropic) and are not stored by this app.</p>
+      <p className="sm">
+        Only the trusted people who are alerted or asked about a message can read its text. In this demo every message is made up: please do not
+        type real messages. Messages that need a closer look are also read by Claude (Anthropic).
+      </p>
       <div className="spacer" />
       <button className="btn line" onClick={() => setConfirm(true)}>Delete my history</button>
       <button className="btn redline" onClick={toggleWatching}>{watching ? "Turn off watching" : "Turn on watching"}</button>

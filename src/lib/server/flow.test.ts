@@ -5,13 +5,13 @@ process.env.PGLITE_DIR = "memory";
 
 import { getDb, type Db } from "@/lib/db";
 import examples from "@/data/examples.json";
-import { askFamily, createCheck, deleteHistory, getCheckView, openPayment, setFamilyVerdict } from "./checks";
-import { personaUser, resetDemo } from "./demo";
+import { askFamily, createCheck, deleteHistory, getCheckView, listChecks, openPayment, purgeSharedText, setFamilyVerdict, sharedMessageFor } from "./checks";
+import { ensureDemoHousehold, personaUser, resetDemo } from "./demo";
 import { addAdvice, cancelHold, decideHold, holdStatus, toHoldView } from "./holds";
 import { acceptInvite, addPerson, newInviteCode } from "./people";
 import { personBody } from "./schemas";
 import { receiveNext } from "./sim";
-import { familyState, raoState, startOfToday } from "./state";
+import { familyActivity, familyState, raoState, startOfToday } from "./state";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -42,7 +42,7 @@ describe("pasted scam → hold → family decides", () => {
 
     const fam = await familyState(db, arjun);
     expect(fam.alerts[0]).toMatchObject({ kind: "urgent", holdId, otherRecipients: ["Meera"] });
-    expect(fam.activeHold?.id).toBe(holdId);
+    expect(fam.people[0].activeHold?.id).toBe(holdId);
 
     await expect(decideHold(db, arjun, holdId!, "approve", false)).rejects.toThrow("second confirm");
     const blocked = await decideHold(db, arjun, holdId!, "block", false);
@@ -74,10 +74,15 @@ describe("suspicious → Ask Arjun → not a scam", () => {
     await askFamily(db, rao, checkId);
     expect((await familyState(db, arjun)).alerts.some((a) => a.kind === "ask" && a.checkId === checkId)).toBe(true);
     await setFamilyVerdict(db, arjun, checkId, "not_scam", "I checked. This one is fine.");
+    const waiting = await getCheckView(db, checkId, { ownerId: rao.id });
+    expect(waiting.familyVerdict).toBeNull(); // Meera was asked too
+    expect(waiting.waitingFor).toEqual(["Meera"]);
+    const { meera } = await users();
+    await setFamilyVerdict(db, meera, checkId, "not_scam");
     const view = await getCheckView(db, checkId, { ownerId: rao.id });
     expect(view.familyVerdict).toBe("not_scam");
-    expect(view.familyVerdictByName).toBe("Arjun");
-    expect(view.advice[0].text).toBe("I checked. This one is fine.");
+    expect(view.familyVerdictByName).toBe("Arjun and Meera");
+    expect(view.advice.map((a) => a.text)).toContain("I checked. This one is fine.");
   });
 
   it("paying anyway locks the payment and alerts family", async () => {
@@ -88,6 +93,72 @@ describe("suspicious → Ask Arjun → not a scam", () => {
     expect(again.holdId).toBe(first.holdId);
     const fam = await familyState(db, arjun);
     expect(fam.alerts.some((a) => a.kind === "urgent" && a.holdId === first.holdId)).toBe(true);
+  });
+});
+
+describe("two trusted people: one scam settles it, safe needs everyone", () => {
+  it('"not a scam" from one person waits for the other; from both it shows SAFE', async () => {
+    await resetDemo(db);
+    const { rao, arjun, meera } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("kyc"), source: "paste" }); // SCAM, no amount → no hold
+    await setFamilyVerdict(db, arjun, checkId, "not_scam", "I checked. This one is fine.");
+    const half = await getCheckView(db, checkId, { ownerId: rao.id });
+    expect(half.finalVerdict).toBe("SCAM");
+    expect(half.answers.map((a) => [a.name, a.verdict])).toEqual([["Arjun", "not_scam"]]);
+    expect(half.waitingFor).toEqual(["Meera"]);
+    expect((await getCheckView(db, checkId, { member: meera })).canAnswer).toBe(true);
+    expect((await getCheckView(db, checkId, { member: arjun })).canAnswer).toBe(false);
+
+    await setFamilyVerdict(db, meera, checkId, "not_scam");
+    const view = await getCheckView(db, checkId, { ownerId: rao.id });
+    expect(view.verdict).toBe("SCAM");
+    expect(view.finalVerdict).toBe("SAFE");
+    expect(view.familyVerdictByName).toBe("Arjun and Meera");
+    const row = (await listChecks(db, rao.id)).find((r) => r.id === checkId)!;
+    expect(row).toMatchObject({ verdict: "SAFE", checkedBy: "Arjun and Meera" });
+    await expect(setFamilyVerdict(db, arjun, checkId, "scam")).rejects.toThrow("already decided");
+  });
+
+  it('one "it\'s a scam" settles it, even after the other said fine', async () => {
+    const { rao, arjun, meera } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("courier"), source: "paste" });
+    await askFamily(db, rao, checkId);
+    await setFamilyVerdict(db, arjun, checkId, "not_scam");
+    expect((await getCheckView(db, checkId, { ownerId: rao.id })).finalVerdict).toBe("SUSPICIOUS");
+    await setFamilyVerdict(db, meera, checkId, "scam");
+    const view = await getCheckView(db, checkId, { ownerId: rao.id });
+    expect(view.finalVerdict).toBe("SCAM");
+    expect(view.familyVerdictByName).toBe("Meera");
+  });
+
+  it("a payment: one Block blocks it; release needs everyone to approve", async () => {
+    const { rao, arjun, meera } = await users();
+    const first = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await expect(setFamilyVerdict(db, arjun, first.checkId, "not_scam")).rejects.toThrow("Block or approve");
+    const half = await decideHold(db, arjun, first.holdId!, "approve", true);
+    expect(half.status).toBe("pending");
+    expect(half.approvedBy).toEqual(["Arjun"]);
+    expect(half.waitingFor).toEqual(["Meera"]);
+    const done = await decideHold(db, meera, first.holdId!, "approve", true);
+    expect(done.status).toBe("approved");
+    expect(done.decidedByName).toBe("Arjun and Meera");
+    expect((await getCheckView(db, first.checkId, { ownerId: rao.id })).finalVerdict).toBe("SAFE");
+
+    const second = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await decideHold(db, arjun, second.holdId!, "approve", true);
+    const blocked = await decideHold(db, meera, second.holdId!, "block", false);
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.decidedByName).toBe("Meera");
+    expect((await getCheckView(db, second.checkId, { ownerId: rao.id })).finalVerdict).toBe("SCAM");
+  });
+
+  it("someone who was not alerted cannot say it is safe", async () => {
+    const { rao } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("kyc"), source: "paste" });
+    const [ravi] = await db.insert(schema.users).values({ name: "Ravi", phone: "+91 98400 33344" }).returning();
+    await acceptInvite(db, ravi, "PB-7H3D");
+    await expect(setFamilyVerdict(db, ravi, checkId, "not_scam")).rejects.toThrow("Only the people who were alerted");
+    expect((await getCheckView(db, checkId, { member: ravi })).canAnswer).toBe(false);
   });
 });
 
@@ -102,13 +173,115 @@ describe("simulated inbox", () => {
     const fam = await familyState(db, arjun);
     expect(fam.alerts.map((a) => a.kind)).toEqual(["headsup"]);
   });
+});
 
-  it("the text is never stored with the check", async () => {
-    const { rao } = await users();
+describe("the message family reads", () => {
+  it("is kept for a scam, readable by alerted family only, and never for a safe message", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
     const { checkId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
     const row = (await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) }))!;
-    expect(JSON.stringify(row)).not.toContain("A parcel in your name");
+    expect(row.messageText).toBe(text("cbi"));
     expect(row.fingerprint).toMatch(/^[0-9a-f]{32}$/);
+
+    // Arjun was alerted: he reads the exact message, with offsets that still point at the phrases.
+    const shared = await sharedMessageFor(db, arjun, checkId);
+    expect(shared?.text).toBe(text("cbi"));
+    const fear = shared!.signals.find((s) => s.type === "fear")!;
+    expect(shared!.text.slice(fear.start, fear.end)).toBe("illegal items");
+
+    // Someone linked later, who was never alerted, does not.
+    const [ravi] = await db.insert(schema.users).values({ name: "Ravi", phone: "+91 98400 22233" }).returning();
+    await acceptInvite(db, ravi, "PB-7H3D");
+    expect(await sharedMessageFor(db, ravi, checkId)).toBeNull();
+    expect((await getCheckView(db, checkId, { member: ravi })).messageText).toBeNull();
+
+    // A safe message's text is not kept.
+    const safe = await createCheck(db, rao, { text: text("bank"), source: "paste" });
+    const safeRow = (await db.query.checks.findFirst({ where: eq(schema.checks.id, safe.checkId) }))!;
+    expect(safeRow.messageText).toBeNull();
+  });
+
+  it('"Ask Arjun anyway" on a safe message shares the text, but only the same message', async () => {
+    const { rao, arjun } = await users();
+    const safe = await createCheck(db, rao, { text: text("bank"), source: "paste" });
+    await askFamily(db, rao, safe.checkId, "Something else entirely");
+    expect((await db.query.checks.findFirst({ where: eq(schema.checks.id, safe.checkId) }))!.messageText).toBeNull();
+
+    const again = await createCheck(db, rao, { text: text("bank"), source: "paste" });
+    await askFamily(db, rao, again.checkId, text("bank"));
+    expect((await sharedMessageFor(db, arjun, again.checkId))?.text).toBe(text("bank"));
+  });
+
+  it("is deleted after 24 hours", async () => {
+    const { rao, arjun } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await db.update(schema.checks).set({ createdAt: new Date(Date.now() - 25 * 3600_000) }).where(eq(schema.checks.id, checkId));
+    expect(await sharedMessageFor(db, arjun, checkId)).toBeNull();
+    await purgeSharedText(db);
+    expect((await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) }))!.messageText).toBeNull();
+  });
+});
+
+describe("demo phone numbers", () => {
+  it("follow DEMO_*_PHONE so the Call buttons ring real teammates", async () => {
+    process.env.DEMO_ARJUN_PHONE = "90000 55555";
+    await ensureDemoHousehold(db);
+    const { rao, arjun } = await users();
+    expect(arjun.phone).toBe("+91 90000 55555");
+    const link = (await raoState(db, rao)).people.find((p) => p.name === "Arjun")!;
+    expect(link.phone).toBe("+91 90000 55555");
+    delete process.env.DEMO_ARJUN_PHONE;
+    await ensureDemoHousehold(db);
+    expect((await users()).arjun.phone).toBe("+91 91234 56789");
+  });
+});
+
+describe("one family member, two protected people", () => {
+  it("Arjun's phone lists Papa and Mummy, and says whose message an alert is about", async () => {
+    await resetDemo(db);
+    const { arjun } = await users();
+    const mom = (await personaUser(db, "mom"))!;
+    const fam = await familyState(db, arjun);
+    expect(fam.people.map((p) => [p.name, p.callName, p.relation])).toEqual([
+      ["Mr Rao", "Papa", "Son"],
+      ["Mrs Rao", "Mummy", "Son"],
+    ]);
+
+    const { checkId, holdId } = await createCheck(db, mom, { text: text("cbi"), source: "paste" });
+    const after = await familyState(db, arjun);
+    expect(after.alerts[0]).toMatchObject({ checkId, holdId, owner: { name: "Mrs Rao", callName: "Mummy" } });
+    const papa = after.people.find((p) => p.callName === "Papa")!;
+    const mummy = after.people.find((p) => p.callName === "Mummy")!;
+    expect(papa.activeHold).toBeNull();
+    expect(mummy.activeHold?.id).toBe(holdId);
+    expect(mummy.activeHold?.owner.callName).toBe("Mummy");
+    expect((await getCheckView(db, checkId, { member: arjun })).owner.callName).toBe("Mummy");
+
+    const activity = await familyActivity(db, arjun);
+    expect(activity.some((i) => i.owner.callName === "Mummy" && i.checkId === checkId)).toBe(true);
+  });
+
+  it("a friend sees the name, a child sees the nickname", async () => {
+    const { rao } = await users();
+    const [ravi] = await db.insert(schema.users).values({ name: "Ravi", phone: "+91 98400 44455" }).returning();
+    await acceptInvite(db, ravi, "PB-7H3D"); // Dinesh's code: relation Friend, to Mr Rao
+    const fam = await familyState(db, ravi);
+    expect(fam.people.map((p) => p.callName)).toEqual(["Mr Rao"]);
+    const { checkId } = await createCheck(db, rao, { text: text("kyc"), source: "paste" });
+    expect((await getCheckView(db, checkId, { member: ravi })).owner.callName).toBe("Mr Rao");
+  });
+
+  it("a family member can link a second person with another code", async () => {
+    await resetDemo(db);
+    const [ravi] = await db.insert(schema.users).values({ name: "Ravi", phone: "+91 98400 55566" }).returning();
+    await acceptInvite(db, ravi, "PB-7H3D");
+    expect((await familyState(db, ravi)).people).toHaveLength(1);
+    // Mrs Rao invites Ravi too (a fresh code on her side).
+    const mom = (await personaUser(db, "mom"))!;
+    const person = await addPerson(db, mom, { name: "Ravi", relation: "Friend", phone: "+91 98400 55566", earlyHeadsUp: true });
+    await acceptInvite(db, ravi, person.inviteCode);
+    expect((await familyState(db, ravi)).people.map((p) => p.name)).toEqual(["Mr Rao", "Mrs Rao"]);
   });
 });
 
@@ -123,13 +296,13 @@ describe("invites", () => {
 });
 
 describe("family decisions stick", () => {
-  it("the first answer to a question wins", async () => {
+  it("a later \"not a scam\" never undoes \"it's a scam\"", async () => {
     await resetDemo(db);
     const { rao, arjun, meera } = await users();
     const { checkId } = await createCheck(db, rao, { text: text("courier"), source: "paste" });
     await askFamily(db, rao, checkId);
     await setFamilyVerdict(db, arjun, checkId, "scam", "It is a scam. Do not pay or reply.");
-    await expect(setFamilyVerdict(db, meera, checkId, "not_scam", "I checked. This one is fine.")).rejects.toThrow("Arjun already answered");
+    await expect(setFamilyVerdict(db, meera, checkId, "not_scam", "I checked. This one is fine.")).rejects.toThrow("already decided: a scam");
     const view = await getCheckView(db, checkId, { ownerId: rao.id });
     expect(view.familyVerdict).toBe("scam");
     expect(view.familyVerdictByName).toBe("Arjun");
@@ -155,6 +328,16 @@ describe("family decisions stick", () => {
     await expect(openPayment(db, rao, checkId)).rejects.toThrow("Arjun blocked this payment");
     expect(await alertCount()).toBe(before);
     expect((await getCheckView(db, checkId, { ownerId: rao.id })).hold?.status).toBe("blocked");
+  });
+
+  it("after family says it is a scam, paying anyway is refused even with no hold yet", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("courier"), source: "paste" }); // SUSPICIOUS, Rs 1,850, no hold
+    await askFamily(db, rao, checkId);
+    await setFamilyVerdict(db, arjun, checkId, "scam");
+    await expect(openPayment(db, rao, checkId)).rejects.toThrow("Arjun said this is a scam");
+    expect(await db.query.holds.findFirst({ where: eq(schema.holds.checkId, checkId) })).toBeUndefined();
   });
 
   it("after Mr Rao cancels his own hold, paying anyway starts a new one and alerts family once", async () => {
@@ -194,7 +377,7 @@ describe("history and invites", () => {
     expect((await decideHold(db, arjun, holdId!, "block", false)).status).toBe("blocked");
   });
 
-  it("a linked family member cannot take a second code", async () => {
+  it("a family member cannot link to the same person twice", async () => {
     await resetDemo(db);
     const { arjun } = await users();
     await expect(acceptInvite(db, arjun, "PB-7H3D")).rejects.toThrow("already linked to Mr Rao");
@@ -202,8 +385,8 @@ describe("history and invites", () => {
 
   it("two people sending one code at once: only one joins", async () => {
     await resetDemo(db);
-    const [asha] = await db.insert(schema.users).values({ name: "Asha", phone: "+91 98400 22233" }).returning();
-    const [bala] = await db.insert(schema.users).values({ name: "Bala", phone: "+91 98400 33344" }).returning();
+    const [asha] = await db.insert(schema.users).values({ name: "Asha", phone: "+91 98400 77788" }).returning();
+    const [bala] = await db.insert(schema.users).values({ name: "Bala", phone: "+91 98400 66677" }).returning();
     const results = await Promise.allSettled([acceptInvite(db, asha, "PB-7H3D"), acceptInvite(db, bala, "PB-7H3D")]);
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
     const winner = results[0].status === "fulfilled" ? asha : bala;

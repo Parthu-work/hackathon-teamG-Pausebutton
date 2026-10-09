@@ -1,9 +1,11 @@
+import { z } from "zod";
 import { askFamily } from "@/lib/server/checks";
-import { route } from "@/lib/server/http";
+import { readBody, route } from "@/lib/server/http";
 import { requireUser } from "@/lib/server/session";
 
 /** E2 "Ask Arjun". */
-export const POST = route(async (_req, { id }) => {
+export const POST = route(async (req, { id }) => {
   const { db, user } = await requireUser("rao");
-  await askFamily(db, user, id);
+  const { text } = await readBody(req, z.object({ text: z.string().max(4000).optional() }));
+  await askFamily(db, user, id, text);
 });

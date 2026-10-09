@@ -28,6 +28,9 @@ export const INVITE_HOURS = 24;
 // "Today" on the family home starts at midnight in India (IST is UTC+5:30, no daylight saving).
 export const APP_UTC_OFFSET_MINUTES = 330;
 
+// Text of scam/suspicious messages is kept this long so alerted family can read it.
+export const SHARE_TEXT_HOURS = 24;
+
 // The AI reader is only asked about messages the fast path is unsure of.
 export const AI_TIMEOUT_MS = 2500;
 export const AI_MODELS = {

@@ -8,6 +8,41 @@
       "when": 1791542087759,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791547416393,
+      "tag": "0001_share_message_and_demo_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791548885272,
+      "tag": "0002_family_answers",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791551495855,
+      "tag": "0003_nicknames",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791553275540,
+      "tag": "0004_push_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791554639427,
+      "tag": "0005_devices",
+      "breakpoints": true
     }
   ]
 }

@@ -1,12 +1,13 @@
-import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull } from "drizzle-orm";
 import { APP_UTC_OFFSET_MINUTES } from "@/lib/check/config";
+import { finalVerdict } from "@/lib/check/final";
 import { keyPhrases } from "@/lib/check/phrases";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import type { ActivityItem, AlertView, FamilyState, MeView, RaoState } from "@/lib/views";
+import type { ActivityItem, AlertView, FamilyState, MeView, ProtectedView, RaoState } from "@/lib/views";
 import { logEvent } from "./events";
 import { holdStatus, latestHoldFor, toHoldView, userNames } from "./holds";
-import { linkedFamily, listPeople } from "./people";
+import { linkedFamily, listPeople, ownerView } from "./people";
 import { latestBanner } from "./sim";
 
 type User = typeof schema.users.$inferSelect;
@@ -56,44 +57,49 @@ export async function raoState(db: Db, me: User): Promise<RaoState> {
   };
 }
 
-/** Polled every 2 s by Arjun's phone. */
+/** Polled every 2 s by a family phone. Covers everyone this member protects (Arjun: Papa and Mummy). */
 export async function familyState(db: Db, me: User): Promise<FamilyState> {
-  const link = await db.query.links.findFirst({
+  const links = await db.query.links.findMany({
     where: and(eq(schema.links.familyId, me.id), eq(schema.links.status, "linked")),
+    orderBy: asc(schema.links.linkedAt),
   });
   const base = {
     me: { id: me.id, name: me.name, alertNotify: me.alertNotify, alertSound: me.alertSound, alertVibrate: me.alertVibrate, alertsReady: me.alertsReady },
     serverNow: new Date().toISOString(),
   };
-  if (!link) return { ...base, protectedUser: null, alerts: [], activeHold: null, lastCheck: null, today: { total: 0, scam: 0, suspicious: 0, safe: 0 } };
+  if (!links.length) return { ...base, people: [], alerts: [] };
 
-  const owner = (await db.query.users.findFirst({ where: eq(schema.users.id, link.protectedId) }))!;
+  const owners = await db.query.users.findMany({ where: inArray(schema.users.id, links.map((l) => l.protectedId)) });
+  const viewOf = (ownerId: string) => {
+    const owner = owners.find((o) => o.id === ownerId);
+    return owner ? ownerView(owner, links.find((l) => l.protectedId === ownerId)?.relation) : null;
+  };
+
   const since = new Date(Date.now() - 24 * 3600_000);
   const alertRows = await db.query.alerts.findMany({
     where: and(eq(schema.alerts.recipientId, me.id), isNull(schema.alerts.handledAt), gte(schema.alerts.createdAt, since)),
     orderBy: desc(schema.alerts.createdAt),
     limit: 10,
   });
+  const checkIds = [...new Set(alertRows.map((a) => a.checkId))];
+  const checks = checkIds.length ? await db.query.checks.findMany({ where: inArray(schema.checks.id, checkIds) }) : [];
 
   // The first poll that sees a new alert is when it "reached" this phone.
   const fresh = alertRows.filter((a) => !a.deliveredAt);
   if (fresh.length) {
     await db.update(schema.alerts).set({ deliveredAt: new Date() }).where(inArray(schema.alerts.id, fresh.map((a) => a.id)));
     for (const a of fresh) {
-      await logEvent(db, owner.id, me.name, "delivered", `${me.name}'s phone polled · new ${a.kind === "urgent" ? "hold alert" : a.kind === "headsup" ? "heads-up" : "question"}`, a.holdId);
+      const c = checks.find((x) => x.id === a.checkId);
+      if (c) await logEvent(db, c.userId, me.name, "delivered", `${me.name}'s phone polled · new ${a.kind === "urgent" ? "hold alert" : a.kind === "headsup" ? "heads-up" : "question"}`, a.holdId);
     }
   }
 
-  const checkIds = [...new Set(alertRows.map((a) => a.checkId))];
-  const checks = checkIds.length ? await db.query.checks.findMany({ where: inArray(schema.checks.id, checkIds) }) : [];
-  const others = checkIds.length
-    ? await db.query.alerts.findMany({ where: inArray(schema.alerts.checkId, checkIds) })
-    : [];
+  const others = checkIds.length ? await db.query.alerts.findMany({ where: inArray(schema.alerts.checkId, checkIds) }) : [];
   const names = await userNames(db, others.map((o) => o.recipientId));
-
   const alerts: AlertView[] = alertRows.flatMap((a) => {
     const c = checks.find((x) => x.id === a.checkId);
-    if (!c) return [];
+    const owner = c && viewOf(c.userId);
+    if (!c || !owner) return [];
     return [{
       id: a.id,
       kind: a.kind,
@@ -109,65 +115,82 @@ export async function familyState(db: Db, me: User): Promise<FamilyState> {
       source: c.source,
       senderLabel: c.senderLabel,
       otherRecipients: [...new Set(others.filter((o) => o.checkId === a.checkId && o.recipientId !== me.id).map((o) => names[o.recipientId]).filter(Boolean))],
+      owner,
     }];
   });
 
-  const pending = await latestHoldFor(db, owner.id, ["pending"]);
-  const todays = await db.query.checks.findMany({ where: and(eq(schema.checks.userId, owner.id), gte(schema.checks.createdAt, startOfToday())) });
-  const last = await db.query.checks.findFirst({ where: eq(schema.checks.userId, owner.id), orderBy: desc(schema.checks.createdAt) });
-
-  return {
-    ...base,
-    protectedUser: {
-      id: owner.id,
-      name: owner.name,
-      phone: owner.phone,
+  const todayStart = startOfToday();
+  const people: ProtectedView[] = [];
+  for (const link of links) {
+    const owner = owners.find((o) => o.id === link.protectedId);
+    if (!owner) continue;
+    const [pending, todays, last] = await Promise.all([
+      latestHoldFor(db, owner.id, ["pending"]),
+      db.query.checks.findMany({ where: and(eq(schema.checks.userId, owner.id), gte(schema.checks.createdAt, todayStart)) }),
+      db.query.checks.findFirst({ where: eq(schema.checks.userId, owner.id), orderBy: desc(schema.checks.createdAt) }),
+    ]);
+    people.push({
+      ...ownerView(owner, link.relation),
       online: !!owner.lastSeenAt && Date.now() - owner.lastSeenAt.getTime() < 15_000,
       relation: link.relation,
       linkId: link.id,
-    },
-    alerts,
-    activeHold: pending ? await toHoldView(db, pending) : null,
-    lastCheck: last
-      ? { id: last.id, verdict: last.verdict, title: last.title, createdAt: last.createdAt.toISOString(), phrases: keyPhrases(last.signals, last.link, last.hardPhrases, 2) }
-      : null,
-    today: {
-      total: todays.length,
-      scam: todays.filter((c) => c.verdict === "SCAM").length,
-      suspicious: todays.filter((c) => c.verdict === "SUSPICIOUS").length,
-      safe: todays.filter((c) => c.verdict === "SAFE").length,
-    },
-  };
-}
-
-/** J3: what the family member sees about Papa's checks and holds. */
-export async function familyActivity(db: Db, ownerId: string): Promise<ActivityItem[]> {
-  const checks = await db.query.checks.findMany({ where: eq(schema.checks.userId, ownerId), orderBy: desc(schema.checks.createdAt), limit: 40 });
-  const holds = await db.query.holds.findMany({ where: eq(schema.holds.userId, ownerId), orderBy: desc(schema.holds.createdAt), limit: 20 });
-  const names = await userNames(db, holds.map((h) => h.decidedById ?? ""));
-  const items: ActivityItem[] = checks.map((c) => ({
-    id: c.id,
-    kind: "check",
-    label: c.verdict,
-    title: c.title,
-    phrases: keyPhrases(c.signals, c.link, c.hardPhrases, 2),
-    createdAt: c.createdAt.toISOString(),
-    checkId: c.id,
-  }));
-  for (const h of holds) {
-    const status = holdStatus(h);
-    if (status === "pending" || status === "expired" || !h.decidedAt) continue;
-    const who = h.decidedById ? names[h.decidedById] ?? "Someone" : "Someone";
-    const label = status === "blocked" ? "BLOCKED" : status === "approved" ? "APPROVED" : "CANCELLED";
-    items.push({
-      id: h.id,
-      kind: "hold",
-      label,
-      title: `${who} ${status} Rs ${h.amount.toLocaleString("en-IN")}`,
-      phrases: [],
-      createdAt: h.decidedAt.toISOString(),
-      checkId: h.checkId,
+      activeHold: pending ? await toHoldView(db, pending) : null,
+      lastCheck: last
+        ? { id: last.id, verdict: finalVerdict(last.verdict, last.familyVerdict), title: last.title, createdAt: last.createdAt.toISOString(), phrases: keyPhrases(last.signals, last.link, last.hardPhrases, 2) }
+        : null,
+      today: {
+        total: todays.length,
+        scam: todays.filter((c) => finalVerdict(c.verdict, c.familyVerdict) === "SCAM").length,
+        suspicious: todays.filter((c) => finalVerdict(c.verdict, c.familyVerdict) === "SUSPICIOUS").length,
+        safe: todays.filter((c) => finalVerdict(c.verdict, c.familyVerdict) === "SAFE").length,
+      },
+      openAlerts: alerts.filter((a) => a.owner.id === owner.id && (a.kind !== "urgent" || !a.holdId)).length,
     });
   }
-  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return { ...base, people, alerts };
+}
+
+/** J3: everything this member's protected people checked, and the payments decided, newest first. */
+export async function familyActivity(db: Db, me: User): Promise<ActivityItem[]> {
+  const links = await db.query.links.findMany({ where: and(eq(schema.links.familyId, me.id), eq(schema.links.status, "linked")) });
+  if (!links.length) return [];
+  const owners = await db.query.users.findMany({ where: inArray(schema.users.id, links.map((l) => l.protectedId)) });
+  const items: ActivityItem[] = [];
+  for (const link of links) {
+    const ownerRow = owners.find((o) => o.id === link.protectedId);
+    if (!ownerRow) continue;
+    const owner = ownerView(ownerRow, link.relation);
+    const checks = await db.query.checks.findMany({ where: eq(schema.checks.userId, owner.id), orderBy: desc(schema.checks.createdAt), limit: 40 });
+    const holds = await db.query.holds.findMany({ where: eq(schema.holds.userId, owner.id), orderBy: desc(schema.holds.createdAt), limit: 20 });
+    const names = await userNames(db, holds.map((h) => h.decidedById ?? ""));
+    for (const c of checks) {
+      items.push({
+        id: c.id,
+        kind: "check",
+        label: finalVerdict(c.verdict, c.familyVerdict),
+        title: c.title,
+        phrases: keyPhrases(c.signals, c.link, c.hardPhrases, 2),
+        createdAt: c.createdAt.toISOString(),
+        checkId: c.id,
+        owner,
+      });
+    }
+    for (const h of holds) {
+      const status = holdStatus(h);
+      if (status === "pending" || status === "expired" || !h.decidedAt) continue;
+      const who = h.decidedById ? names[h.decidedById] ?? "Someone" : "Someone";
+      const label = status === "blocked" ? "BLOCKED" : status === "approved" ? "APPROVED" : "CANCELLED";
+      items.push({
+        id: h.id,
+        kind: "hold",
+        label,
+        title: `${who} ${status} Rs ${h.amount.toLocaleString("en-IN")}`,
+        phrases: [],
+        createdAt: h.decidedAt.toISOString(),
+        checkId: h.checkId,
+        owner,
+      });
+    }
+  }
+  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 60);
 }

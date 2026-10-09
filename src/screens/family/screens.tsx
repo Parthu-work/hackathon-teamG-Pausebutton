@@ -2,17 +2,18 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Icon } from "@/components/icons";
 import {
-  Avatar, clockTime, FamilyTabs, LoadingScreen, Marks, Screen, Sheet, StatusPill, TitleRow, Toggle,
-  useCall, useCountdown, useToast, VerdictPill,
+  Avatar, BackButton, clockTime, FamilyTabs, HighlightedText, LoadingScreen, Marks, Screen, Sheet, StatusPill, TitleRow, Toggle,
+  useCall, useCountdown, useLeaveIfGone, useToast, VerdictPill,
 } from "@/components/ui";
 import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
-import { api, ApiError, operatorApi, post } from "@/lib/client/api";
-import type { ActivityItem, CheckView, EventView, HoldView } from "@/lib/views";
-import { useCallName, useFamily } from "./shell";
+import { pushStatusText, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
+import { api, operatorApi, post } from "@/lib/client/api";
+import type { ActivityItem, CheckView, EventView, HoldView, ProtectedView, SharedMessage } from "@/lib/views";
+import { useFamily, useTabLabel } from "./shell";
 
 // ---------------- C1 / Q4 · accept invite ----------------
 
@@ -20,6 +21,9 @@ export function JoinScreen() {
   const router = useRouter();
   const search = useSearchParams();
   const queryClient = useQueryClient();
+  const { data: fam } = useFamily();
+  // Already protecting someone (Arjun adds Mummy after Papa): this links one more person.
+  const addingAnother = (fam?.people.length ?? 0) > 0;
   const [code, setCode] = useState(search.get("code") ?? "");
   const [error, setError] = useState<string | null>(null);
   const clean = code.trim().toUpperCase();
@@ -36,13 +40,14 @@ export function JoinScreen() {
     try {
       await post("/api/family/join", { code: clean });
       await queryClient.invalidateQueries({ queryKey: ["family-state"] });
-      router.push("/family/alerts-setup");
+      router.push(addingAnother || fam?.me.alertsReady ? "/family" : "/family/alerts-setup");
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
   async function notNow() {
+    if (addingAnother) return router.push("/family/settings");
     await post("/api/auth/sign-out", { app: "family" });
     router.push("/welcome");
   }
@@ -52,7 +57,7 @@ export function JoinScreen() {
       <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
         {who ? <Avatar name={who} size={88} /> : <span className="circle" style={{ width: 88, height: 88, background: "var(--chip)" }}><Icon name="people" size={40} /></span>}
       </div>
-      <h1 className="h1 center-text">{who ? `${who} wants you as a trusted person` : "Enter your invite code"}</h1>
+      <h1 className="h1 center-text">{who ? `${who} wants you as a trusted person` : addingAnother ? "Link another person" : "Enter your invite code"}</h1>
       <p className="p center-text">
         {who ? "If a message looks like a scam, or they are about to pay, you get an alert. Then you decide." : "Type the code you were sent. It starts with PB-."}
       </p>
@@ -70,7 +75,7 @@ export function JoinScreen() {
         )}
       </label>
       <button className={`btn ${clean.length >= 6 ? "green" : "off"}`} disabled={clean.length < 6} onClick={accept}>Accept</button>
-      <button className="ghost" style={{ alignSelf: "center" }} onClick={notNow}>Not now</button>
+      <button className="ghost" style={{ alignSelf: "center" }} onClick={notNow}>{addingAnother ? "Back" : "Not now"}</button>
       <div className="spacer" />
       <p className="sm center-text">You see only what they check with Pause Button.</p>
     </Screen>
@@ -79,9 +84,30 @@ export function JoinScreen() {
 
 // ---------------- C2 · enable alerts + test buzz ----------------
 
+/** Tells the person what happened after they turned Notifications on. */
+function usePushToast() {
+  const toast = useToast();
+  const texts: Record<PushStatus, { title: string; sub: string; tone?: "red" }> = {
+    subscribed: { title: "Alerts will reach this phone", sub: "Even when the app is closed" },
+    denied: { title: "Notifications are blocked", sub: "Allow them in your phone's settings for this site", tone: "red" },
+    "needs-install": { title: "Install the app first", sub: "Share → Add to Home Screen, then turn this on" },
+    unsupported: { title: "This browser cannot alert in the background", sub: "Use Chrome, or install the app" },
+    off: { title: "Push is not set up on the server", sub: "Alerts still work while the app is open" },
+    error: { title: "Could not turn on alerts on this phone", sub: "Try again, or use Chrome" },
+  };
+  return (status: PushStatus) => toast({ ...texts[status], icon: status === "subscribed" ? "bell" : "warn" });
+}
+
+const noSubscribe = () => () => {};
+const pushStatusNow = () => pushStatusText();
+const pushStatusServer = () => "";
+
 function AlertToggles() {
   const { data } = useFamily();
   const queryClient = useQueryClient();
+  const pushToast = usePushToast();
+  // Reads Notification.permission on every render; "" while rendering on the server.
+  const status = useSyncExternalStore(noSubscribe, pushStatusNow, pushStatusServer);
   const save = useMutation({
     mutationFn: (body: Record<string, boolean>) => api("/api/family/settings", { method: "PATCH", body }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["family-state"] }),
@@ -92,12 +118,21 @@ function AlertToggles() {
     ["Sound", "A loud tone you cannot miss.", "alertSound"],
     ["Vibrate and flash", "Buzz and flash the screen.", "alertVibrate"],
   ];
+  async function onNotify(on: boolean) {
+    if (on) {
+      const result = await subscribeToPush(); // asks the phone's permission: must follow the tap
+      pushToast(result);
+    } else {
+      await unsubscribeFromPush();
+    }
+    save.mutate({ alertNotify: on });
+  }
   return (
     <>
       {rows.map(([title, sub, key]) => (
         <div className="row" key={key}>
-          <div className="grow"><div style={{ fontWeight: 800, fontSize: 18 }}>{title}</div><p className="sm">{sub}</p></div>
-          <Toggle on={data.me[key]} label={title} onChange={(v) => save.mutate({ [key]: v })} />
+          <div className="grow"><div style={{ fontWeight: 800, fontSize: 18 }}>{title}</div><p className="sm">{key === "alertNotify" && status ? status : sub}</p></div>
+          <Toggle on={data.me[key]} label={title} onChange={(v) => (key === "alertNotify" ? void onNotify(v) : save.mutate({ [key]: v }))} />
         </div>
       ))}
     </>
@@ -110,7 +145,10 @@ function useTestAlert() {
   return () => {
     unlockAudio();
     playAlarm("urgent", { sound: data?.me.alertSound ?? true, vibrate: data?.me.alertVibrate ?? true });
-    toast({ title: "Test alert sent", sub: "This is how a scam alert feels", icon: "bell" });
+    // Also a real push to this phone's notification bar, when it is registered for them.
+    void post<{ sent: number }>("/api/push/test")
+      .then((r) => toast({ title: "Test alert sent", sub: r.sent ? "Check your notification bar too" : "This is how a scam alert feels", icon: "bell" }))
+      .catch(() => toast({ title: "Test alert sent", sub: "This is how a scam alert feels", icon: "bell" }));
   };
 }
 
@@ -118,7 +156,14 @@ export function AlertsSetupScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const test = useTestAlert();
+  const pushToast = usePushToast();
+  const { data } = useFamily();
   async function done() {
+    // "Done" is the tap that lets us ask for notification permission.
+    if (data?.me.alertNotify ?? true) {
+      const result = await subscribeToPush();
+      if (result !== "subscribed") pushToast(result);
+    }
     await api("/api/family/settings", { method: "PATCH", body: { alertsReady: true } });
     await queryClient.invalidateQueries({ queryKey: ["family-state"] });
     router.push("/family");
@@ -143,18 +188,86 @@ export function AlertsSetupScreen() {
 
 export function FamilyHomeScreen() {
   const router = useRouter();
-  const callName = useCallName();
+  const label = useTabLabel();
   const { data } = useFamily();
-  const hold = data?.activeHold ?? null;
+  if (!data) return <LoadingScreen />;
+  // One person: the design's J1 home. Several (Papa and Mummy): one card each.
+  if (data.people.length === 1) return <PersonHome person={data.people[0]} />;
+  return (
+    <Screen tabs={<FamilyTabs active="home" callName={label} />}>
+      <h1 className="h1">Who you protect</h1>
+      <p className="sm">You get an alert when any of them gets a scam message or is about to pay.</p>
+      {data.people.map((p) => (
+        <PersonCard key={p.id} p={p} me={data.me.name} serverNow={data.serverNow} onOpen={() => router.push(`/family/person/${p.id}`)} />
+      ))}
+      <button className="btn line" onClick={() => router.push("/family/join")}><Icon name="plus" />Link another person</button>
+      <div className="spacer" />
+      <p className="sm center-text">Keep this app open or installed on your home screen.</p>
+    </Screen>
+  );
+}
+
+/** J0 · one protected person on the "Who you protect" list, with what needs doing. */
+function PersonCard({ p, me, serverNow, onOpen }: { p: ProtectedView; me: string; serverNow: string; onOpen: () => void }) {
+  const hold = p.activeHold;
+  const clock = useCountdown(hold?.expiresAt, serverNow);
+  const needsMe = !!hold && !hold.approvedBy.includes(me) && !clock.expired;
+  const status = hold
+    ? clock.expired
+      ? `${rupees(hold.amount)} still on hold · time is up`
+      : needsMe
+        ? `${rupees(hold.amount)} payment paused · ${clock.label} left`
+        : `You approved · waiting for ${hold.waitingFor.join(" and ")}`
+    : p.openAlerts
+      ? `${p.openAlerts} message${p.openAlerts > 1 ? "s" : ""} to look at`
+      : `${p.callName} is protected`;
+  const tone = needsMe ? "solid-red" : hold || p.openAlerts ? "tint-amber" : "tint-green";
+  return (
+    <button className={`card ${tone}`} onClick={onOpen} data-testid={`person-${p.id}`}>
+      <div className="row">
+        <Avatar name={p.name} />
+        <div className="grow">
+          <div className="h2" style={{ fontSize: 20 }}>{p.callName}{p.callName !== p.name ? ` · ${p.name}` : ""}</div>
+          <p className="sm" style={{ color: "inherit", opacity: 0.85 }}>
+            Phone {p.online ? "online" : "offline"} · {p.today.total ? `${p.today.total} checked today` : "no checks today"}
+          </p>
+        </div>
+        <Icon name="chev" />
+      </div>
+      <b style={{ fontSize: 17 }}>{status}</b>
+    </button>
+  );
+}
+
+/** J1 · one person's home: `/family/person/[id]`, or the whole home when only one person is linked. */
+export function PersonScreen() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const { data } = useFamily();
+  const person = data?.people.find((p) => p.id === id);
+  useEffect(() => {
+    if (data && !person) router.replace("/family");
+  }, [data, person, router]);
+  if (!data || !person) return <LoadingScreen />;
+  return <PersonHome person={person} back={data.people.length > 1} />;
+}
+
+function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean }) {
+  const router = useRouter();
+  const label = useTabLabel();
+  const { data } = useFamily();
+  const callName = p.callName;
+  const hold = p.activeHold;
   const clock = useCountdown(hold?.expiresAt, data?.serverNow);
-  if (!data?.protectedUser) return <LoadingScreen />;
-  const p = data.protectedUser;
+  if (!data) return <LoadingScreen />;
+  const me = data.me.name;
   // Questions, heads-ups, and scam alerts with no payment to block (e.g. a fake KYC link).
-  const openItems = data.alerts.filter((a) => a.kind !== "urgent" || !a.holdId);
+  const openItems = data.alerts.filter((a) => a.owner.id === p.id && (a.kind !== "urgent" || !a.holdId));
 
   return (
-    <Screen tabs={<FamilyTabs active="home" callName={callName} />}>
+    <Screen tabs={<FamilyTabs active="home" callName={label} />}>
       <div className="row">
+        {back && <BackButton href="/family" />}
         <Avatar name={p.name} />
         <div className="grow">
           <div className="h2" style={{ fontSize: 22 }}>{p.name}{callName !== p.name ? ` (${callName})` : ""}</div>
@@ -163,11 +276,22 @@ export function FamilyHomeScreen() {
         <span className="tag g">LINKED</span>
       </div>
 
-      {hold && !clock.expired && (
+      {hold && !clock.expired && hold.approvedBy.includes(me) && (
+        <div className="card tint-amber" style={{ gap: 10, padding: 18 }}>
+          <span className="lbl" style={{ color: "var(--text)" }}>You approved</span>
+          <h2 className="h2">{rupees(hold.amount)} still paused</h2>
+          <p className="p" style={{ fontSize: 16 }}>Waiting for {hold.waitingFor.join(" and ")} to approve too. {clock.label} left.</p>
+          <button className="btn ink" style={{ minHeight: 56 }} onClick={() => router.push(`/family/hold/${hold.id}`)}>Open</button>
+        </div>
+      )}
+      {hold && !clock.expired && !hold.approvedBy.includes(me) && (
         <div className="card solid-red" style={{ gap: 10, padding: 18 }}>
           <span className="lbl" style={{ color: "#fff" }}>Action needed</span>
           <h2 className="h2" style={{ color: "#fff", fontSize: 28 }}>{rupees(hold.amount)} payment paused</h2>
-          <p className="p" style={{ fontSize: 16 }}>{clock.label} left to decide. {callName} is waiting.</p>
+          <p className="p" style={{ fontSize: 16 }}>
+            {clock.label} left to decide. {callName} is waiting.
+            {hold.approvedBy.length ? ` ${hold.approvedBy.join(" and ")} approved; it needs you too.` : ""}
+          </p>
           <button className="btn white" style={{ minHeight: 56 }} onClick={() => router.push(`/family/hold/${hold.id}`)}>Open</button>
         </div>
       )}
@@ -199,22 +323,22 @@ export function FamilyHomeScreen() {
         <div className="card tint-green" style={{ alignItems: "flex-start", padding: 22, gap: 10 }}>
           <span style={{ color: "var(--green-text)" }}><Icon name="shieldCheck" size={32} /></span>
           <h2 className="h2">{callName} is protected</h2>
-          <p className="p">No payments are paused. {data.today.total ? `${data.today.total} checked today.` : "No checks yet today."}</p>
+          <p className="p">No payments are paused. {p.today.total ? `${p.today.total} checked today.` : "No checks yet today."}</p>
         </div>
       )}
-      {data.lastCheck && (
-        <button className="card" onClick={() => router.push(`/family/check/${data.lastCheck!.id}`)}>
+      {p.lastCheck && (
+        <button className="card" onClick={() => router.push(`/family/check/${p.lastCheck!.id}`)}>
           <div className="lbl">Last check</div>
-          <div className="row"><VerdictPill verdict={data.lastCheck.verdict} size="small" icon={false} /><span className="sm grow">{clockTime(data.lastCheck.createdAt)} · {data.lastCheck.title}</span></div>
-          <Marks phrases={data.lastCheck.phrases} size={16} />
+          <div className="row"><VerdictPill verdict={p.lastCheck.verdict} size="small" icon={false} /><span className="sm grow">{clockTime(p.lastCheck.createdAt)} · {p.lastCheck.title}</span></div>
+          <Marks phrases={p.lastCheck.phrases} size={16} />
         </button>
       )}
-      {data.today.total > 0 ? (
+      {p.today.total > 0 ? (
         <div className="card">
           <div className="lbl">Today</div>
           <div className="row">
-            <b className="grow" style={{ fontSize: 20 }}>{data.today.total} message{data.today.total === 1 ? "" : "s"} checked</b>
-            <span className="sm">{data.today.scam} scam · {data.today.suspicious} suspicious · {data.today.safe} safe</span>
+            <b className="grow" style={{ fontSize: 20 }}>{p.today.total} message{p.today.total === 1 ? "" : "s"} checked</b>
+            <span className="sm">{p.today.scam} scam · {p.today.suspicious} suspicious · {p.today.safe} safe</span>
           </div>
         </div>
       ) : (
@@ -236,13 +360,13 @@ export function FamilyHomeScreen() {
 export function AlertScreen() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const callName = useCallName();
   const { data } = useFamily();
   const alert = data?.alerts.find((a) => a.id === id);
   useEffect(() => {
     if (data && !alert) router.replace("/family");
   }, [data, alert, router]);
   if (!alert) return <LoadingScreen />;
+  const callName = alert.owner.callName;
 
   async function open() {
     await post(`/api/family/alerts/${id}/opened`).catch(() => {});
@@ -264,7 +388,7 @@ export function AlertScreen() {
           {alert.amount ? `It asks for ${rupees(alert.amount)}. Nothing is paid. ` : "Nothing is paid. "}Tell them what to do.
         </p>
         <span className="pill medium" style={{ background: "#fff", color: "#14202B", alignSelf: "center" }}>
-          {others.length ? `Sent to you and ${others.join(" and ")}` : "Sent to you"}
+          {others.length ? `Sent to ${listNames(["you", ...others])}` : "Sent to you"}
         </span>
         <div className="spacer" />
         <button className="btn white" style={{ minHeight: 68, fontSize: 24 }} onClick={open}>Open</button>
@@ -298,22 +422,24 @@ export function FamilyHoldScreen() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const callName = useCallName();
   const call = useCall();
   const toast = useToast();
   const { data: fam } = useFamily();
   const q = useQuery({
     queryKey: ["family-hold", id],
-    queryFn: () => api<{ hold: HoldView; timeline: EventView[]; serverNow: string }>(`/api/family/holds/${id}`),
+    queryFn: () => api<{ hold: HoldView; message: SharedMessage | null; timeline: EventView[]; serverNow: string }>(`/api/family/holds/${id}`),
     refetchInterval: 2000,
   });
+  useLeaveIfGone(q.error, "/family");
   const [advice, setAdvice] = useState(ADVICE_PRESETS[0]);
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hold = q.data?.hold;
+  const callName = hold?.owner.callName ?? "Papa";
+  const papaPhone = hold?.owner.phone ?? null;
   const clock = useCountdown(hold?.expiresAt, q.data?.serverNow);
   // Advice is oldest first (Mr Rao sees the first reply), so the one just sent is last.
-  const sent = hold?.advice[hold.advice.length - 1];
+  const lastAdvice = hold?.advice[hold.advice.length - 1];
 
   // Opening the hold counts as opening its alert ("status seen").
   const opened = useRef(false);
@@ -327,10 +453,17 @@ export function FamilyHoldScreen() {
 
   const decide = useMutation({
     mutationFn: (decision: "block" | "approve") => post(`/api/family/holds/${id}/decision`, { decision, confirm: decision === "approve" }),
-    onSuccess: async (_d, decision) => {
+    onSuccess: async (view, decision) => {
       setConfirm(false);
       await queryClient.invalidateQueries();
-      toast({ title: decision === "block" ? "Payment blocked" : "Payment approved", sub: `${callName}'s screen shows it now`, icon: decision === "block" ? "check" : "personCheck" });
+      const v = view as HoldView;
+      toast(
+        decision === "block"
+          ? { title: "Payment blocked", sub: `${callName}'s screen shows it now`, icon: "check" }
+          : v.status === "approved"
+            ? { title: "Everyone approved", sub: "The demo payment is released", icon: "personCheck" }
+            : { title: "Your approval is saved", sub: `Waiting for ${v.waitingFor.join(" and ")}`, icon: "personCheck" },
+      );
     },
     onError: async (e) => {
       setConfirm(false);
@@ -340,21 +473,37 @@ export function FamilyHoldScreen() {
   });
 
   async function sendAdvice() {
-    await post(`/api/family/holds/${id}/advice`, { text: advice });
+    // Start sending, then open the dialer straight from the tap (phones only
+    // allow the dialer from a user gesture); the request carries on meanwhile.
+    const sent = post(`/api/family/holds/${id}/advice`, { text: advice });
+    call(callName, papaPhone);
+    await sent;
     await queryClient.invalidateQueries({ queryKey: ["family-hold", id] });
     toast({ title: `Advice sent to ${callName}`, sub: "They can see it now", icon: "bell" });
-    call(callName);
   }
 
   if (!hold) return <LoadingScreen />;
   const status = hold.status === "pending" && clock.expired ? "expired" : hold.status;
   const amount = rupees(hold.amount);
+  const msg = q.data?.message;
+  const iApproved = !!fam && hold.approvedBy.includes(fam.me.name);
+  const others = hold.waitingFor.filter((n) => n !== fam?.me.name);
 
   if (status === "blocked" || status === "approved" || status === "cancelled") {
     const me = fam?.me.name;
     const byMe = hold.decidedByName === me;
-    const verb = status === "blocked" ? "blocked" : status === "approved" ? "approved" : "cancelled";
-    const title = status === "cancelled" ? `${callName} cancelled it` : byMe ? `You ${verb} it` : `${hold.decidedByName} ${verb} it`;
+    const title =
+      status === "cancelled"
+        ? `${callName} cancelled it`
+        : status === "approved"
+          ? hold.approvedBy.length > 1
+            ? "Everyone approved it"
+            : byMe
+              ? "You approved it"
+              : `${hold.decidedByName} approved it`
+          : byMe
+            ? "You blocked it"
+            : `${hold.decidedByName} blocked it`;
     const dot = (type: string) => (type === "alert" || type === "hold" ? "#C6372B" : type === "opened" || type === "advice" ? "#F2A900" : "#2E7D5B");
     const timeline = (q.data?.timeline ?? []).filter((e) => ["hold", "alert", "opened", "advice", "blocked", "approved", "cancelled", "pay_attempt"].includes(e.type));
     return (
@@ -379,6 +528,7 @@ export function FamilyHoldScreen() {
             </div>
           ))}
         </div>
+        {msg && <VictimMessage msg={msg} callName={callName} />}
         {status !== "approved" && (
           <div className="card tint-amber">
             <b style={{ fontSize: 17 }}>Next</b>
@@ -388,13 +538,15 @@ export function FamilyHoldScreen() {
           </div>
         )}
         <div className="spacer" />
-        <button className="btn green" onClick={() => call(callName)}><Icon name="phone" />Call {callName}</button>
+        <button className="btn green" onClick={() => call(callName, papaPhone)}><Icon name="phone" />Call {callName}</button>
         <button className="btn line" onClick={() => router.push("/family")}>Back to home</button>
       </Screen>
     );
   }
 
-  const told = (
+  const told = msg ? (
+    <VictimMessage msg={msg} callName={callName} note={hold.verdict === "SCAM" ? "Scammers often ask for secrecy and money together. That is always a scam." : undefined} />
+  ) : (
     <div className="card">
       <div className="lbl">What {callName} was told</div>
       <Marks phrases={hold.phrases} />
@@ -415,14 +567,14 @@ export function FamilyHoldScreen() {
         {told}
         {error && <p className="sm" style={{ color: "var(--red-text)", fontWeight: 700 }}>{error}</p>}
         <div className="spacer" />
-        <button className="btn green" style={{ minHeight: 64 }} onClick={() => call(callName)}><Icon name="phone" />Call {callName}</button>
+        <button className="btn green" style={{ minHeight: 64 }} onClick={() => call(callName, papaPhone)}><Icon name="phone" />Call {callName}</button>
         <button className="btn red" style={{ minHeight: 64 }} onClick={() => decide.mutate("block")}>Block this payment</button>
       </Screen>
     );
   }
 
   return (
-    <Screen overlay={confirm && <ApproveSheet hold={hold} callName={callName} onKeep={() => setConfirm(false)} onApprove={() => decide.mutate("approve")} />}>
+    <Screen overlay={confirm && <ApproveSheet hold={hold} callName={callName} onKeep={() => setConfirm(false)} onApprove={() => decide.mutate("approve")} others={others} />}>
       <TitleRow title={`${callName}'s payment`} back="/family" right={<span className="pill medium ink">{clock.label}</span>} />
       <div className="row"><VerdictPill verdict={hold.verdict} size="medium" icon={false} /><span style={{ fontWeight: 800, fontSize: 18 }}>{amount} paused</span></div>
       {told}
@@ -434,33 +586,71 @@ export function FamilyHoldScreen() {
             <span style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.3 }}>{a}</span>
           </button>
         ))}
-        {sent && <p className="sm">Sent: “{sent.text}” ({sent.fromName}, {clockTime(sent.createdAt)})</p>}
+        {lastAdvice && <p className="sm">Sent: “{lastAdvice.text}” ({lastAdvice.fromName}, {clockTime(lastAdvice.createdAt)})</p>}
       </div>
-      <p className="sm">
-        {fam?.alerts.find((a) => a.holdId === id)?.otherRecipients.length
-          ? `Also alerted: ${fam.alerts.find((a) => a.holdId === id)!.otherRecipients.join(", ")}. `
-          : ""}
-        Your advice shows on {callName}&apos;s screen.
-      </p>
+      {(hold.approvedBy.length > 0 || hold.waitingFor.length > 1) && (
+        <div className="card" style={{ gap: 8 }}>
+          <div className="lbl" style={{ color: "var(--text)" }}>Who decides</div>
+          {hold.approvedBy.map((n) => (
+            <div className="row" key={n}><span className="dot" style={{ background: "#2E7D5B" }} /><b className="grow">{n === fam?.me.name ? "You" : n} approved</b></div>
+          ))}
+          {hold.waitingFor.map((n) => (
+            <div className="row" key={n}><span className="dot" style={{ background: "#F2A900", border: "2px solid var(--text)" }} /><b className="grow">{n === fam?.me.name ? "You" : n}: not yet</b></div>
+          ))}
+          <p className="sm">One Block from anyone stops it. The money moves only when everyone approves.</p>
+        </div>
+      )}
+      <p className="sm">Your advice shows on {callName}&apos;s screen.</p>
       {error && <p className="sm" style={{ color: "var(--red-text)", fontWeight: 700 }}>{error}</p>}
       <div className="spacer" />
       <button className="btn green" style={{ minHeight: 64 }} onClick={sendAdvice}><Icon name="phone" />Send advice and call {callName}</button>
       <button className="btn red" style={{ minHeight: 64 }} disabled={decide.isPending} onClick={() => decide.mutate("block")}>Block this payment</button>
-      <button className="btn line sm-btn" onClick={() => setConfirm(true)}>Approve (I know this payment)</button>
+      {iApproved ? (
+        <p className="sm center-text">You approved. Waiting for {hold.waitingFor.join(" and ")}.</p>
+      ) : (
+        <button className="btn line sm-btn" onClick={() => setConfirm(true)}>Approve (I know this payment)</button>
+      )}
     </Screen>
   );
 }
 
-function ApproveSheet({ hold, callName, onKeep, onApprove }: { hold: HoldView; callName: string; onKeep: () => void; onApprove: () => void }) {
+function ApproveSheet({ hold, callName, onKeep, onApprove, others }: { hold: HoldView; callName: string; onKeep: () => void; onApprove: () => void; others: string[] }) {
   return (
     <Sheet onClose={onKeep}>
       <h2 className="h2">Approve this payment?</h2>
       <p className="p">
         {callName} was warned about {hold.phrases.slice(0, 2).map((p) => `“${p}”`).join(" and ")}. Only approve if you know who they are paying.
+        {others.length ? ` ${others.join(" and ")} must approve too before the money moves.` : ""}
       </p>
       <button className="btn red" style={{ minHeight: 64 }} onClick={onKeep}>No, keep it blocked</button>
       <button className="btn line md-btn" onClick={onApprove}>Yes, approve</button>
     </Sheet>
+  );
+}
+
+/** "you, Meera and Dinesh" */
+const listNames = (names: string[]) => (names.length <= 1 ? names[0] ?? "" : names.slice(0, -1).join(", ") + " and " + names[names.length - 1]);
+
+/** The exact message Papa received, shown once the family member opens the alert. */
+function VictimMessage({ msg, callName, note }: { msg: SharedMessage; callName: string; note?: string }) {
+  const from =
+    msg.source === "paste"
+      ? `${callName} pasted it into Pause Button`
+      : `${msg.source === "sms" ? "SMS" : "WhatsApp"} from ${msg.senderLabel ?? "an unknown number"}`;
+  return (
+    <div className="card" data-testid="victim-message">
+      <div className="row">
+        <Icon name="msg" />
+        <div className="grow">
+          <div className="lbl" style={{ color: "var(--text)" }}>The message {callName} got</div>
+          <p className="sm">{from}</p>
+        </div>
+      </div>
+      <div style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 14, padding: "10px 12px" }}>
+        <HighlightedText text={msg.text} signals={msg.signals} link={msg.link} />
+      </div>
+      <p className="sm">Highlighted: the warning signs we found.{note ? ` ${note}` : ""}</p>
+    </div>
   );
 }
 
@@ -471,31 +661,42 @@ export function FamilyCheckScreen() {
   const router = useRouter();
   const search = useSearchParams();
   const queryClient = useQueryClient();
-  const callName = useCallName();
   const call = useCall();
   const toast = useToast();
   const { data: fam } = useFamily();
   const q = useQuery({ queryKey: ["family-check", id], queryFn: () => api<CheckView>(`/api/family/checks/${id}`), refetchInterval: 3000 });
+  useLeaveIfGone(q.error, "/family");
+  const callName = q.data?.owner.callName ?? "Papa";
+  const papaPhone = q.data?.owner.phone ?? null;
   const alertId = search.get("alert");
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     if (alertId) void post(`/api/family/alerts/${alertId}/opened`).catch(() => {});
   }, [alertId]);
 
   const answer = useMutation({
-    mutationFn: (v: { verdict: "scam" | "not_scam"; note?: string }) => post(`/api/family/checks/${id}/verdict`, v),
-    onSuccess: async (_d, v) => {
+    mutationFn: (v: { verdict: "scam" | "not_scam"; note?: string }) =>
+      post<{ final: "scam" | "not_scam" | null; waitingFor: string[] }>(`/api/family/checks/${id}/verdict`, v),
+    onSuccess: async (r, v) => {
+      setConfirmClear(false);
       await queryClient.invalidateQueries();
-      toast({ title: v.verdict === "scam" ? "Marked as a scam" : "Marked as not a scam", sub: `${callName} can see your answer`, icon: "check" });
+      toast(
+        v.verdict === "scam"
+          ? { title: "Marked as a scam", sub: `${callName}'s screen says: scam, do not pay`, icon: "check" }
+          : r.final === "not_scam"
+            ? { title: "Everyone said not a scam", sub: `${callName}'s screen now says: not a scam`, icon: "check" }
+            : { title: "Your answer is saved", sub: `It counts once ${r.waitingFor.join(" and ")} agrees too`, icon: "check" },
+      );
       router.push("/family");
     },
-    onError: async (e) => {
-      // 409: someone else answered first, and their answer now shows on this screen.
-      const already = e instanceof ApiError && e.status === 409;
-      toast({ title: already ? "Already answered" : "Your answer was not sent", sub: e.message, icon: "warn", tone: "red" });
-      if (already) await queryClient.invalidateQueries({ queryKey: ["family-check", id] });
+    onError: (e) => {
+      setConfirmClear(false);
+      toast({ title: "Not saved", sub: e.message, icon: "warn", tone: "red" });
     },
   });
+  const sayScam = () => answer.mutate({ verdict: "scam", note: "It is a scam. Do not pay or reply." });
+  const sayNotScam = () => answer.mutate({ verdict: "not_scam", note: "I checked. This one is fine." });
 
   const c = q.data;
   if (!c) return <LoadingScreen />;
@@ -505,19 +706,44 @@ export function FamilyCheckScreen() {
   const urgent =
     !fromAsk && (!!fam?.alerts.some((a) => a.checkId === id && a.kind === "urgent") || !!c.hold || (c.verdict === "SCAM" && c.source === "paste"));
   const pending = c.hold && c.hold.status === "pending";
+  // The design's quiet heads-up (O2) says "Mark as handled"; urgent alerts and questions say "It's a scam".
+  const myKinds = fam?.alerts.filter((a) => a.checkId === id).map((a) => a.kind) ?? [];
+  const headsUpOnly = myKinds.length > 0 && myKinds.every((k) => k === "headsup");
 
   return (
-    <Screen>
-      <TitleRow title={fromAsk ? `${callName} is asking` : urgent ? "Scam alert" : "Heads-up"} back="/family" right={<VerdictPill verdict={c.verdict} size="medium" icon={false} />} />
+    <Screen
+      overlay={
+        confirmClear && (
+          <Sheet onClose={() => setConfirmClear(false)}>
+            <h2 className="h2">Tell {callName} it is not a scam?</h2>
+            <p className="p">
+              Pause Button called this a SCAM
+              {c.signals.length || c.link ? ` because of ${[...c.signals.slice(0, 2).map((s) => `“${s.phrase}”`), ...(c.link && c.link.status !== "known" ? [c.link.domain] : [])].join(", ")}` : ""}.
+              {" "}Only say it is fine if you know who sent it. {callName}&apos;s screen will then say “not a scam”.
+            </p>
+            <button className="btn red" style={{ minHeight: 64 }} onClick={sayScam}>No, it is a scam</button>
+            <button className="btn line md-btn" onClick={sayNotScam}>Yes, it is not a scam</button>
+          </Sheet>
+        )
+      }
+    >
+      <TitleRow title={fromAsk ? `${callName} is asking` : urgent ? "Scam alert" : "Heads-up"} back="/family" right={<VerdictPill verdict={c.finalVerdict} size="medium" icon={false} />} />
       <p className="sm">
         {c.source === "paste" ? `Checked by ${callName}` : `Detected on ${callName}'s phone · ${c.source === "sms" ? "SMS" : "WhatsApp"} · ${c.senderLabel}`} · {clockTime(c.createdAt)}
       </p>
-      <div className="card">
-        <div className="lbl">{c.simText ? "What the message said" : `What ${callName} was told`}</div>
-        {c.simText ? <p className="p" style={{ fontSize: 16 }}>{c.simText}</p> : null}
-        <Marks phrases={[...c.signals.map((s) => s.phrase), ...(c.link && c.link.status !== "known" ? [c.link.domain] : [])].slice(0, 4)} />
-        {c.familyTitle && <p className="sm">Looks like {c.familyTitle.toLowerCase()}.</p>}
-      </div>
+      {c.messageText ?? c.simText ? (
+        <VictimMessage
+          msg={{ text: (c.messageText ?? c.simText)!, signals: c.signals, link: c.link, source: c.source, senderLabel: c.senderLabel }}
+          callName={callName}
+          note={c.familyTitle ? `Looks like ${c.familyTitle[0].toLowerCase() + c.familyTitle.slice(1)}.` : undefined}
+        />
+      ) : (
+        <div className="card">
+          <div className="lbl">What {callName} was told</div>
+          <Marks phrases={[...c.signals.map((s) => s.phrase), ...(c.link && c.link.status !== "known" ? [c.link.domain] : [])].slice(0, 4)} />
+          {c.familyTitle && <p className="sm">Looks like {c.familyTitle[0].toLowerCase() + c.familyTitle.slice(1)}.</p>}
+        </div>
+      )}
       {pending ? (
         <button className="card solid-red" onClick={() => router.push(`/family/hold/${c.hold!.id}`)}>
           <b style={{ fontSize: 17 }}>{rupees(c.hold!.amount)} payment paused</b>
@@ -533,6 +759,23 @@ export function FamilyCheckScreen() {
         <div className={`card ${c.familyVerdict === "not_scam" ? "tint-green" : "tint-red"}`}>
           <b style={{ fontSize: 17 }}>{c.familyVerdictByName} said: {c.familyVerdict === "not_scam" ? "not a scam" : "a scam"}</b>
         </div>
+      ) : c.answers.length ? (
+        <div className="card" style={{ gap: 8 }}>
+          <div className="lbl" style={{ color: "var(--text)" }}>Answers so far</div>
+          {c.answers.map((a) => (
+            <div className="row" key={a.memberId}>
+              <span className="dot" style={{ background: a.verdict === "scam" ? "#C6372B" : "#2E7D5B" }} />
+              <b className="grow">{a.memberId === fam?.me.id ? "You" : a.name}: {a.verdict === "scam" ? "a scam" : "not a scam"}</b>
+            </div>
+          ))}
+          {c.waitingFor.map((n) => (
+            <div className="row" key={n}>
+              <span className="dot" style={{ background: "#F2A900", border: "2px solid var(--text)" }} />
+              <b className="grow">{n === fam?.me.name ? "You" : n}: not yet</b>
+            </div>
+          ))}
+          <p className="sm">One “scam” settles it. “Not a scam” counts only when everyone says so.</p>
+        </div>
       ) : (
         <div className="card">
           <div className="lbl">What to say</div>
@@ -540,13 +783,11 @@ export function FamilyCheckScreen() {
         </div>
       )}
       <div className="spacer" />
-      <button className="btn green" onClick={() => call(callName)}><Icon name="phone" />Call {callName}</button>
-      {!c.familyVerdict && (
+      <button className="btn green" onClick={() => call(callName, papaPhone)}><Icon name="phone" />Call {callName}</button>
+      {c.canAnswer && !pending && (
         <>
-          <button className="btn red" onClick={() => answer.mutate({ verdict: "scam", note: "It is a scam. Do not pay or reply." })}>
-            {fromAsk || urgent ? "It's a scam" : "Mark as handled"}
-          </button>
-          <button className="btn line" onClick={() => answer.mutate({ verdict: "not_scam", note: "I checked. This one is fine." })}>This is not a scam</button>
+          <button className="btn red" onClick={sayScam}>{headsUpOnly ? "Mark as handled" : "It's a scam"}</button>
+          <button className="btn line" onClick={() => (c.verdict === "SCAM" ? setConfirmClear(true) : sayNotScam())}>This is not a scam</button>
         </>
       )}
     </Screen>
@@ -557,14 +798,16 @@ export function FamilyCheckScreen() {
 
 export function ActivityScreen() {
   const router = useRouter();
-  const callName = useCallName();
+  const label = useTabLabel();
+  const { data: fam } = useFamily();
+  const several = (fam?.people.length ?? 0) > 1;
   const [filter, setFilter] = useState<"all" | "scams" | "safe">("all");
   const q = useQuery({ queryKey: ["family-activity"], queryFn: () => api<ActivityItem[]>("/api/family/activity"), refetchInterval: 4000 });
   const items = (q.data ?? []).filter((i) =>
     filter === "all" ? true : filter === "safe" ? i.label === "SAFE" : i.label !== "SAFE",
   );
   return (
-    <Screen tabs={<FamilyTabs active="activity" callName={callName} />}>
+    <Screen tabs={<FamilyTabs active="activity" callName={label} />}>
       <h1 className="h1">Activity</h1>
       <div className="row" style={{ gap: 8 }}>
         {(["all", "scams", "safe"] as const).map((f) => (
@@ -575,7 +818,12 @@ export function ActivityScreen() {
       {!q.isPending && !items.length && <p className="p" style={{ color: "var(--muted)" }}>Nothing here yet.</p>}
       {items.map((i) => (
         <button key={i.id + i.kind} className="card" onClick={() => router.push(i.kind === "hold" ? `/family/hold/${i.id}` : `/family/check/${i.checkId}`)}>
-          <div className="row"><StatusPill label={i.label} /><span className="grow" /><span className="sm">{clockTime(i.createdAt)}</span></div>
+          <div className="row">
+            <StatusPill label={i.label} />
+            {several && <span className="tag">{i.owner.callName.toUpperCase()}</span>}
+            <span className="grow" />
+            <span className="sm">{clockTime(i.createdAt)}</span>
+          </div>
           <b style={{ fontSize: 17 }}>{i.title}</b>
           <Marks phrases={i.phrases} size={15} />
         </button>
@@ -591,12 +839,11 @@ export function ActivityScreen() {
 export function FamilySettingsScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const callName = useCallName();
+  const label = useTabLabel();
   const toast = useToast();
   const test = useTestAlert();
   const { data } = useFamily();
-  const [unlinking, setUnlinking] = useState(false);
-  const p = data?.protectedUser;
+  const [unlinking, setUnlinking] = useState<ProtectedView | null>(null);
 
   async function reset() {
     await operatorApi("/api/demo/reset", { body: {} });
@@ -604,11 +851,11 @@ export function FamilySettingsScreen() {
     toast({ title: "Demo data reset", sub: "Holds and checks cleared", icon: "check" });
   }
   async function unlink() {
-    if (!p) return;
-    await post("/api/family/unlink", { linkId: p.linkId });
-    setUnlinking(false);
+    if (!unlinking) return;
+    await post("/api/family/unlink", { linkId: unlinking.linkId });
+    setUnlinking(null);
     await queryClient.invalidateQueries();
-    router.push("/family/join");
+    if ((data?.people.length ?? 0) <= 1) router.push("/family/join");
   }
   async function signOut() {
     await post("/api/auth/sign-out", { app: "family" });
@@ -618,26 +865,28 @@ export function FamilySettingsScreen() {
 
   return (
     <Screen
-      tabs={<FamilyTabs active="settings" callName={callName} />}
+      tabs={<FamilyTabs active="settings" callName={label} />}
       overlay={
-        unlinking && p && (
-          <Sheet onClose={() => setUnlinking(false)}>
-            <h2 className="h2">Unlink from {p.name}?</h2>
+        unlinking && (
+          <Sheet onClose={() => setUnlinking(null)}>
+            <h2 className="h2">Unlink from {unlinking.name}?</h2>
             <p className="p">You will stop getting their alerts. They can invite you again with a new code.</p>
             <button className="btn red" onClick={unlink}>Yes, unlink</button>
-            <button className="btn line" onClick={() => setUnlinking(false)}>Stay linked</button>
+            <button className="btn line" onClick={() => setUnlinking(null)}>Stay linked</button>
           </Sheet>
         )
       }
     >
       <h1 className="h1">Settings</h1>
-      {p && (
-        <div className="card row-card">
+      <div className="lbl">People you protect</div>
+      {data?.people.map((p) => (
+        <div className="card row-card" key={p.id}>
           <Avatar name={p.name} size={44} />
-          <div className="grow"><b style={{ fontSize: 17 }}>{p.name}{callName !== p.name ? ` (${callName})` : ""}</b><p className="sm">Linked · {p.phone}</p></div>
-          <button className="ghost" onClick={() => setUnlinking(true)}>Unlink</button>
+          <div className="grow"><b style={{ fontSize: 17 }}>{p.name}{p.callName !== p.name ? ` (${p.callName})` : ""}</b><p className="sm">Linked · {p.phone}</p></div>
+          <button className="ghost" onClick={() => setUnlinking(p)}>Unlink</button>
         </div>
-      )}
+      ))}
+      <button className="btn line md-btn" onClick={() => router.push("/family/join")}><Icon name="plus" />Link another person</button>
       <div className="card" style={{ gap: 14 }}>
         <div className="lbl">Alerts</div>
         <AlertToggles />

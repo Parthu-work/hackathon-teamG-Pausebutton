@@ -4,10 +4,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
-import { clockTime, LoadingScreen, Marks, Ring, Screen, useCall, useCountdown } from "@/components/ui";
+import { clockTime, LoadingScreen, Marks, Ring, Screen, useCall, useCountdown, useLeaveIfGone } from "@/components/ui";
 import { rupees } from "@/lib/check/copy";
 import { api, post } from "@/lib/client/api";
 import type { HoldView } from "@/lib/views";
+import { HELPLINE } from "@/lib/phone";
 import { useHelper } from "./shell";
 
 /** H1 waiting · H2 advice · H3 blocked · H4 approved · H5 expired */
@@ -22,6 +23,7 @@ export function HoldScreen() {
     queryFn: () => api<{ hold: HoldView; serverNow: string }>(`/api/me/holds/${id}`),
     refetchInterval: 2000,
   });
+  useLeaveIfGone(q.error, "/");
   const hold = q.data?.hold;
   const clock = useCountdown(hold?.expiresAt, q.data?.serverNow);
 
@@ -82,7 +84,9 @@ export function HoldScreen() {
         </div>
         <div className="spacer" />
         <button className="btn ink" onClick={home}>Done</button>
-        <button className="btn line" onClick={() => call(decider)}>Call {decider}</button>
+        <button className="btn line" onClick={() => call(hold.approvedBy[0] ?? helper.first, helper.phoneOf(hold.approvedBy[0] ?? helper.first))}>
+          Call {hold.approvedBy[0] ?? helper.first}
+        </button>
       </Screen>
     );
   }
@@ -98,8 +102,8 @@ export function HoldScreen() {
           <p className="sm" style={{ color: "var(--text)" }}>That is a scam sign. Hang up and call the cyber helpline.</p>
         </div>
         <div className="spacer" />
-        <button className="btn red" onClick={() => call("1930")}>Call cyber helpline 1930</button>
-        <button className="btn ink" onClick={() => call(helper.first)}>Call {helper.first}</button>
+        <button className="btn red" onClick={() => call("cyber helpline 1930", HELPLINE)}>Call cyber helpline 1930</button>
+        <button className="btn ink" onClick={() => call(helper.first, helper.phone)}>Call {helper.first}</button>
         <button className="btn line" onClick={home}>Start again</button>
       </Screen>
     );
@@ -116,12 +120,20 @@ export function HoldScreen() {
         <div className="lbl">What {helper.first} was told</div>
         <Marks phrases={hold.phrases} />
       </div>
+      {hold.approvedBy.length > 0 && (
+        <div className="card" style={{ padding: "12px 16px", gap: 6 }}>
+          <b style={{ fontSize: 18 }}>{hold.approvedBy.join(" and ")} approved.</b>
+          <p className="sm" style={{ color: "var(--text)" }}>
+            Waiting for {hold.waitingFor.join(" and ")}. The money moves only when everyone approves.
+          </p>
+        </div>
+      )}
       {advice ? (
         <div className="card tint-green" style={{ border: "2px solid #2E7D5B", padding: "12px 16px", gap: 6 }}>
           <div className="row"><Icon name="msg" /><b style={{ fontSize: 16 }}>{advice.fromName} says</b></div>
           <p style={{ margin: 0, fontSize: 20, lineHeight: 1.3, fontWeight: 800 }}>“{advice.text}”</p>
         </div>
-      ) : (
+      ) : hold.approvedBy.length ? null : (
         <div className="card row-card" style={{ padding: "12px 16px" }}>
           <span className="dot" style={{ background: "#F2A900", border: "2px solid var(--text)", width: 14, height: 14 }} />
           <div className="grow">
@@ -131,8 +143,8 @@ export function HoldScreen() {
         </div>
       )}
       <div className="spacer" />
-      <button className="btn ink" onClick={() => call(helper.first)}><Icon name="phone" />Call {helper.first}</button>
-      <button className="btn line" onClick={() => call("1930")}>Call cyber helpline 1930</button>
+      <button className="btn ink" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />Call {helper.first}</button>
+      <button className="btn line" onClick={() => call("cyber helpline 1930", HELPLINE)}>Call cyber helpline 1930</button>
       <p className="sm center-text" style={{ color: "#14202B" }}>There is no pay button here. This screen opens when {helper.first} decides.</p>
     </Screen>
   );

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-q
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
-import { PhoneFrame, useToast } from "@/components/ui";
+import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
 import { api, ApiError, post } from "@/lib/client/api";
 import type { RaoState } from "@/lib/views";
 
@@ -20,10 +20,25 @@ export function useRao() {
 export function useHelper() {
   const { data } = useRao();
   const names = data?.helperNames ?? [];
-  return { first: names[0] ?? "your family", all: names };
+  const linked = (data?.people ?? []).filter((p) => p.status === "linked");
+  return {
+    first: names[0] ?? "your family",
+    all: names,
+    /** Phone of the first trusted person, for "Call Arjun". */
+    phone: linked[0]?.phone ?? null,
+    phoneOf: (name: string) => (data?.people ?? []).find((p) => p.name === name)?.phone ?? null,
+  };
 }
 
 export function RaoShell({ children }: { children: React.ReactNode }) {
+  return (
+    <ToastProvider>
+      <RaoShellInner>{children}</RaoShellInner>
+    </ToastProvider>
+  );
+}
+
+function RaoShellInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const toast = useToast();
@@ -33,8 +48,8 @@ export function RaoShell({ children }: { children: React.ReactNode }) {
   const wasOffline = useRef(false);
 
   useEffect(() => {
-    if (q.error instanceof ApiError && q.error.status === 401) router.replace("/welcome");
-  }, [q.error, router]);
+    if (q.error instanceof ApiError && q.error.status === 401 && q.fetchStatus === "idle") router.replace("/welcome");
+  }, [q.error, q.fetchStatus, router]);
 
   useEffect(() => {
     if (offline) wasOffline.current = true;

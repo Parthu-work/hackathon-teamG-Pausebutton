@@ -1,10 +1,12 @@
-import { and, asc, desc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { HOLD_MINUTES } from "@/lib/check/config";
 import { keyPhrases } from "@/lib/check/phrases";
 import { rupees } from "@/lib/check/copy";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import type { AdviceView, HoldStatus, HoldView } from "@/lib/views";
+import { answerSummary, giveAnswer } from "./answers";
+import { ownerView } from "./people";
 import { logEvent } from "./events";
 import { HttpError } from "./session";
 
@@ -13,6 +15,9 @@ type Check = typeof schema.checks.$inferSelect;
 type User = typeof schema.users.$inferSelect;
 
 /** Expired is derived: a pending hold past its time. Money stays held either way. */
+const joinNames = (names: string[]) =>
+  names.length <= 1 ? names[0] ?? "" : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+
 export function holdStatus(h: Hold, now = Date.now()): HoldStatus {
   if (h.status === "pending" && h.expiresAt.getTime() <= now) return "expired";
   return h.status;
@@ -52,7 +57,16 @@ export async function userNames(db: Db, ids: string[]): Promise<Record<string, s
 
 export async function toHoldView(db: Db, hold: Hold, check?: Check): Promise<HoldView> {
   const c = check ?? (await db.query.checks.findFirst({ where: eq(schema.checks.id, hold.checkId) }))!;
+  const owner = (await db.query.users.findFirst({ where: eq(schema.users.id, hold.userId) }))!;
   const names = await userNames(db, hold.decidedById ? [hold.decidedById] : []);
+  const family = await answerSummary(db, c.id);
+  const approvedBy = family.answers.filter((a) => a.verdict === "not_scam").map((a) => a.name);
+  const decidedByName =
+    hold.status === "approved" && approvedBy.length
+      ? joinNames(approvedBy)
+      : hold.decidedById
+        ? names[hold.decidedById] ?? null
+        : null;
   return {
     id: hold.id,
     checkId: hold.checkId,
@@ -61,13 +75,16 @@ export async function toHoldView(db: Db, hold: Hold, check?: Check): Promise<Hol
     status: holdStatus(hold),
     expiresAt: hold.expiresAt.toISOString(),
     createdAt: hold.createdAt.toISOString(),
-    decidedByName: hold.decidedById ? names[hold.decidedById] ?? null : null,
+    decidedByName,
     decidedAt: hold.decidedAt?.toISOString() ?? null,
     outcomeSeen: !!hold.outcomeSeenAt,
+    approvedBy,
+    waitingFor: hold.status === "pending" ? family.waitingFor : [],
     phrases: keyPhrases(c.signals, c.link, c.hardPhrases),
     checkTitle: c.title,
     verdict: c.verdict,
     advice: await adviceFor(db, { holdId: hold.id }),
+    owner: ownerView(owner),
   };
 }
 
@@ -87,43 +104,35 @@ export async function assertLinked(db: Db, member: User, protectedId: string) {
   return link;
 }
 
-/** I2/I3: Block, or Approve with a second confirm. The first decision wins. */
+/**
+ * I2/I3: Block, or Approve with a second confirm. One Block blocks the payment
+ * straight away; it is released only when everyone who was alerted approves.
+ */
 export async function decideHold(db: Db, member: User, holdId: string, decision: "block" | "approve", confirm: boolean) {
   const hold = await db.query.holds.findFirst({ where: eq(schema.holds.id, holdId) });
   if (!hold) throw new HttpError(404, "That payment was not found.");
   await assertLinked(db, member, hold.userId);
   if (decision === "approve" && !confirm) throw new HttpError(400, "Approving needs a second confirm.");
-
-  const status = decision === "block" ? "blocked" : "approved";
-  const open = and(eq(schema.holds.id, holdId), eq(schema.holds.status, "pending"));
-  const [updated] = await db
-    .update(schema.holds)
-    .set({ status, decidedById: member.id, decidedAt: new Date() })
-    // Block still works after the 10 minutes. Approve does not: an expired hold never releases the money.
-    .where(decision === "approve" ? and(open, gt(schema.holds.expiresAt, new Date())) : open)
-    .returning();
-  if (!updated) {
-    const current = (await db.query.holds.findFirst({ where: eq(schema.holds.id, holdId) })) ?? hold;
-    if (current.status === "pending") {
-      throw new HttpError(409, "Time ran out, so this payment can no longer be approved. You can still block it.");
-    }
-    const names = await userNames(db, current.decidedById ? [current.decidedById] : []);
-    const who = current.decidedById ? names[current.decidedById] ?? "Someone" : "Someone";
-    throw new HttpError(409, `${who} already ${current.status} this payment.`);
+  if (hold.status !== "pending") {
+    const view = await toHoldView(db, hold);
+    throw new HttpError(409, `${view.decidedByName ?? "Someone"} already ${hold.status} this payment.`);
   }
-  await db
-    .update(schema.alerts)
-    .set({ handledAt: new Date() })
-    .where(and(eq(schema.alerts.holdId, holdId), isNull(schema.alerts.handledAt)));
-  await logEvent(
-    db,
-    hold.userId,
-    member.name,
-    status,
-    `${member.name} tapped ${decision === "block" ? "Block" : "Approve"} · status ${status}`,
-    holdId,
-  );
-  return toHoldView(db, updated);
+  // Block still works after the 10 minutes. Approve does not: an expired hold never releases the money.
+  if (decision === "approve" && holdStatus(hold) === "expired") {
+    throw new HttpError(409, "Time ran out, so this payment can no longer be approved. You can still block it.");
+  }
+  const check = (await db.query.checks.findFirst({ where: eq(schema.checks.id, hold.checkId) }))!;
+  const summary = await giveAnswer(db, member, check, decision === "block" ? "scam" : "not_scam", { viaHold: holdId });
+
+  const updated = (await db.query.holds.findFirst({ where: eq(schema.holds.id, holdId) }))!;
+  const message =
+    decision === "block"
+      ? `${member.name} tapped Block · status ${updated.status}`
+      : updated.status === "approved"
+        ? `${member.name} tapped Approve · everyone approved · status approved`
+        : `${member.name} tapped Approve · waiting for ${summary.waitingFor.join(" and ")}`;
+  await logEvent(db, hold.userId, member.name, decision === "block" ? "blocked" : updated.status === "approved" ? "approved" : "approve_vote", message, holdId);
+  return toHoldView(db, updated, check);
 }
 
 export async function addAdvice(db: Db, member: User, target: { holdId?: string; checkId?: string }, text: string) {

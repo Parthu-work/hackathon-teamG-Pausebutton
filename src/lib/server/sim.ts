@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { finalVerdict } from "@/lib/check/final";
 import { keyPhrases } from "@/lib/check/phrases";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
@@ -79,7 +80,7 @@ async function toViews(db: Db, rows: SimRow[]): Promise<SimMessageView[]> {
       text: r.text,
       createdAt: r.createdAt.toISOString(),
       checkId: r.checkId,
-      verdict: c ? c.verdict : r.fromContact ? "SKIPPED" : null,
+      verdict: c ? finalVerdict(c.verdict, c.familyVerdict) : r.fromContact ? "SKIPPED" : null,
       phrases: c ? keyPhrases(c.signals, c.link, c.hardPhrases, 2) : [],
     };
   });

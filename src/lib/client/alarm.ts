@@ -6,9 +6,17 @@
 // flash and the sound carry the alert there.
 
 let ctx: AudioContext | null = null;
+let armed = false;
 
+/** True once the person has tapped the page, which is when browsers allow sound and vibration. */
+export function alarmsArmed() {
+  return armed;
+}
+
+/** Call from a tap. Creates the audio context so later alerts can ring without another tap. */
 export function unlockAudio() {
   if (typeof window === "undefined") return;
+  armed = true;
   try {
     ctx ??= new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     if (ctx.state === "suspended") void ctx.resume();
@@ -35,8 +43,10 @@ export type AlarmSettings = { sound: boolean; vibrate: boolean };
 
 /** urgent: loud repeating tone, long buzz and flash. quiet: one short chime and buzz. */
 export function playAlarm(kind: "urgent" | "quiet", s: AlarmSettings) {
+  // The screen flash never needs permission, so it always runs for urgent alerts.
+  if (kind === "urgent") window.dispatchEvent(new Event("pb-flash"));
+  if (!armed) return; // no tap yet: the browser would block sound and vibration
   if (s.sound) {
-    unlockAudio();
     if (kind === "urgent") {
       for (let i = 0; i < 6; i++) {
         tone(880, i * 0.5, 0.22, 0.25);
@@ -53,6 +63,5 @@ export function playAlarm(kind: "urgent" | "quiet", s: AlarmSettings) {
     } catch {
       /* not supported */
     }
-    if (kind === "urgent") window.dispatchEvent(new Event("pb-flash"));
   }
 }

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { SIGNAL_LABEL } from "@/lib/check/copy";
 import { SIGNAL_TYPES, type Evidence, type LinkInfo, type Verdict } from "@/lib/check/types";
+import { ApiError } from "@/lib/client/api";
+import { telHref } from "@/lib/phone";
 import { Icon, type IconName } from "./icons";
 
 // ---------------- phone frame ----------------
@@ -321,7 +323,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const push = useCallback((t: Omit<Toast, "id">) => {
     const id = Date.now() + Math.random();
-    setToasts((list) => [...list.slice(-2), { ...t, id }]);
+    setToasts((list) => {
+      // A double tap shows one toast, not two of the same.
+      const last = list[list.length - 1];
+      if (last && last.title === t.title && last.sub === t.sub) return list;
+      return [...list.slice(-2), { ...t, id }];
+    });
     setTimeout(() => setToasts((list) => list.filter((x) => x.id !== id)), 4000);
   }, []);
   return <ToastContext.Provider value={useMemo(() => ({ toasts, push }), [toasts, push])}>{children}</ToastContext.Provider>;
@@ -348,16 +355,91 @@ export function ToastOutlet({ style }: { style?: React.CSSProperties }) {
   );
 }
 
-/** "Call Arjun" / "Call cyber helpline 1930": the simulator never dials a real number. */
+/** When the record behind a screen is gone (e.g. after "Reset demo data"), go home instead of loading forever. */
+export function useLeaveIfGone(error: Error | null, href: string) {
+  const router = useRouter();
+  useEffect(() => {
+    if (error instanceof ApiError && error.status === 404) router.replace(href);
+  }, [error, href, router]);
+}
+
+/** True on phones and tablets: there "Call" opens the dialer. */
+function isPhone() {
+  return window.matchMedia("(pointer: coarse)").matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+/**
+ * "Call Arjun" / "Call Papa" / "Call cyber helpline 1930". On a phone this
+ * opens the phone's dialer with the number filled in (the person still taps
+ * the green call button). On a laptop, e.g. the demo panel, it shows the number.
+ */
 export function useCall() {
   const toast = useToast();
   return useCallback(
-    (who: string) =>
-      toast({
-        title: who === "1930" ? "Calling cyber helpline 1930 (demo)" : `Calling ${who} (demo)`,
-        sub: "The simulator does not place real calls.",
-        icon: "phone",
-      }),
+    (who: string, phone: string | null | undefined) => {
+      if (!phone) {
+        toast({ title: `No number for ${who}`, sub: "Add it in Settings › Trusted people", icon: "phone", tone: "red" });
+        return;
+      }
+      if (isPhone()) {
+        window.location.href = telHref(phone);
+        return;
+      }
+      toast({ title: `Call ${who}: ${phone}`, sub: "On a phone this opens the dialer.", icon: "phone" });
+    },
     [toast],
   );
+}
+
+/**
+ * A message with its warning phrases marked. With `numbers`, each phrase gets
+ * the number of its signal (F1 "Why we think so"); links can be tapped (G3).
+ */
+export function HighlightedText({
+  text,
+  signals,
+  link,
+  numbers,
+  onLink,
+  size = 16,
+}: {
+  text: string;
+  signals: Evidence[];
+  link: LinkInfo | null;
+  numbers?: Map<string, number>;
+  onLink?: () => void;
+  size?: number;
+}) {
+  type Span = { start: number; end: number; n?: number; link?: boolean };
+  const spans: Span[] = [];
+  const add = (sp: Span) => {
+    if (sp.start < 0 || sp.end > text.length || sp.end <= sp.start) return;
+    // Offsets are only trusted if they still point at the same words.
+    if (!spans.some((x) => x.start < sp.end && sp.start < x.end)) spans.push(sp);
+  };
+  signals.forEach((sg) => text.slice(sg.start, sg.end) === sg.phrase && add({ start: sg.start, end: sg.end, n: numbers?.get(sg.type) }));
+  if (link && link.status !== "known") add({ start: link.start, end: link.end, link: true });
+  spans.sort((a, b) => a.start - b.start);
+
+  const out: React.ReactNode[] = [];
+  let at = 0;
+  spans.forEach((sp, i) => {
+    if (sp.start > at) out.push(text.slice(at, sp.start));
+    const piece = text.slice(sp.start, sp.end);
+    out.push(
+      sp.link && onLink ? (
+        <button key={i} onClick={onLink} style={{ background: "none", padding: 0, textDecoration: "underline", color: "inherit", font: "inherit" }}>
+          <mark>{piece}</mark>
+        </button>
+      ) : (
+        <span key={i}>
+          <mark>{piece}</mark>
+          {sp.n && <sup>{sp.n}</sup>}
+        </span>
+      ),
+    );
+    at = sp.end;
+  });
+  out.push(text.slice(at));
+  return <p className="p" style={{ fontSize: size, lineHeight: 1.55, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>{out}</p>;
 }
