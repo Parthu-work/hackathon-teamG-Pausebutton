@@ -1,0 +1,27 @@
+[
+  {
+    "id": "cbi",
+    "label": "CBI parcel call",
+    "text": "Sir this is CBI Mumbai. A parcel in your name has illegal items. Stay on the call, tell no one, and transfer Rs 80,000 to the verification account."
+  },
+  {
+    "id": "kyc",
+    "label": "Bank KYC link",
+    "text": "Dear SBI customer, your account will be blocked today. Update your KYC now at sbi-kyc-update.com to avoid suspension."
+  },
+  {
+    "id": "courier",
+    "label": "Courier fee",
+    "text": "Hi, your parcel has reached the customs counter. Please pay Rs 1,850 fee at courier-clear.top so we can deliver it tomorrow."
+  },
+  {
+    "id": "lottery",
+    "label": "Lottery win",
+    "text": "Congratulations! Your number has won Rs 25 lakh in the Jio Lucky Draw. Pay Rs 6,500 processing fee to claim your prize today."
+  },
+  {
+    "id": "bank",
+    "label": "Real bank alert",
+    "text": "HDFC Bank: Rs 2,450.00 debited from a/c **4321 on 09-10-26 to VPA swiggy@icici. If this was not you, call the number on the back of your card."
+  }
+]

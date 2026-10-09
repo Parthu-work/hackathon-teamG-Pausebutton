@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, types, tests, build, two-phone e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version comes from "packageManager" in package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - name: Type check
+        run: pnpm next typegen && pnpm typecheck
+      - name: Unit, server-flow and quality-gate tests
+        # Includes the 40-message test set on the real rules + fast-gate model:
+        # fails if any scam is called SAFE or any genuine message SCAM.
+        run: pnpm test
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Two-phone end-to-end test
+        run: pnpm e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
+
+  claude-eval:
+    name: Test set with Claude Haiku
+    # Costs a few cents per run, so only on main or when a PR has the "ai-eval" label.
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ai-eval')
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run the 40 messages with Claude reading the unsure ones
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "No ANTHROPIC_API_KEY secret: skipping."; exit 0; fi
+          pnpm eval --ai haiku

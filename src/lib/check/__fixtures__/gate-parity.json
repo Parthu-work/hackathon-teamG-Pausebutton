@@ -1,0 +1,205 @@
+{
+ "createdAt": "2026-10-09T10:47:57Z",
+ "messages": [
+  {
+   "norm": "punjab national bank: periodic re-kyc is mandatory for your account number ending in xnum . kindly submit self-attested documents at your branch to maintain operational status.",
+   "probability": 0.14243070849505626
+  },
+  {
+   "norm": "dhl express: a shipment booked on your aadhaar from mumbai to iran was stopped by customs. illegal drugs were found inside. your number will be forwarded to the police in xnum hours.",
+   "probability": 0.9003108638712857
+  },
+  {
+   "norm": "आपके खाते xx xnum से एटीएम द्वारा xnum रुपये निकाले गए। अगर यह लेनदेन आपने नहीं किया है तो तुरंत बैंक को सूचित करें और कार्ड ब्लॉक करें। - एसबीआई",
+   "probability": 0.780325404782848
+  },
+  {
+   "norm": "शुभकामनाएँ! आपका इमरजेंसी लोन xamount अब उपलब्ध है. कोई डॉक्यूमेंट नहीं, सिर्फ xamount का फ़ी. तुरंत एप्लीकेशन शुरू करें.",
+   "probability": 0.7334804137921579
+  },
+  {
+   "norm": "dear customer, your electricity bill of xamount for consumer no xnum is generated. pay via tata power app to avoid late fee.",
+   "probability": 0.06829905426093989
+  },
+  {
+   "norm": "stock tips group me join ho ja, daily xnum % return milta hai. pehle xnum tips free di, vip group ka fee xnum hai. xphone par bhejo.",
+   "probability": 0.9389583903405146
+  },
+  {
+   "norm": "స్నేహితుడు లేదా బంధువు అత్యవసరంగా డబ్బు అడిగితే ముందుగా ఫోన్ చేసి గుర్తింపును నిర్ధారించండి.",
+   "probability": 0.25567854454760197
+  },
+  {
+   "norm": "కొరియర్ సమాచారం: మీ ఆధార్తో పంపిన ప్యాకేజీలో అక్రమ వస్తువులు ఉన్నాయి. కేసు మూసివేయడానికి జరిమానా చెల్లించండి.",
+   "probability": 0.6604024422621225
+  },
+  {
+   "norm": "bhayya, ninna manam chusina cinema contest result vachindi. naaku second prize ki xamount coupon vachindi ra, chala happy ga undi.",
+   "probability": 0.15090224458271925
+  },
+  {
+   "norm": "neeku bank velle panjem ledu! intlo kurchuni xamount varaku instant loan teeskovachu. mana app install chesi immediate ga apply chey, idi chala manchi chance.",
+   "probability": 0.8732092011065775
+  },
+  {
+   "norm": "dear neha, your library book is due for return on xnum jun. please return it to avoid a late fee.",
+   "probability": 0.19878970358694079
+  },
+  {
+   "norm": "namaste, this is icici bank. a debit of xamount was made today. to cancel, reply with otp xnum within xnum minutes. regards, customer care.",
+   "probability": 0.6006524487122613
+  },
+  {
+   "norm": "जल्दी से चेक करो, आपका emi xamount आज xnum pm तक डेबिट होगा। अगर कोई प्रॉब्लम है तो तुरंत कस्टमर care xphone पर कॉल करें।",
+   "probability": 0.7381401879454652
+  },
+  {
+   "norm": "आपकी किस्मत चमक गई है! kbc xamount lucky draw contest में आपकी जीत पक्की हुई है। अपना इनाम सुरक्षित करने के लिए तुरंत whatsapp पर संपर्क करें और रजिस्ट्रेशन फॉर्म भरें।",
+   "probability": 0.936683579928144
+  },
+  {
+   "norm": "chal ghar chalte hain, mummy ne pukara hai baar baar",
+   "probability": 0.01996638010948903
+  },
+  {
+   "norm": "aapko xamount milne wala hai! register with id xnum , pay xamount to xphone . start kaam via whatsapp xphone .",
+   "probability": 0.97749513928762
+  },
+  {
+   "norm": "మీ బ్యాంక్ శాఖలో రేపు ఉదయం xnum గంటల నుంచి కస్టమర్ సేవలు అందుబాటులో ఉంటాయి.",
+   "probability": 0.35567297627653044
+  },
+  {
+   "norm": "upi బహుమతి పొందడానికి qr కోడ్ స్కాన్ చేసి pin నమోదు చేయండి.",
+   "probability": 0.6726231293783426
+  },
+  {
+   "norm": "icici bank: dear customer, mee credit card ki xamount limit assign chesaru. instant activation kosam login avvandi: xurl",
+   "probability": 0.6634417202421619
+  },
+  {
+   "norm": "air sim card varaku kooda kyc pending undi. mee number roju laaga pani cheyali ante eeroje verification complete cheyyali, lekapothe outgoing calls block avtay. call cheyandi: xphone",
+   "probability": 0.9814292221834395
+  },
+  {
+   "norm": "your indian bank credit card statement is generated. total due xamount . minimum due xamount . due date xnum jul.",
+   "probability": 0.036619371451321284
+  },
+  {
+   "norm": "your bhim upi account has been temporarily blocked. verify your kyc now or your account will be permanently deactivated within xnum hrs. xurl",
+   "probability": 0.9740255053962281
+  },
+  {
+   "norm": "आपका आईसीआईसीआई बैंक क्रेडिट कार्ड स्टेटमेंट तैयार हो गया है। कुल देय xnum रुपये। न्यूनतम देय xnum रुपये। देय तिथि xnum जून।",
+   "probability": 0.08195948444095465
+  },
+  {
+   "norm": "आपका xnum रुपये का कैशबैक तैयार है। qr कोड स्कैन करें और पैसे पाने के लिए upi पिन डालें।",
+   "probability": 0.813994938173904
+  },
+  {
+   "norm": "bhai kal jo xnum ki movie ticket wali deal thi na, maine bhi book ki thi. bohot mast movie thi, maza aa gaya dekh ke.",
+   "probability": 0.01902085494075924
+  },
+  {
+   "norm": "hey! sirf xamount ka fee dekar aapko xamount ka loan mil sakta hai. bas xnum ghante me app install karo aur payment confirm karo. reference id: zkam xnum l",
+   "probability": 0.9558643780107855
+  },
+  {
+   "norm": "పన్ను లేదా రీఫండ్ నోటీసును ప్రభుత్వ పోర్టల్లో స్వయంగా తనిఖీ చేయండి.",
+   "probability": 0.08860935521361227
+  },
+  {
+   "norm": "electricity bill update: mee tsspdcl account ki xamount payment successful ga receive ayindi. reference id: txn xnum . thanks for paying on time.",
+   "probability": 0.03185149602011048
+  },
+  {
+   "norm": "emergency financial help kavala? ekkada veltharu, mana app dwara xnum mins lo xamount credit avthundi. chala thvaraga ee link open chesi app install cheyandi: xurl",
+   "probability": 0.7982673566462746
+  },
+  {
+   "norm": "your pnb credit card statement is generated. total due xamount . minimum due xamount . due date xnum oct.",
+   "probability": 0.02190241252546137
+  },
+  {
+   "norm": "your electricity security deposit refund is ready. scan the qr code sent on whatsapp and authorise with upi pin to receive it.",
+   "probability": 0.9437581647357971
+  },
+  {
+   "norm": "भारतीय रिज़र्व बैंक: पैसे प्राप्त करने के लिए कभी भी upi पिन डालने की ज़रूरत नहीं होती। ठगों से सावधान रहें।",
+   "probability": 0.825383961233004
+  },
+  {
+   "norm": "प्रिय अमित, आपके आधार से जुड़ा मोबाइल नंबर धोखाधड़ी गतिविधि की रिपोर्ट के कारण निलंबित कर दिया जाएगा। तुरंत ट्राई अधिकारी xphone से संपर्क करें।",
+   "probability": 0.93102054982364
+  },
+  {
+   "norm": "mummy ne rajma chawal banayi hai, apne doston ke saath aana",
+   "probability": 0.0193676645576331
+  },
+  {
+   "norm": "hello, aapka bill xamount generate hua hai. payment karne ke liye link: xurl late fee se bachne ke liye jaldi karein.",
+   "probability": 0.691520869813005
+  },
+  {
+   "norm": "ఆధార్ లేదా pan వివరాలు పంచుకునే ముందు అవి ఎందుకు అడిగారో నిర్ధారించుకోండి.",
+   "probability": 0.3129856186867421
+  },
+  {
+   "norm": "meeru request chesina sbi credit card bill payment xamount success ayindi. ref id: xnum . mee a/c ** xnum debit ayindi. thank you.",
+   "probability": 0.027817890473269467
+  },
+  {
+   "norm": "good news! mee mobile number ki kbc lottery round xnum lo xamount prize select aindi. details kosam whatsapp lo message cheyandi",
+   "probability": 0.8360427554649605
+  },
+  {
+   "norm": "greetings, your recent purchase on snapdeal (order xphone ) has been dispatched. track here: xurl",
+   "probability": 0.11706457630220189
+  },
+  {
+   "norm": "reminder: pending bill xamount . pay today to avoid cut-off. call xphone for assistance.",
+   "probability": 0.8418166275855274
+  },
+  {
+   "norm": "एक्सेंचर इंडिया में xnum साल पूरे होने पर बधाई! आगे भी कई और उपलब्धियां हासिल करें।",
+   "probability": 0.20572557451288226
+  },
+  {
+   "norm": "सुनो भाई, आपका kbc lottery में xnum लाख रुपये का इनाम आया है। जल्दी से whatsapp पर xphone नंबर पर कॉल करो वरना यह पैसा किसी और को मिल जाएगा।",
+   "probability": 0.9256417589067436
+  },
+  {
+   "norm": "hello! this is an update from the infosys recruitment team. your doj is finalized for xnum th october. please report to the bangalore campus at xnum am sharp.",
+   "probability": 0.06129232787804464
+  },
+  {
+   "norm": "kyc update required! your axis account a/c no xnum **** xnum will be deactivated. visit xurl",
+   "probability": 0.7077836594729103
+  },
+  {
+   "norm": "atm కార్డు పోయినట్లయితే బ్యాంక్ అధికారిక హెల్ప్లైన్కు కాల్ చేసి వెంటనే బ్లాక్ చేయండి.",
+   "probability": 0.5977625420628676
+  },
+  {
+   "norm": "paytm notice: mee wallet ki sambandhinchina periodic kyc verification complete cheyyandi. ee process kosam evariki otp cheppakandi, official paytm app matrame vadandi.",
+   "probability": 0.14974166046515194
+  },
+  {
+   "norm": "namaskaram, mee syndicate bank account ki kyc update incomplete ga undi. meeru eeroje details ivvakapote xnum hours lo account suspend avtundi. dayachesi thvaraga pani chuskondi.",
+   "probability": 0.7335669812082528
+  },
+  {
+   "norm": "reminder: your appointment with dr. manoj is scheduled for xnum oct at xnum pm. please arrive xnum minutes early.",
+   "probability": 0.008217149363706957
+  },
+  {
+   "norm": "cyber police: your debit card was used for payments linked to human trafficking. remain on the video call for interrogation and transfer your balance to the secure government account so it can be audited.",
+   "probability": 0.5075337040708687
+  },
+  {
+   "norm": "अनुस्मारक: आज xnum सुबह बजे ऑफिस कैफेटेरिया में टीम लंच है। कृपया अपनी उपस्थिति की पुष्टि करें।",
+   "probability": 0.10905293725570407
+  }
+ ]
+}

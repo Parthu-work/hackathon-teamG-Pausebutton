@@ -1,0 +1,54 @@
+{
+  "seed": [
+    {
+      "channel": "sms",
+      "sender": "HDFCBK",
+      "fromContact": false,
+      "text": "Rs 2,450 has been debited from your account XX4321 at SWIGGY via UPI on 09-10-26. Not you? Call the number on your card."
+    },
+    {
+      "channel": "whatsapp",
+      "sender": "Arjun",
+      "fromContact": true,
+      "text": "Papa, dinner at 8?"
+    }
+  ],
+  "library": [
+    {
+      "channel": "whatsapp",
+      "sender": "+91 9XXXX XXXXX",
+      "fromContact": false,
+      "text": "Sir this is CBI Mumbai. A parcel in your name has illegal items. Stay on the call, tell no one, and transfer Rs 80,000 to the verification account."
+    },
+    {
+      "channel": "sms",
+      "sender": "VK-COURIR",
+      "fromContact": false,
+      "text": "Hi, your parcel has reached the customs counter. Please pay Rs 1,850 fee at courier-clear.top so we can deliver it tomorrow."
+    },
+    {
+      "channel": "sms",
+      "sender": "+91 8XXXX XXXXX",
+      "fromContact": false,
+      "text": "Dear SBI customer, your YONO account will be blocked today. Update your PAN now at sbi-yono-kyc.top to avoid suspension."
+    },
+    {
+      "channel": "whatsapp",
+      "sender": "+91 7XXXX XXXXX",
+      "fromContact": false,
+      "text": "Hello sir, I sent Rs 5,000 to your number by mistake. Please return it to my UPI ID, it was for my mother's medicine."
+    },
+    {
+      "channel": "sms",
+      "sender": "JM-JIOINF",
+      "fromContact": false,
+      "text": "Your Jio recharge of Rs 299 is successful. Validity till 08-11-2026. Thank you for choosing Jio."
+    },
+    {
+      "channel": "whatsapp",
+      "sender": "Meera",
+      "fromContact": true,
+      "text": "Papa, I will call you after my meeting. Take your medicine on time."
+    }
+  ]
+}

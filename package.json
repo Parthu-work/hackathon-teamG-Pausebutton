@@ -1,0 +1,47 @@
+{
+  "name": "pause-button",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "ml:setup": "python3 -m venv ml/.venv && ml/.venv/bin/python -I -m pip install -r ml/requirements.txt",
+    "ml:download": "ml/.venv/bin/python -I ml/download.py",
+    "ml:prepare": "tsx ml/prepare-corpus.ts",
+    "ml:train": "ml/.venv/bin/python -I ml/train_gate.py",
+    "ml:all": "pnpm ml:download && pnpm ml:prepare && pnpm ml:train",
+    "e2e": "playwright test",
+    "eval": "tsx scripts/eval.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
+    "@electric-sql/pglite": "^0.5.8",
+    "@tanstack/react-query": "^5.104.1",
+    "drizzle-orm": "^0.45.3",
+    "next": "16.4.0",
+    "pg": "^8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^24.19.1",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.11",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.0.3"
+  },
+  "packageManager": "pnpm@11.20.0"
+}
