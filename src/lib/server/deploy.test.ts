@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { requireOperator } from "./operator";
-import { secretFromEnv } from "./secrets";
+import { isDeployment, secretFromEnv } from "./secrets";
 
 // Settings that must be in place before a public deploy.
 
-const saved = { OPERATOR_KEY: process.env.OPERATOR_KEY, VERCEL: process.env.VERCEL, SESSION_SECRET: process.env.SESSION_SECRET };
+const HOST_VARS = ["VERCEL", "RAILWAY_ENVIRONMENT_NAME", "RENDER", "FLY_APP_NAME", "K_SERVICE", "DEPLOYED"] as const;
+const saved = Object.fromEntries(["OPERATOR_KEY", "SESSION_SECRET", ...HOST_VARS].map((name) => [name, process.env[name]]));
+const onLaptop = () => HOST_VARS.forEach((name) => delete process.env[name]);
 afterEach(() => {
   for (const [name, value] of Object.entries(saved)) {
     if (value === undefined) delete process.env[name];
@@ -31,16 +33,32 @@ describe("operator key", () => {
 
 describe("secrets", () => {
   it("uses the dev value on a laptop", () => {
-    delete process.env.VERCEL;
+    onLaptop();
     delete process.env.SESSION_SECRET;
     expect(secretFromEnv("SESSION_SECRET", "dev")).toBe("dev");
   });
 
   it("refuses to run a deployment without one", () => {
+    onLaptop();
     process.env.VERCEL = "1";
     delete process.env.SESSION_SECRET;
     expect(() => secretFromEnv("SESSION_SECRET", "dev")).toThrow("Set SESSION_SECRET");
     process.env.SESSION_SECRET = "long-random-value";
     expect(secretFromEnv("SESSION_SECRET", "dev")).toBe("long-random-value");
+  });
+});
+
+describe("deployment detection", () => {
+  it("is off on a laptop, CI and the e2e server", () => {
+    onLaptop();
+    expect(isDeployment()).toBe(false);
+  });
+
+  it.each(HOST_VARS)("recognises %s", (name) => {
+    onLaptop();
+    process.env[name] = name === "RENDER" ? "true" : "production";
+    expect(isDeployment()).toBe(true);
+    delete process.env.SESSION_SECRET;
+    expect(() => secretFromEnv("SESSION_SECRET", "dev")).toThrow("Set SESSION_SECRET");
   });
 });

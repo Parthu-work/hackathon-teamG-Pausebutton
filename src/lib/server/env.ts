@@ -1,9 +1,11 @@
 import { formatPhone } from "@/lib/phone";
+import { isDeployment } from "./secrets";
 
 // Configuration checked once, at server start (src/instrumentation.ts) and at
 // the start of the Vercel build (`pnpm env:check`). Every problem is reported
 // together, so a deploy is fixed in one pass, not one variable per attempt.
-// "Deployed" means Vercel, as in secrets.ts: a laptop or CI needs nothing set.
+// "Deployed" is secrets.ts isDeployment(): Vercel, Railway, Render, Fly.io,
+// Cloud Run or DEPLOYED=1. A laptop or CI needs nothing set.
 
 type Env = Record<string, string | undefined>;
 export type EnvReport = { errors: string[]; warnings: string[] };
@@ -12,7 +14,7 @@ const set = (env: Env, name: string) => !!env[name]?.trim();
 
 /** Needed on every deployment, with what each one is for. */
 const REQUIRED_DEPLOYED: [string, string][] = [
-  ["DATABASE_URL", "Neon Postgres; the embedded database only works on a laptop"],
+  ["DATABASE_URL", "Postgres; the embedded database only works on a laptop"],
   ["SESSION_SECRET", "signs sign-in sessions"],
   ["FINGERPRINT_SECRET", "keys the message fingerprints; set it once and never change it"],
   ["OPERATOR_KEY", "locks the operator pages on a public URL"],
@@ -25,7 +27,7 @@ const DEMO_PHONES = ["DEMO_RAO_PHONE", "DEMO_MOM_PHONE", "DEMO_ARJUN_PHONE", "DE
 export function checkEnv(env: Env = process.env): EnvReport {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const deployed = set(env, "VERCEL");
+  const deployed = isDeployment(env);
 
   if (deployed) {
     for (const [name, why] of REQUIRED_DEPLOYED) if (!set(env, name)) errors.push(`${name} is not set (${why}).`);

@@ -31,6 +31,12 @@ describe("configuration check", () => {
     expect(describeEnvErrors(errors)).toContain("4 problems");
   });
 
+  it("applies the deployment rules on every host isDeployment() knows, not only Vercel", () => {
+    for (const host of [{ RAILWAY_ENVIRONMENT_NAME: "production" }, { RENDER: "true" }, { DEPLOYED: "1" }]) {
+      expect(checkEnv(host).errors).toHaveLength(4);
+    }
+  });
+
   it("treats a blank value as missing", () => {
     expect(checkEnv({ ...deployed, OPERATOR_KEY: "  " }).errors).toEqual([expect.stringMatching(/^OPERATOR_KEY is not set/)]);
   });

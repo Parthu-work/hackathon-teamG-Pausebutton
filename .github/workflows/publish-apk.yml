@@ -1,0 +1,93 @@
+name: Publish APK to the website
+
+# Builds the Android app for the deployed site and commits it as
+# public/pause-button.apk, so <site>/download serves it to anyone who scans the
+# QR code. Then waits for the site to redeploy and checks, from the outside,
+# that the health check, the download page, the QR and the APK all work.
+# Run it from the Actions tab after changing the app or the deployment address.
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: "The deployed site (https://…, no trailing slash). Empty = the PB_HOST variable, else the Railway URL."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-apk
+  cancel-in-progress: false
+
+env:
+  HOST: ${{ inputs.host || vars.PB_HOST || 'https://hackathon-teamg-pausebutton-production.up.railway.app' }}
+
+jobs:
+  publish:
+    name: Build, publish and check the APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: The site is up (before publishing)
+        run: |
+          HOST="${HOST%/}"
+          echo "Site: $HOST"
+          code=$(curl -s -o health.json -w '%{http_code}' -m 30 "$HOST/api/health" || true)
+          echo "GET /api/health → $code $(cat health.json 2>/dev/null)"
+          if [ "$code" != 200 ]; then
+            echo "::error::$HOST/api/health answered $code. Fix the deployment first (Railway → Deployments → logs; Variables: DATABASE_URL, SESSION_SECRET, FINGERPRINT_SECRET)."
+            exit 1
+          fi
+          for path in /welcome /download /download/qr; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$HOST$path")
+            echo "GET $path → $code"
+            [ "$code" = 200 ] || { echo "::error::$HOST$path answered $code"; exit 1; }
+          done
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37.2 build-tools;36.0.0
+
+      - name: Build the APK
+        run: cd android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug -PPB_HOST="${HOST%/}"
+
+      - name: The APK opens this site
+        run: |
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          ls -l "$apk"
+          unzip -p "$apk" resources.arsc | strings | grep -F "${HOST%/}" || { echo "::error::The APK does not contain $HOST"; exit 1; }
+
+      - name: Commit it to the website
+        id: commit
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk public/pause-button.apk
+          sha256sum public/pause-button.apk | cut -d' ' -f1 > apk.sha256
+          echo "sha256=$(cat apk.sha256)" >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add public/pause-button.apk
+          if git commit -m "Publish the Android app for ${HOST%/}"; then git push; else echo "Unchanged APK: nothing to commit."; fi
+
+      - name: The site serves this APK (waits for the redeploy)
+        run: |
+          HOST="${HOST%/}"
+          want="${{ steps.commit.outputs.sha256 }}"
+          for i in $(seq 1 60); do
+            code=$(curl -s -o served.apk -w '%{http_code}' -m 60 "$HOST/pause-button.apk" || true)
+            got=$([ "$code" = 200 ] && sha256sum served.apk | cut -d' ' -f1 || echo none)
+            echo "try $i: GET /pause-button.apk → $code ($got)"
+            if [ "$got" = "$want" ]; then
+              echo "### APK is live" >> "$GITHUB_STEP_SUMMARY"
+              echo "Download page: $HOST/download · QR: $HOST/download/qr · APK sha256 \`$want\`" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::$HOST still does not serve the new APK after 20 minutes. Check that Railway deploys main automatically, and its latest deployment's logs."
+          exit 1
