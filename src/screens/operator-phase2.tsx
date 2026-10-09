@@ -273,7 +273,7 @@ function ReportsInner() {
                   {v.rows.map((r) => (
                     <tr key={r.id} data-testid={`report-${r.domain}`}>
                       <td><b style={{ wordBreak: "break-all" }}>{r.domain}</b></td>
-                      <td>{r.reportedBy}{r.otherReporters ? <span className="sm"> · {r.otherReporters} more</span> : null}</td>
+                      <td>{r.reportedBy || "Deleted account"}{r.otherReporters ? <span className="sm"> · {r.otherReporters} more</span> : null}</td>
                       <td>{r.seenIn} check{r.seenIn === 1 ? "" : "s"}</td>
                       <td><span className={`tag ${AUTO[r.autoCheck] ?? ""}`}>{r.autoReason.toUpperCase()}</span></td>
                       <td>

@@ -31,6 +31,14 @@ export async function clearSession(app: App) {
   (await cookies()).delete(COOKIE[app]);
 }
 
+/** After account deletion: every cookie on this phone that signs in as that person. */
+export async function clearSessionsOf(userId: string) {
+  const jar = await cookies();
+  for (const app of ["rao", "family", "pending"] as const) {
+    if (verify(jar.get(COOKIE[app])?.value) === userId) jar.delete(COOKIE[app]);
+  }
+}
+
 /** The signed value stored in a session cookie (or the demo panel's per-frame header). */
 export function sessionToken(userId: string) {
   return `${userId}.${sign(userId)}`;

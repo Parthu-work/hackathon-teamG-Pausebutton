@@ -31,6 +31,7 @@ export function InboxScreen() {
   /** F1a · the phone's Share sheet: Pause Button is one of the targets. */
   function sendToPause(m: SimMessageView) {
     setSharing(null);
+    if (!m.text) return;
     const params = new URLSearchParams({ text: m.text, from: m.channel === "whatsapp" ? "whatsapp" : "sms" });
     router.push(`/share?${params.toString()}`);
   }
@@ -85,7 +86,7 @@ export function InboxScreen() {
             <span className="src"><Icon name="msg" /></span>
             <div className="grow">
               <b style={{ fontSize: 16 }}>{m.sender}</b>
-              <p className="sm" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.text}</p>
+              <p className="sm" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.text ?? t("inbox.textNotKept")}</p>
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
               <span className="sm">{clockTime(m.createdAt)}</span>
@@ -96,9 +97,11 @@ export function InboxScreen() {
               )}
             </div>
           </button>
-          <button className="ghost" style={{ alignSelf: "flex-end", fontSize: 14, minHeight: 36 }} onClick={() => setSharing(m)} aria-label={`${t("inbox.share")} ${m.sender}`}>
-            <Icon name="share" size={18} />{t("inbox.share")}
-          </button>
+          {m.text && (
+            <button className="ghost" style={{ alignSelf: "flex-end", fontSize: 14, minHeight: 36 }} onClick={() => setSharing(m)} aria-label={`${t("inbox.share")} ${m.sender}`}>
+              <Icon name="share" size={18} />{t("inbox.share")}
+            </button>
+          )}
         </div>
       ))}
       <p className="sm">{t("inbox.contactsNotChecked")}</p>

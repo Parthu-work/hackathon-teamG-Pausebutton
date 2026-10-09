@@ -71,6 +71,13 @@
       "when": 1791584173648,
       "tag": "0009_push_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791586882997,
+      "tag": "0010_sim_text_retention",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,6 @@ export const POST = route(async (req) => {
   const { persona } = await readBody(req, z.object({ persona: z.enum(["rao", "mom"]).default("rao") }));
   const db = await getDb();
   const owner = (await personaUser(db, persona))!;
-  const row = await deliverMessage(db, owner, simData.library[0] as SimInput);
+  const row = await deliverMessage(db, owner, simData.library[0] as SimInput, { synthetic: true });
   return { id: row.id, name: owner.name };
 });

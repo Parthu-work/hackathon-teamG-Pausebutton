@@ -87,6 +87,18 @@ export async function householdsThatMet(db: Db, domains: string[]) {
   return new Set(rows.filter((r) => r.domain && domains.includes(r.domain)).map((r) => r.householdKey)).size;
 }
 
+/**
+ * Cuts the link between a person and their sightings (Delete my history,
+ * account deletion): their rows move to one random key, so campaign counts
+ * stay right but no longer lead back to them. Fingerprints are untouched.
+ */
+export async function forgetSightings(db: Db, householdKey: string) {
+  await db
+    .update(schema.sightings)
+    .set({ householdKey: `gone:${crypto.randomUUID()}` })
+    .where(and(eq(schema.sightings.householdKey, householdKey), eq(schema.sightings.synthetic, false)));
+}
+
 export async function clearSyntheticSightings(db: Db) {
   await db.delete(schema.sightings).where(eq(schema.sightings.synthetic, true));
 }

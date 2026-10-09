@@ -6,6 +6,10 @@ name: Uptime
 # watching the repo hears about it; later failures comment on that issue, and
 # the first good check closes it.
 #
+# The same run calls the scheduled purge (POST /api/cron/purge, docs/retention.md):
+# message text past 24 hours, activity and push logs past 30 days. It needs
+# the CRON_SECRET repository secret, set to the server's CRON_SECRET.
+#
 # Hourly keeps it inside the free Actions minutes of a private repo (each run
 # bills a minute; every 15 minutes would use about 2,900 a month).
 on:
@@ -35,14 +39,29 @@ jobs:
           sparse-checkout: scripts
 
       - name: Check the live site
+        id: site
         run: |
           bash scripts/check-site.sh "$HOST" | tee report.md
           status=${PIPESTATUS[0]}
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
+      - name: Run the scheduled purge
+        if: ${{ !cancelled() }}
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set the CRON_SECRET repository secret (Settings → Secrets and variables → Actions) to the server's CRON_SECRET. Without it, message text is deleted only when someone checks a message."
+            exit 1
+          fi
+          curl -fsS --max-time 60 --retry 2 --retry-all-errors -X POST \
+            -H "authorization: Bearer $CRON_SECRET" "$HOST/api/cron/purge" | tee purge.json
+          echo "Purge: $(cat purge.json)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Open or update the "site is down" issue
-        if: failure()
+        # The site check failed, or the run failed before it (a failed purge alone opens no issue).
+        if: ${{ failure() && steps.site.outcome != 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -60,7 +79,7 @@ jobs:
           fi
 
       - name: Close the "site is down" issue
-        if: success()
+        if: ${{ !cancelled() && steps.site.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
