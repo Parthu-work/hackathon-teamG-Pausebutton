@@ -527,3 +527,25 @@ test("removing the last linked person warns that nobody will be told", async ({ 
   await rao.getByRole("button", { name: "Remove Arjun" }).click();
   await expect(rao.getByText("Nobody will be told")).toBeVisible();
 });
+
+test("Delete my account: a shared demo account cannot be deleted; a real one can, and is signed out", async ({ browser }) => {
+  const demo = await phone(browser, "Mr Rao");
+  await demo.goto("/privacy");
+  await expect(demo.getByText("This is a shared demo account, so it cannot be deleted.")).toBeVisible();
+  await expect(demo.getByTestId("delete-account")).toHaveCount(0);
+  // The same promise the policy makes (docs/retention.md): 24 hours, and the log.
+  await expect(demo.getByText(/for 24 hours/).first()).toBeVisible();
+  await expect(demo.getByText(/for 30 days/)).toBeVisible();
+
+  const ctx = await newContext(browser);
+  const page = await ctx.newPage();
+  const phoneNumber = `9${Math.floor(100_000_000 + Math.random() * 899_999_999)}`;
+  expect((await ctx.request.post("/api/auth/sign-in", { data: { phone: phoneNumber, code: "1234" } })).ok()).toBeTruthy();
+  expect((await ctx.request.post("/api/auth/role", { data: { role: "protected", name: "Test Person" } })).ok()).toBeTruthy();
+  await page.goto("/privacy");
+  await page.getByTestId("delete-account").click();
+  await expect(page.getByRole("heading", { name: "Delete your account?" })).toBeVisible();
+  await page.getByTestId("confirm-delete-account").click();
+  await page.waitForURL("**/welcome");
+  expect((await ctx.request.get("/api/me/state")).status()).toBe(401);
+});

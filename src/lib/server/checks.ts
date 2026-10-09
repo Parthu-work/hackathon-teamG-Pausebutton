@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, lt, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, notInArray, or } from "drizzle-orm";
 import { familyCopy, rupees, verdictCopy } from "@/lib/check/copy";
 import { normalizeForMatch } from "@/lib/check/normalize";
 import { keyPhrases } from "@/lib/check/phrases";
@@ -20,7 +20,7 @@ import { pushToUsers, type PushPayload, type PushResult } from "./push";
 import { liveBlockedDomains, reportableFor } from "./reports";
 import { secretFromEnv } from "./secrets";
 import { HttpError } from "./session";
-import { campaignFor, recordSighting } from "./sightings";
+import { campaignFor, forgetSightings, recordSighting } from "./sightings";
 
 type User = typeof schema.users.$inferSelect;
 type Check = typeof schema.checks.$inferSelect;
@@ -70,7 +70,8 @@ export type NewCheck = {
 };
 
 /**
- * Runs the check, stores the result (never the message text) and does what
+ * Runs the check, stores the result (the text only for a scam or suspicious
+ * message, for 24 hours: see sharedText) and does what
  * the verdict calls for:
  *  - a message the person brought us (pasted, forwarded, spoken) that is a
  *    SCAM: urgent alert to every linked family member, plus a payment hold
@@ -272,12 +273,23 @@ export function sharedText(check: Check): string | null {
   return Date.now() - check.createdAt.getTime() < SHARE_TEXT_HOURS * 3600_000 ? check.messageText : null;
 }
 
-/** Deletes message text older than 24 hours. */
-export async function purgeSharedText(db: Db) {
-  await db
+/**
+ * Deletes message text older than 24 hours. Runs before every check and from
+ * the hourly purge (retention.ts); the read gate in sharedText covers the gap
+ * between runs. Real inbox rows never keep text: any left from before is cleared.
+ */
+export async function purgeSharedText(db: Db, now = new Date()) {
+  const checks = await db
     .update(schema.checks)
     .set({ messageText: null })
-    .where(and(isNotNull(schema.checks.messageText), lt(schema.checks.createdAt, new Date(Date.now() - SHARE_TEXT_HOURS * 3600_000))));
+    .where(and(isNotNull(schema.checks.messageText), lt(schema.checks.createdAt, new Date(now.getTime() - SHARE_TEXT_HOURS * 3600_000))))
+    .returning({ id: schema.checks.id });
+  const inbox = await db
+    .update(schema.simMessages)
+    .set({ text: null })
+    .where(and(isNotNull(schema.simMessages.text), eq(schema.simMessages.synthetic, false)))
+    .returning({ id: schema.simMessages.id });
+  return { checkText: checks.length, inboxText: inbox.length };
 }
 
 /**
@@ -384,9 +396,11 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
     familyVerdict: check.familyVerdict,
     familyVerdictByName: said.final ? joinNames(said.decidedBy) : null,
     answers: said.answers,
-    waitingFor: said.waitingFor,
-    canAnswer: !!opts.member && !said.final && said.recipients.includes(opts.member.id) && !said.answers.some((a) => a.memberId === opts.member!.id),
-    simText: memberNotAlerted ? null : sim?.text ?? null,
+    // A stored family verdict is final even when the answers behind it are gone (the member deleted their account).
+    waitingFor: check.familyVerdict ? [] : said.waitingFor,
+    canAnswer: !!opts.member && !said.final && !check.familyVerdict && said.recipients.includes(opts.member.id) && !said.answers.some((a) => a.memberId === opts.member!.id),
+    // Only a made-up demo message keeps its text in the inbox; a real one's is messageText (24 h).
+    simText: memberNotAlerted || !sim?.synthetic ? null : sim.text,
     messageText: memberNotAlerted ? null : sharedText(check),
     owner: ownerView(owner, opts.member ? family.find((f) => f.familyId === opts.member!.id)?.relation : null),
     hold: hold ? await toHoldView(db, hold, check) : null,
@@ -423,15 +437,36 @@ export async function listChecks(db: Db, userId: string) {
 
 export type CheckRow = Awaited<ReturnType<typeof listChecks>>[number];
 
-/** P3 "Delete my history". A payment still on hold stays until family decides, so their Block still reaches it. */
+/**
+ * P3 "Delete my history": his checks, his inbox, his household's activity log,
+ * and the link between him and his campaign sightings. A payment still on hold
+ * stays, with its message and timeline, until family decides, so their Block
+ * still reaches it.
+ */
 export async function deleteHistory(db: Db, owner: User) {
   const open = await db.query.holds.findMany({
     where: and(eq(schema.holds.userId, owner.id), eq(schema.holds.status, "pending")),
   });
   const keep = [...new Set(open.map((h) => h.checkId))];
+  const keepHolds = open.map((h) => h.id);
+  await db
+    .delete(schema.simMessages)
+    .where(
+      keep.length
+        ? and(eq(schema.simMessages.userId, owner.id), or(isNull(schema.simMessages.checkId), notInArray(schema.simMessages.checkId, keep)))
+        : eq(schema.simMessages.userId, owner.id),
+    );
   await db
     .delete(schema.checks)
     .where(keep.length ? and(eq(schema.checks.userId, owner.id), notInArray(schema.checks.id, keep)) : eq(schema.checks.userId, owner.id));
+  await db
+    .delete(schema.events)
+    .where(
+      keepHolds.length
+        ? and(eq(schema.events.householdId, owner.id), or(isNull(schema.events.holdId), notInArray(schema.events.holdId, keepHolds)))
+        : eq(schema.events.householdId, owner.id),
+    );
+  await forgetSightings(db, owner.id);
   await logEvent(db, owner.id, owner.name, "history_deleted", `${owner.name} deleted their check history`);
   return { kept: keep.length };
 }

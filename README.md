@@ -113,12 +113,14 @@ Holds:
 - Expiry is derived from `expires_at`, so no background job is needed.
 - The first family answer to a question wins, and Mr Rao sees the first advice.
 
-**Privacy and the shared message:**
-- For every check the server stores a keyed fingerprint, the verdict and the warning phrases.
-- **The full text of a SCAM or SUSPICIOUS message** is also kept, **for 24 hours**, so the family members who are alerted or asked can read exactly what was received (I2, J2, I4, O2) once they open the alert. Nobody else can read it, including people linked later. After 24 hours it is deleted.
-- **Safe messages' text is never kept.** "Ask Arjun anyway" sends the text along from the phone, and the server only accepts it if it matches the checked message's fingerprint.
+**Privacy and the shared message** (the full policy, table by table: [docs/retention.md](docs/retention.md)):
+- For every check the server stores a keyed fingerprint, the verdict, the warning phrases and who sent it.
+- **The full text of a SCAM or SUSPICIOUS message** is also kept, **for 24 hours**, so the family members who are alerted or asked can read exactly what was received (I2, J2, I4, O2) once they open the alert. Nobody else can read it, including people linked later. After 24 hours it is unreadable, and the hourly purge (`POST /api/cron/purge`, called by the Uptime workflow) deletes it.
+- **Safe messages' text is never kept**, with one exception the person chooses: "Ask Arjun anyway" sends the text along from the phone (the server only accepts it if it matches the checked message's fingerprint), and it is then kept like a scam message's text, for 24 hours.
+- Messages from the Android watcher keep no text in the inbox table, and a message that is not checked (an app not watched, a saved contact) is not stored at all. Only the made-up demo messages keep their text there.
+- The activity log and the push delivery log are deleted after 30 days.
 - Pasted text also stays in the phone's `sessionStorage`, so "Why we think so" can highlight it.
-- The simulated inbox stands in for the phone's own SMS app and only holds made-up messages.
+- **Delete my history** and **Delete my account** (P3; J4 for family) remove what the policy says, and refuse to touch a payment that is still on hold.
 - The privacy screen (P3) says all of this in plain words.
 
 ## Stack

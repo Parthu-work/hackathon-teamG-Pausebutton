@@ -157,8 +157,10 @@ export const events = pgTable("events", {
 });
 
 /**
- * The simulated phone inbox (P1). It stands in for the phone's own SMS and
- * WhatsApp apps, so it holds message text, but only made-up demo messages.
+ * The phone inbox (P1): the simulated SMS and WhatsApp apps, plus the messages
+ * the Android watcher posts. Only made-up demo messages (synthetic) keep their
+ * text here. A real message keeps none: its check holds the text of a scam or
+ * suspicious message for 24 hours, and a safe message's text is never stored.
  */
 export const simMessages = pgTable("sim_messages", {
   id: id(),
@@ -166,7 +168,9 @@ export const simMessages = pgTable("sim_messages", {
   channel: text("channel").$type<"sms" | "whatsapp">().notNull(),
   sender: text("sender").notNull(),
   fromContact: boolean("from_contact").notNull().default(false),
-  text: text("text").notNull(),
+  text: text("text"),
+  /** A made-up message from the demo library (src/data/sim-messages.json), not one a phone received. */
+  synthetic: boolean("synthetic").notNull().default(false),
   checkId: text("check_id").references(() => checks.id, { onDelete: "set null" }),
   bannerSeenAt: timestamp("banner_seen_at", { withTimezone: true }),
   createdAt: createdAt(),

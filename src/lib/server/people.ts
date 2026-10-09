@@ -162,3 +162,20 @@ export async function unlink(db: Db, member: User, linkId: string) {
   if (!row) throw new HttpError(404, "Not linked.");
   await logEvent(db, row.protectedId, member.name, "unlinked", `${member.name} unlinked`);
 }
+
+/**
+ * Account deletion: every link where this person is the trusted one goes back
+ * to "waiting" with a fresh code, as if they had unlinked, so the person they
+ * protected sees it and can invite someone (or them) again. The timeline line
+ * uses the protected person's own name for them, not the deleted account's.
+ */
+export async function unlinkEverywhere(db: Db, member: User) {
+  const rows = await db.query.links.findMany({ where: eq(schema.links.familyId, member.id) });
+  for (const l of rows) {
+    await db
+      .update(schema.links)
+      .set({ familyId: null, status: "waiting", linkedAt: null, inviteCode: newInviteCode(), codeExpiresAt: codeExpiry() })
+      .where(eq(schema.links.id, l.id));
+    await logEvent(db, l.protectedId, "Pause Button", "unlinked", `${l.name} deleted their account and no longer gets alerts`);
+  }
+}
