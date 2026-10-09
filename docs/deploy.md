@@ -8,8 +8,8 @@
 | A real Postgres (`DATABASE_URL`) | The embedded PGlite writes to local disk, which hosts wipe on every deploy. Deployments refuse to start without it. | `src/lib/db/index.ts` |
 | Run migrations before the new version takes traffic | `pnpm db:migrate` applies `drizzle/*.sql` | `scripts/migrate.ts` |
 | HTTPS | Web Push, "Add to Home screen" and the Android app (`PB_HOST`) only work over HTTPS | `src/lib/server/push.ts`, `android/` |
-| Secrets: `SESSION_SECRET`, `FINGERPRINT_SECRET`, `OPERATOR_KEY`, `VAPID_*` | Sign sessions, key fingerprints, lock `/demo` and `/tests`, send push | `.env.example` |
-| Nothing long-running | No cron, no queue, no WebSocket: phones poll every 2–5 s and push is sent inside the request. Serverless works, and so does a server that sleeps. | `src/screens/rao/shell.tsx`, `src/lib/server/push.ts` |
+| Secrets: `SESSION_SECRET`, `FINGERPRINT_SECRET`, `OPERATOR_KEY`, `CRON_SECRET`, `VAPID_*` | Sign sessions, key fingerprints, lock `/demo` and `/tests`, unlock the hourly purge, send push | `.env.example` |
+| Nothing long-running | No queue, no WebSocket: phones poll every 2–5 s and push is sent inside the request. The one scheduled job, the hourly purge ([retention.md](retention.md)), is an HTTP call from GitHub Actions. Serverless works, and so does a server that sleeps. | `src/screens/rao/shell.tsx`, `src/lib/server/push.ts`, `src/lib/server/retention.ts` |
 | Close to India | The users are in India: Singapore is the nearest region on every host | `vercel.json` (`sin1`) |
 
 ## Recommendation
@@ -42,6 +42,7 @@ Free-plan terms change often. These figures were checked in October 2026; confir
    openssl rand -base64 32   # SESSION_SECRET
    openssl rand -base64 32   # FINGERPRINT_SECRET
    openssl rand -base64 32   # OPERATOR_KEY
+   openssl rand -base64 32   # CRON_SECRET (also a GitHub repository secret, see "Keeping it live")
    pnpm push:keys            # VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY
    ```
    Use the same values on every host, so phones that already subscribed keep receiving push.
@@ -50,7 +51,7 @@ Free-plan terms change often. These figures were checked in October 2026; confir
 
 1. vercel.com → **Add New → Project** → import `hackathon-teamG-Pausebutton`. Framework: Next.js (detected). Leave the build command alone: `vercel.json` runs `pnpm db:migrate && pnpm build` in `sin1`.
 2. **Settings → Environment Variables**, for Production and Preview:
-   `DATABASE_URL` (pooled), `SESSION_SECRET`, `FINGERPRINT_SECRET`, `OPERATOR_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT=mailto:<team email>`, `DEMO_RAO_PHONE`, `DEMO_MOM_PHONE`, `DEMO_ARJUN_PHONE`, `DEMO_MEERA_PHONE`, and optionally `ANTHROPIC_API_KEY`, `ANDROID_CERT_SHA256`.
+   `DATABASE_URL` (pooled), `SESSION_SECRET`, `FINGERPRINT_SECRET`, `OPERATOR_KEY`, `CRON_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT=mailto:<team email>`, `DEMO_RAO_PHONE`, `DEMO_MOM_PHONE`, `DEMO_ARJUN_PHONE`, `DEMO_MEERA_PHONE`, and optionally `ANTHROPIC_API_KEY`, `ANDROID_CERT_SHA256`.
    - Optional: the **Neon integration** (Vercel Marketplace) gives every preview its own database branch, so previews don't share data with production.
 3. Deploy. Check `https://<project>.vercel.app/api/health` returns `{"ok":true}`.
 4. Set the GitHub repository variable `PB_HOST` to the production URL so the CI-built Android APK points at it.
@@ -99,6 +100,7 @@ The QR encodes whatever address the site is opened on, so it needs no setup and 
 - **Uptime check, every hour** (`.github/workflows/uptime.yml`): `scripts/check-site.sh` checks `/api/health` (server and database), `/download` and `/pause-button.apk` from outside, with three tries each so a redeploy is not an outage. On failure it opens one **"The live site is down"** issue (label `site-down`), which notifies everyone watching the repo; later failures comment on it, and the first good check closes it. GitHub also emails the person who last changed the workflow's schedule. Run it any time: Actions → Uptime → Run workflow, or locally `scripts/check-site.sh https://<your-site>`.
   - Hourly keeps it within a private repo's free Actions minutes (every run bills a minute). On a paid plan, tighten the `cron` line.
   - GitHub pauses scheduled workflows after 60 days without repository activity; re-enable it from the Actions tab.
+- **Scheduled purge, every hour** (same workflow): `POST /api/cron/purge` deletes message text past 24 hours and activity and push logs past 30 days ([retention.md](retention.md)). Set `CRON_SECRET` on the server and the repository secret `CRON_SECRET` (GitHub → Settings → Secrets and variables → Actions) to the same value; until both are set, the purge step fails and says why, and only checks themselves clear old text. The site-down issue is about the site only: a failed purge turns the run red without opening it.
 - **Recommended in Railway:** service → Settings → Source → **Wait for CI**, so a commit that fails CI is never deployed.
 - **Credit:** the free Railway credit runs out; watch Usage in the Railway dashboard.
 

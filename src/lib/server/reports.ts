@@ -114,17 +114,26 @@ export async function listReports(db: Db): Promise<{ waiting: number; rows: Repo
   return { waiting: out.filter((r) => r.status === "pending").length, rows: out, officialCount: OFFICIAL_COUNT };
 }
 
-/** A reviewer blocks or rejects every report of a domain. Official sites cannot be blocked. */
-export async function reviewDomain(db: Db, reportId: string, decision: "block" | "reject") {
+/**
+ * A reviewer blocks or rejects every report of a domain. Official sites cannot
+ * be blocked. "unblock" takes a domain blocked in error off the live blocklist
+ * (its reports end up rejected, as if the reviewer had rejected them).
+ */
+export async function reviewDomain(db: Db, reportId: string, decision: "block" | "reject" | "unblock") {
   const row = await db.query.reportedDomains.findFirst({ where: eq(schema.reportedDomains.id, reportId) });
   if (!row) throw new HttpError(404, "That report was not found.");
   if (decision === "block" && isOfficialDomain(row.domain)) throw new HttpError(400, "Real banks can never be blocked.");
-  await db
-    .update(schema.reportedDomains)
-    .set({ status: decision === "block" ? "blocked" : "rejected", reviewedAt: new Date() })
-    .where(eq(schema.reportedDomains.domain, row.domain));
+  if (decision === "unblock") {
+    const blocked = await db.query.reportedDomains.findFirst({
+      where: and(eq(schema.reportedDomains.domain, row.domain), eq(schema.reportedDomains.status, "blocked")),
+    });
+    if (!blocked) throw new HttpError(400, "That domain is not blocked.");
+  }
+  const status = decision === "block" ? "blocked" : "rejected";
+  await db.update(schema.reportedDomains).set({ status, reviewedAt: new Date() }).where(eq(schema.reportedDomains.domain, row.domain));
   forgetBlocklistCache();
-  return { domain: row.domain, status: decision === "block" ? "blocked" : "rejected" };
+  if (decision === "unblock") return { domain: row.domain, status: "unblocked" as const };
+  return { domain: row.domain, status };
 }
 
 export async function clearSyntheticReports(db: Db) {

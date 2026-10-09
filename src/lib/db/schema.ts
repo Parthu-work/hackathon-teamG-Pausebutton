@@ -157,8 +157,10 @@ export const events = pgTable("events", {
 });
 
 /**
- * The simulated phone inbox (P1). It stands in for the phone's own SMS and
- * WhatsApp apps, so it holds message text, but only made-up demo messages.
+ * The phone inbox (P1): the simulated SMS and WhatsApp apps, plus the messages
+ * the Android watcher posts. Only made-up demo messages (synthetic) keep their
+ * text here. A real message keeps none: its check holds the text of a scam or
+ * suspicious message for 24 hours, and a safe message's text is never stored.
  */
 export const simMessages = pgTable("sim_messages", {
   id: id(),
@@ -166,7 +168,9 @@ export const simMessages = pgTable("sim_messages", {
   channel: text("channel").$type<"sms" | "whatsapp">().notNull(),
   sender: text("sender").notNull(),
   fromContact: boolean("from_contact").notNull().default(false),
-  text: text("text").notNull(),
+  text: text("text"),
+  /** A made-up message from the demo library (src/data/sim-messages.json), not one a phone received. */
+  synthetic: boolean("synthetic").notNull().default(false),
   checkId: text("check_id").references(() => checks.id, { onDelete: "set null" }),
   bannerSeenAt: timestamp("banner_seen_at", { withTimezone: true }),
   createdAt: createdAt(),
@@ -190,6 +194,8 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
  * gone when the phone had unsubscribed). The idempotency `key` ("alert:<id>")
  * stops the same alert being pushed twice to one phone; rows cascade away
  * with their alert or check, so "Reset demo data" clears them too.
+ * The phone's service worker reports back (receivedAt, and shownAt or the
+ * displayError): a "sent" row with no receipt is a push the phone never confirmed.
  */
 export const pushDeliveries = pgTable(
   "push_deliveries",
@@ -206,6 +212,12 @@ export const pushDeliveries = pgTable(
     statusCode: integer("status_code"),
     error: text("error"),
     attempts: integer("attempts").notNull().default(1),
+    /** The phone's service worker got the push. */
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    /** ...and the notification is on screen. */
+    shownAt: timestamp("shown_at", { withTimezone: true }),
+    /** ...or why it could not be shown (e.g. notifications blocked on the phone). */
+    displayError: text("display_error"),
     createdAt: createdAt(),
   },
   (t) => [index("push_deliveries_key_endpoint").on(t.key, t.endpoint), index("push_deliveries_user").on(t.userId)],
@@ -276,4 +288,15 @@ export const testRuns = pgTable("test_runs", {
   summary: jsonb("summary").$type<Record<string, unknown>>().notNull(),
   results: jsonb("results").$type<unknown[]>().notNull(),
   createdAt: createdAt(),
+});
+
+/**
+ * Rate-limit counters: one row per (rule, who) key, a fixed window each.
+ * Keys hold a user, device or phone id, or a hash of the caller's IP, never
+ * message text. Rows older than two days are swept as calls come in.
+ */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull().default(0),
 });

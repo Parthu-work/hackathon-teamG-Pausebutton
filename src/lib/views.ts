@@ -103,12 +103,14 @@ export type CheckView = {
   createdAt: string;
   alertedNames: string[];
   /**
-   * Family members told about this message whose phones the push could not
-   * reach (every delivery failed or the phone was gone) and who have not opened
-   * it yet. Mr Rao's screen names them so he calls instead of waiting.
-   * Empty on family members' screens.
+   * Family members told about this message who have not been reached: every
+   * push failed or the phone was gone, or (urgent alerts) no push got through
+   * and their app has not picked it up within 30 s. Mr Rao's screen names them
+   * so he calls instead of waiting. Empty on family members' screens.
    */
   unreachableNames: string[];
+  /** Everyone alerted is unreachable: "Nobody has seen this yet". */
+  nobodyReached: boolean;
   askedFamilyAt: string | null;
   familyVerdict: "scam" | "not_scam" | null;
   /** Who settled it: whoever said scam, or everyone who said it is fine ("Arjun and Meera"). */
@@ -152,6 +154,8 @@ export type MeView = {
   autoTellFamily: boolean;
   /** Push notifications on his own phone (detected messages, the family's decision). */
   alertNotify: boolean;
+  /** A shared demo persona: it cannot be deleted. */
+  isDemo: boolean;
 };
 
 export type SimMessageView = {
@@ -159,7 +163,8 @@ export type SimMessageView = {
   channel: "sms" | "whatsapp";
   sender: string;
   fromContact: boolean;
-  text: string;
+  /** Null when the text is not kept: a real message that was safe, or older than 24 hours. */
+  text: string | null;
   createdAt: string;
   checkId: string | null;
   verdict: Verdict | "SKIPPED" | null;
@@ -209,7 +214,7 @@ export type ProtectedView = OwnerView & {
 };
 
 export type FamilyState = {
-  me: { id: string; name: string; alertNotify: boolean; alertSound: boolean; alertVibrate: boolean; alertsReady: boolean };
+  me: { id: string; name: string; alertNotify: boolean; alertSound: boolean; alertVibrate: boolean; alertsReady: boolean; isDemo: boolean };
   /** Everyone this family member protects (Arjun: Papa and Mummy). Empty until an invite is accepted. */
   people: ProtectedView[];
   alerts: AlertView[];

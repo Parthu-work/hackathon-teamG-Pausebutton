@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db";
+import { errorFields, log } from "@/lib/server/log";
 
 /**
  * Liveness for the host's health check (Railway, Render, Fly): the server is up
@@ -14,7 +15,7 @@ export async function GET() {
     await db.execute(sql`select 1`);
     return Response.json({ ok: true });
   } catch (error) {
-    console.error(error);
+    log.error("health_failed", errorFields(error));
     const message = error instanceof Error && error.message.startsWith("Set ") ? error.message : "The database did not answer.";
     return Response.json({ ok: false, error: message }, { status: 503 });
   }

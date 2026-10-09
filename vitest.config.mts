@@ -7,5 +7,7 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     environment: "node",
     testTimeout: 20000,
+    // beforeAll boots an in-memory Postgres (PGlite) per server test file; several at once can take more than 10 s.
+    hookTimeout: 60000,
   },
 });

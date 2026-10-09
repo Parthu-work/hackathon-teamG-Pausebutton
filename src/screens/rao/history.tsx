@@ -8,7 +8,9 @@ import { Icon } from "@/components/icons";
 import { Avatar, clockTime, Marks, RaoTabs, Screen, Sheet, TitleRow, Toggle, useToast, VerdictPill } from "@/components/ui";
 import { LANGUAGES } from "@/lib/i18n";
 import type { CheckRow } from "@/lib/server/checks";
+import { deleteMyAccount } from "@/lib/client/account";
 import { api, ApiError } from "@/lib/client/api";
+import { forgetMessages } from "@/lib/client/messages";
 import { pushPermission, subscribeToPush, unsubscribeFromPush } from "@/lib/client/push";
 import { signOut } from "@/lib/client/sign-out";
 import { useRao, useT } from "./shell";
@@ -264,15 +266,31 @@ export function PrivacyScreen() {
   const toast = useToast();
   const t = useT();
   const { data } = useRao();
+  const router = useRouter();
   const [confirm, setConfirm] = useState(false);
+  const [confirmAccount, setConfirmAccount] = useState(false);
   const helper = data?.helperNames[0] ?? t("common.family");
   const watching = !!data && (data.me.watchSms || data.me.watchWhatsapp);
 
   async function deleteHistory() {
     const { kept } = await api<{ kept: number }>("/api/me/checks", { method: "DELETE" });
+    forgetMessages();
     setConfirm(false);
     await queryClient.invalidateQueries();
     toast({ title: t("privacy.deleted"), sub: kept ? t("privacy.deletedKeptSub") : t("privacy.deletedSub"), icon: "trash" });
+  }
+
+  async function deleteAccount() {
+    try {
+      await deleteMyAccount("rao");
+    } catch (e) {
+      setConfirmAccount(false);
+      const onHold = e instanceof ApiError && e.status === 409;
+      toast({ title: t("account.failed"), sub: onHold ? t("account.onHold") : (e as Error).message, icon: "warn", tone: "red" });
+      return;
+    }
+    queryClient.clear();
+    router.push("/welcome");
   }
 
   async function toggleWatching() {
@@ -281,19 +299,28 @@ export function PrivacyScreen() {
     toast({ title: watching ? t("privacy.watchingOff") : t("privacy.watchingOn"), sub: watching ? t("privacy.notChecked") : t("privacy.checked"), icon: "eye" });
   }
 
-  const keep = [t("privacy.keep1"), t("privacy.keep2"), t("privacy.keep3", { helper }), t("privacy.keep4", { helper })];
-  const never = [t("privacy.never1"), t("privacy.never2"), t("privacy.never3")];
+  // Every line here is in docs/retention.md: change both together.
+  const keep = [t("privacy.keep1"), t("privacy.keep2"), t("privacy.keep3", { helper }), t("privacy.keep4", { helper }), t("privacy.keep5")];
+  const never = [t("privacy.never1", { helper }), t("privacy.never2"), t("privacy.never3")];
   return (
     <Screen
       overlay={
-        confirm && (
+        (confirm && (
           <Sheet onClose={() => setConfirm(false)}>
             <h2 className="h2">{t("privacy.deleteQ")}</h2>
             <p className="p">{t("privacy.deleteBody")}</p>
             <button className="btn red" onClick={deleteHistory}>{t("privacy.yesDelete")}</button>
             <button className="btn line" onClick={() => setConfirm(false)}>{t("privacy.keepIt")}</button>
           </Sheet>
-        )
+        )) ||
+        (confirmAccount && (
+          <Sheet onClose={() => setConfirmAccount(false)}>
+            <h2 className="h2">{t("account.deleteQ")}</h2>
+            <p className="p">{t("account.deleteBody", { helper })}</p>
+            <button className="btn red" onClick={deleteAccount} data-testid="confirm-delete-account">{t("account.yesDelete")}</button>
+            <button className="btn line" onClick={() => setConfirmAccount(false)}>{t("account.keep")}</button>
+          </Sheet>
+        ))
       }
     >
       <TitleRow title={t("privacy.title")} back="/settings" />
@@ -309,10 +336,16 @@ export function PrivacyScreen() {
           <div className="row" key={s}><span className="no-icon"><Icon name="x" /></span><span className="p" style={{ fontSize: 17 }}>{s}</span></div>
         ))}
       </div>
-      <p className="sm">{t("privacy.onlyTrusted")}</p>
+      <p className="sm">{t("privacy.keepUntil")}</p>
+      <p className="sm">{t("privacy.onlyTrusted", { helper })}</p>
       <div className="spacer" />
       <button className="btn line" onClick={() => setConfirm(true)}>{t("privacy.deleteHistory")}</button>
       <button className="btn redline" onClick={toggleWatching}>{watching ? t("privacy.turnOff") : t("privacy.turnOn")}</button>
+      {data?.me.isDemo ? (
+        <p className="sm center-text">{t("account.demo")}</p>
+      ) : (
+        <button className="ghost" style={{ alignSelf: "center" }} onClick={() => setConfirmAccount(true)} data-testid="delete-account">{t("account.delete")}</button>
+      )}
     </Screen>
   );
 }

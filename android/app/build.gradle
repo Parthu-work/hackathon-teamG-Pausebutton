@@ -21,6 +21,8 @@ android {
         // Digital Asset Links: lets Android open the site full screen once the
         // site serves /.well-known/assetlinks.json with this app's signing key.
         resValue "string", "asset_statements", assetStatements.replace('"', '\\"')
+        // On a device or emulator: ./gradlew connectedDebugAndroidTest (src/androidTest).
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -78,4 +80,12 @@ dependencies {
     implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.7.4"
     implementation "androidx.browser:browser:1.10.0"
     implementation "androidx.core:core:1.19.1"
+
+    // The message watcher's rules on the JVM: ./gradlew testDebugUnitTest (src/test).
+    // org.json is only a stub in the unit-test android.jar, so the real one comes in.
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20250517"
+    // On a device or emulator (src/androidTest).
+    androidTestImplementation "androidx.test.ext:junit:1.2.1"
+    androidTestImplementation "androidx.test:runner:1.6.2"
 }

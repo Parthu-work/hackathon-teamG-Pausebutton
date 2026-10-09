@@ -1,4 +1,5 @@
-import { devices, expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { chromium, devices, expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import examples from "../src/data/examples.json";
 
 // Mr Rao, Arjun and Meera on three "phones" (browser contexts), one service.
 // One "scam" (or Block) from either trusted person settles it; "not a scam"
@@ -17,8 +18,10 @@ async function newContext(browser: Browser, options?: Parameters<Browser["newCon
   contexts.push(ctx);
   return ctx;
 }
+const browsers: Browser[] = [];
 test.afterEach(async () => {
   await Promise.all(contexts.splice(0).map((c) => c.close().catch(() => {})));
+  await Promise.all(browsers.splice(0).map((b) => b.close().catch(() => {})));
 });
 
 /** Taps a "Call …" button and returns the number the phone's dialer was opened with. */
@@ -233,6 +236,11 @@ test("F9 reported domains: Arjun reports the fake bank link, a reviewer blocks i
   await row.getByRole("button", { name: "Block" }).click();
   await expect(row).toContainText("BLOCKED");
   await expect(arjun.getByText("Blocked for everyone")).toBeVisible({ timeout: 10_000 });
+
+  // Blocked in error? The same screen takes it off the live blocklist, no database edit.
+  await row.getByRole("button", { name: "Unblock", exact: true }).click();
+  await expect(row).toContainText("REJECTED");
+  await expect(ops.getByText("sbi-kyc-verify.in is no longer blocked")).toBeVisible();
 });
 
 test("F5 Hindi: every screen and the verdict speak Hindi after the switch", async ({ browser }) => {
@@ -526,4 +534,137 @@ test("removing the last linked person warns that nobody will be told", async ({ 
   await rao.getByRole("button", { name: "Yes, remove Meera" }).click();
   await rao.getByRole("button", { name: "Remove Arjun" }).click();
   await expect(rao.getByText("Nobody will be told")).toBeVisible();
+});
+
+// ---------- Push in a real browser (W3) ----------
+// Chromium's own service worker runs public/sw.js, receives the alert
+// (delivered through DevTools, the way the push service would hand it over),
+// shows it, and confirms it to the server. The protocol side (encryption,
+// VAPID, the push service's answers) is src/lib/server/push.protocol.test.ts;
+// real phones are in docs/push.md.
+
+const cbi = examples.find((e) => e.id === "cbi")!.text;
+
+/**
+ * A browser that can show notifications. Playwright's default headless
+ * Chromium is the "headless shell", which has none: Notification.permission
+ * stays "denied" whatever is granted, so showNotification throws. Channel
+ * "chromium" runs the full build headless (CI installs both); a Chromium set
+ * with executablePath in the config is used as it is.
+ */
+async function browserWithNotifications() {
+  const options = test.info().project.use.launchOptions ?? {};
+  const b = await chromium.launch({ ...options, headless: !HEADED, ...(options.executablePath ? {} : { channel: "chromium" }) });
+  browsers.push(b);
+  return b;
+}
+
+test("a real service worker shows the alert, confirms it, and its tap target opens the paused payment", async ({ browser, baseURL }) => {
+  // Mr Rao pastes the CBI scam: the payment is paused and Arjun gets an urgent alert.
+  const raoCtx = await newContext(browser);
+  await raoCtx.request.post("/api/auth/demo", { data: { persona: "rao" } });
+  const check = await (await raoCtx.request.post("/api/me/checks", { data: { text: cbi } })).json();
+  expect(check.holdId).toBeTruthy();
+
+  // Arjun's phone, in a browser that can show notifications: signed in, the service worker installed, notifications allowed.
+  const ctx = await (await browserWithNotifications()).newContext({ baseURL });
+  await ctx.grantPermissions(["notifications"], { origin: baseURL });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  const registrations: { registrationId: string; scopeURL: string; isDeleted: boolean }[] = [];
+  cdp.on("ServiceWorker.workerRegistrationUpdated", (e) => registrations.push(...e.registrations));
+  await cdp.send("ServiceWorker.enable");
+  await page.goto("/sign-in");
+  await page.getByRole("button", { name: "Continue as Arjun (demo)" }).click();
+  await page.waitForURL("/family");
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+  const alert = ((await (await page.request.get("/api/family/state")).json()).alerts as { id: string; checkId: string }[]).find((a) => a.checkId === check.checkId)!;
+  expect(alert).toBeTruthy();
+
+  // The app closed (a page outside it is open): only the service worker can show the alert.
+  await page.goto("/download");
+  await expect.poll(() => registrations.find((r) => !r.isDeleted && r.scopeURL === `${baseURL}/`)?.registrationId).toBeTruthy();
+  const registrationId = registrations.find((r) => !r.isDeleted && r.scopeURL === `${baseURL}/`)!.registrationId;
+
+  // The payload as the server builds it (sendAlerts in checks.ts), with this phone's delivery id.
+  const payload = {
+    title: "Papa needs you now",
+    body: "Papa got a scam message asking for Rs 80,000. Nothing is paid. Tell Papa what to do.",
+    url: `/open/${alert.id}`,
+    tag: `alert-${alert.id}`,
+    urgent: true,
+    kind: "urgent",
+    alertId: alert.id,
+    checkId: check.checkId,
+    holdId: check.holdId,
+    actions: [{ action: "block", title: "Block payment" }, { action: "fine", title: "It's fine" }],
+    who: "Papa",
+    at: new Date().toISOString(),
+    receipt: crypto.randomUUID(),
+  };
+  const receipt = ctx.waitForEvent("request", (r) => r.url().endsWith("/api/push/receipt"));
+  await cdp.send("ServiceWorker.deliverPushMessage", { origin: baseURL!, registrationId, data: JSON.stringify(payload) });
+
+  // The service worker confirms it, and the server accepts the receipt.
+  const sent = await receipt;
+  expect(sent.postDataJSON()).toEqual({ id: payload.receipt, shown: true, error: null });
+  expect((await sent.response())?.status()).toBe(200);
+
+  // The notification is on screen: urgent, with Block built in, and the screen a tap opens.
+  const shown = await page.evaluate(async () =>
+    (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => ({
+      title: n.title,
+      tag: n.tag,
+      requireInteraction: n.requireInteraction,
+      actions: (n as Notification & { actions?: { action: string }[] }).actions?.map((a) => a.action) ?? [],
+      url: (n.data as { url: string }).url,
+    })),
+  );
+  expect(shown).toEqual([{ title: payload.title, tag: payload.tag, requireInteraction: true, actions: ["block", "fine"], url: `/open/${alert.id}` }]);
+
+  // A tap opens that URL: the paused payment, on Arjun's phone.
+  await page.goto(shown[0].url);
+  await expect(page.getByRole("heading", { name: "Papa's payment" })).toBeVisible();
+
+});
+
+test("nobody's phone can be reached: after 30 s Papa's verdict and his paused payment both say so", async ({ browser }) => {
+  test.setTimeout(120_000);
+  // No family phone is open and none has push set up.
+  const ctx = await newContext(browser);
+  const page = await ctx.newPage();
+  await page.goto("/sign-in");
+  await page.getByRole("button", { name: "Continue as Mr Rao (demo)" }).click();
+  await page.waitForURL("/");
+  const check = await (await page.request.post("/api/me/checks", { data: { text: cbi } })).json();
+
+  await page.goto(`/check/${check.checkId}`);
+  await expect(page.getByTestId("nobody-reached")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId("nobody-reached")).toContainText("Nobody has seen this yet");
+  await expect(page.getByTestId("nobody-reached").getByRole("button", { name: "Call Arjun" })).toBeVisible();
+
+  await page.goto(`/hold/${check.holdId}`);
+  await expect(page.getByTestId("nobody-reached")).toContainText("The alert has not reached Arjun and Meera.");
+});
+
+test("Delete my account: a shared demo account cannot be deleted; a real one can, and is signed out", async ({ browser }) => {
+  const demo = await phone(browser, "Mr Rao");
+  await demo.goto("/privacy");
+  await expect(demo.getByText("This is a shared demo account, so it cannot be deleted.")).toBeVisible();
+  await expect(demo.getByTestId("delete-account")).toHaveCount(0);
+  // The same promise the policy makes (docs/retention.md): 24 hours, and the log.
+  await expect(demo.getByText(/for 24 hours/).first()).toBeVisible();
+  await expect(demo.getByText(/for 30 days/)).toBeVisible();
+
+  const ctx = await newContext(browser);
+  const page = await ctx.newPage();
+  const phoneNumber = `9${Math.floor(100_000_000 + Math.random() * 899_999_999)}`;
+  expect((await ctx.request.post("/api/auth/sign-in", { data: { phone: phoneNumber, code: "1234" } })).ok()).toBeTruthy();
+  expect((await ctx.request.post("/api/auth/role", { data: { role: "protected", name: "Test Person" } })).ok()).toBeTruthy();
+  await page.goto("/privacy");
+  await page.getByTestId("delete-account").click();
+  await expect(page.getByRole("heading", { name: "Delete your account?" })).toBeVisible();
+  await page.getByTestId("confirm-delete-account").click();
+  await page.waitForURL("**/welcome");
+  expect((await ctx.request.get("/api/me/state")).status()).toBe(401);
 });

@@ -109,24 +109,27 @@ function CampaignCard({ c }: { c: CheckView }) {
 }
 
 /**
- * The alert could not reach someone's phone (every push failed or the phone
- * is gone) and they have not opened it: say so, and offer the call, so he
- * does not sit waiting for an answer that is not coming.
+ * The alert has not reached someone (see FamilyReach on the server) and they
+ * have not opened it: say so, and offer the call, so he does not sit waiting
+ * for an answer that is not coming. When nobody was reached, say that plainly.
+ * The hold screen has its own call buttons, so it leaves this one out.
  */
-function UnreachableCard({ c }: { c: CheckView }) {
+export function UnreachableCard({ names, nobody, withCall = true }: { names: string[]; nobody: boolean; withCall?: boolean }) {
   const t = useT();
   const join = useJoinNames();
   const helper = useHelper();
   const call = useRaoCall();
-  if (!c.unreachableNames.length) return null;
-  const first = c.unreachableNames[0];
+  if (!names.length) return null;
+  const first = names[0];
   return (
-    <div className="card tint-amber" style={{ gap: 8 }} data-testid="unreachable">
-      <div className="row"><Icon name="warn" /><b className="grow" style={{ fontSize: 17 }}>{t("verdict.unreachableTitle", { names: join(c.unreachableNames) })}</b></div>
-      <p className="sm" style={{ color: "var(--text)" }}>{t("verdict.unreachableBody", { names: join(c.unreachableNames) })}</p>
-      <button className="btn ink" style={{ minHeight: 48 }} onClick={() => call(first, helper.phoneOf(first))}>
-        <Icon name="phone" />{t("common.callName", { name: first })}
-      </button>
+    <div className={`card ${nobody ? "tint-red" : "tint-amber"}`} style={{ gap: 8 }} data-testid={nobody ? "nobody-reached" : "unreachable"}>
+      <div className="row"><Icon name="warn" /><b className="grow" style={{ fontSize: 17 }}>{nobody ? t("verdict.nobodyTitle") : t("verdict.unreachableTitle", { names: join(names) })}</b></div>
+      <p className="sm" style={{ color: "var(--text)" }}>{nobody ? t("verdict.nobodyBody", { names: join(names), first }) : t("verdict.unreachableBody", { names: join(names) })}</p>
+      {withCall && (
+        <button className="btn ink" style={{ minHeight: 48 }} onClick={() => call(first, helper.phoneOf(first))}>
+          <Icon name="phone" />{t("common.callName", { name: first })}
+        </button>
+      )}
     </div>
   );
 }
@@ -388,7 +391,7 @@ export function VerdictScreen() {
             </div>
           </div>
         )}
-        <UnreachableCard c={c} />
+        <UnreachableCard names={c.unreachableNames} nobody={c.nobodyReached} />
         <div className="spacer" />
         {detected ? (
           <button className="btn ink" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />{t("common.callName", { name: helper.first })}</button>
@@ -437,7 +440,7 @@ export function VerdictScreen() {
             </div>
           </div>
         )}
-        <UnreachableCard c={c} />
+        <UnreachableCard names={c.unreachableNames} nobody={c.nobodyReached} />
         <div className="spacer" />
         {asked ? (
           <button className="btn ink" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />{t("common.callName", { name: helper.first })}</button>

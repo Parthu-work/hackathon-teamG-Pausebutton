@@ -5,7 +5,6 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
@@ -26,13 +25,12 @@ import java.util.Date;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import org.json.JSONObject;
-
 /**
  * "Connect this phone" (screens M2 and M3). Opened from the web app's
  * pausebutton://pair?code=…&host=… link, or from the app drawer. Trades the
- * pairing code for this phone's token, then helps the person allow
- * notification access and background running, and shows whether it works.
+ * pairing code for this phone's token, then helps the person agree to what
+ * the watcher does (ConsentActivity), allow notification access and
+ * background running, and shows what it saw today.
  */
 public class PairActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -60,6 +58,9 @@ public class PairActivity extends Activity {
         super.onResume();
         refresh();
         reportListener();
+        // Access is on but Android has not bound the listener (after an update, or killed on some phones): ask again.
+        if (Prefs.consented(this) && listenerEnabled() && !Prefs.listenerConnected(this)) MessageWatcherService.requestRebindQuietly(this);
+        Watcher.get(this).kick();
     }
 
     /** pausebutton://pair?code=ABC123&host=https://… from the web app. */
@@ -85,22 +86,7 @@ public class PairActivity extends Activity {
         connectButton.setEnabled(false);
         status.setText("Connecting…");
         io.execute(() -> {
-            String message;
-            try {
-                JSONObject body = new JSONObject().put("code", code).put("name", Build.MANUFACTURER + " " + Build.MODEL);
-                Backend.Result r = Backend.post(host, "/api/device/pair", null, body);
-                if (r.ok()) {
-                    JSONObject json = new JSONObject(r.body);
-                    Prefs.setHost(this, host);
-                    Prefs.setPaired(this, json.getString("token"), json.optString("userName", ""));
-                    message = null;
-                } else {
-                    message = r.error();
-                }
-            } catch (Exception e) {
-                message = "Could not reach " + host + ": " + e.getMessage();
-            }
-            final String error = message;
+            final String error = Watcher.get(this).pair(host, code, Watcher.deviceName());
             runOnUiThread(() -> {
                 connectButton.setEnabled(true);
                 if (error != null) status.setText(error);
@@ -110,24 +96,21 @@ public class PairActivity extends Activity {
         });
     }
 
+    /** Here and on the web app at once: the server forgets the phone (now, or once it can be reached). */
     private void disconnect() {
-        Prefs.clearPairing(this);
         codeField.setText("");
-        refresh();
+        Watcher.get(this).disconnect(() -> runOnUiThread(this::refresh));
     }
 
-    /** Tells the server whether notification access is on, so the web app can show it. */
+    /** Tells the server whether notification access is on (the web app shows it), and learns the watch settings. */
     private void reportListener() {
-        final String token = Prefs.token(this);
-        if (token == null) return;
-        final boolean on = listenerEnabled();
-        io.execute(() -> {
-            try {
-                Backend.post(Prefs.host(this), "/api/device/status", token, new JSONObject().put("listenerOn", on));
-            } catch (Exception ignored) {
-                // Shown on the next refresh through lastError if messages fail too.
-            }
-        });
+        Watcher.get(this).reportStatus(listenerEnabled());
+    }
+
+    /** Agreeing comes first; after that this opens Android's notification access settings. */
+    private void allowAccess() {
+        if (!Prefs.consented(this)) startActivity(new Intent(this, ConsentActivity.class));
+        else startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
     }
 
     private boolean listenerEnabled() {
@@ -151,23 +134,24 @@ public class PairActivity extends Activity {
         }
 
         boolean on = listenerEnabled();
-        watcherStatus.setText(on ? "✓  Notification access is on" : "!  Notification access is off");
-        watcherStatus.setTextColor(on ? 0xFF1F6B49 : 0xFFB3291E);
-        allowButton.setText(on ? "Notification access settings" : "Allow notification access");
+        boolean agreed = Prefs.consented(this);
+        watcherStatus.setText(!agreed ? (on ? "!  Paused: read what Pause Button does and agree first" : "!  Not watching yet")
+                : on ? "✓  Notification access is on" : "!  Notification access is off");
+        watcherStatus.setTextColor(agreed && on ? 0xFF1F6B49 : 0xFFB3291E);
+        allowButton.setText(!agreed ? "See what is read, and agree" : on ? "Notification access settings" : "Allow notification access");
 
         boolean battery = batteryUnrestricted();
         batteryStatus.setText(battery ? "✓  Allowed to run in the background" : "!  The phone may stop the watcher to save battery");
         batteryStatus.setTextColor(battery ? 0xFF1F6B49 : 0xFFB3291E);
         batteryButton.setVisibility(battery ? View.GONE : View.VISIBLE);
 
-        int delivered = Prefs.delivered(this);
+        // "What we saw today": counts only, never senders or text.
         String error = Prefs.lastError(this);
-        StringBuilder d = new StringBuilder();
-        if (delivered > 0) {
-            d.append(delivered).append(delivered == 1 ? " message sent" : " messages sent");
-            d.append(", last at ").append(DateFormat.getTimeInstance(DateFormat.SHORT).format(new Date(Prefs.lastDeliveredAt(this))));
-        } else {
-            d.append("No message sent yet. Send yourself any SMS to test.");
+        StringBuilder d = new StringBuilder(Prefs.today(this).describe(Watcher.get(this).waiting()));
+        if (Prefs.lastDeliveredAt(this) > 0) {
+            d.append("\nLast sent at ").append(DateFormat.getTimeInstance(DateFormat.SHORT).format(new Date(Prefs.lastDeliveredAt(this))));
+        } else if (paired) {
+            d.append("\nSend yourself any SMS to test.");
         }
         if (error != null) d.append("\nLast problem: ").append(error);
         deliveryStatus.setText(d);
@@ -246,7 +230,7 @@ public class PairActivity extends Activity {
         root.addView(text("Watching messages", 13, true, 0xFF55626E));
         watcherStatus = text("", 16, true, 0xFF14202B);
         root.addView(watcherStatus);
-        allowButton = button("Allow notification access", true, v -> startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
+        allowButton = button("Allow notification access", true, v -> allowAccess());
         root.addView(allowButton);
         root.addView(text("Find “Pause Button” in the list and switch it on. Android shows a warning: that is normal for any app that reads notifications.", 14, false, 0xFF55626E));
 
@@ -258,7 +242,7 @@ public class PairActivity extends Activity {
         });
         root.addView(batteryButton);
 
-        root.addView(text("Messages", 13, true, 0xFF55626E));
+        root.addView(text("What we saw today", 13, true, 0xFF55626E));
         deliveryStatus = text("", 15, false, 0xFF14202B);
         root.addView(deliveryStatus);
 
@@ -267,7 +251,7 @@ public class PairActivity extends Activity {
         disconnectButton = button("Disconnect this phone", false, v -> disconnect());
         root.addView(disconnectButton);
 
-        TextView foot = text("This app only reads new message notifications and sends them to Pause Button to be checked. It never reads old chats or sends messages.", 13, false, 0xFF55626E);
+        TextView foot = text("This app only reads new SMS and WhatsApp notifications and sends them to Pause Button to be checked. It never reads old chats or sends messages.", 13, false, 0xFF55626E);
         foot.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(foot);
 

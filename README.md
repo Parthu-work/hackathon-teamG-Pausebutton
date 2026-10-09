@@ -113,12 +113,14 @@ Holds:
 - Expiry is derived from `expires_at`, so no background job is needed.
 - The first family answer to a question wins, and Mr Rao sees the first advice.
 
-**Privacy and the shared message:**
-- For every check the server stores a keyed fingerprint, the verdict and the warning phrases.
-- **The full text of a SCAM or SUSPICIOUS message** is also kept, **for 24 hours**, so the family members who are alerted or asked can read exactly what was received (I2, J2, I4, O2) once they open the alert. Nobody else can read it, including people linked later. After 24 hours it is deleted.
-- **Safe messages' text is never kept.** "Ask Arjun anyway" sends the text along from the phone, and the server only accepts it if it matches the checked message's fingerprint.
+**Privacy and the shared message** (the full policy, table by table: [docs/retention.md](docs/retention.md)):
+- For every check the server stores a keyed fingerprint, the verdict, the warning phrases and who sent it.
+- **The full text of a SCAM or SUSPICIOUS message** is also kept, **for 24 hours**, so the family members who are alerted or asked can read exactly what was received (I2, J2, I4, O2) once they open the alert. Nobody else can read it, including people linked later. After 24 hours it is unreadable, and the hourly purge (`POST /api/cron/purge`, called by the Uptime workflow) deletes it.
+- **Safe messages' text is never kept**, with one exception the person chooses: "Ask Arjun anyway" sends the text along from the phone (the server only accepts it if it matches the checked message's fingerprint), and it is then kept like a scam message's text, for 24 hours.
+- Messages from the Android watcher keep no text in the inbox table, and a message that is not checked (an app not watched, a saved contact) is not stored at all. Only the made-up demo messages keep their text there.
+- The activity log and the push delivery log are deleted after 30 days.
 - Pasted text also stays in the phone's `sessionStorage`, so "Why we think so" can highlight it.
-- The simulated inbox stands in for the phone's own SMS app and only holds made-up messages.
+- **Delete my history** and **Delete my account** (P3; J4 for family) remove what the policy says, and refuse to touch a payment that is still on hold.
 - The privacy screen (P3) says all of this in plain words.
 
 ## Stack
@@ -173,12 +175,17 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
 - **Every hour:** an uptime check of the live site; a failure opens a "The live site is down" issue (`.github/workflows/uptime.yml`).
 - **When `android/` changes on `main`:** the APK is rebuilt for the live site and published at `/pause-button.apk` (`.github/workflows/publish-apk.yml`).
 - **On `main`, or a PR labelled `ai-eval`:** `pnpm eval --ai haiku`, run when the `ANTHROPIC_API_KEY` secret is set.
-- **Deploy:** see [`docs/deploy.md`](docs/deploy.md) for the free-tier options (Vercel + Neon recommended, Railway, where it is live; its deploy settings are listed there). On Vercel: connect the repo. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm db:migrate && pnpm build` in the Singapore region.
+- **Deploy:** see [`docs/deploy.md`](docs/deploy.md) for the free-tier options (Vercel + Neon recommended, Railway, where it is live; its deploy settings are listed there). On Vercel: connect the repo. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm env:check && pnpm db:migrate && pnpm build` in the Singapore region.
+- **Configuration check:** the server start (`src/instrumentation.ts`) and `pnpm env:check` (first step of the Vercel build; on Railway, add it before `pnpm db:migrate` in the pre-deploy command) run the same check (`src/lib/server/env.ts`) and name every problem at once: on a deployment (Vercel, Railway, Render, Fly.io, Cloud Run or `DEPLOYED=1`), a missing `DATABASE_URL`, `SESSION_SECRET`, `FINGERPRINT_SECRET` or `OPERATOR_KEY`; anywhere, a non-Postgres `DATABASE_URL`, half a VAPID key pair, a `VAPID_SUBJECT` that is not `mailto:`/`https://`, or a `DEMO_*_PHONE` that is not a 10-digit mobile number. A misconfigured deploy fails its build (or its health check), and the live version stays up. Short secrets and missing push or AI keys are warnings only.
+- **Builds offline:** the four fonts are self-hosted in `src/app/fonts` (`next/font/local`, SIL OFL licences alongside), so `pnpm build` needs no network. A lint rule refuses `next/font/google`.
+- **Logs:** server logs are one JSON object per line (`level`, `time`, `event`, fields; `src/lib/server/log.ts`), so the host's log search can filter on `event`. A failed API call answers with a short `ref` that is also in its `route_error` line; a page that fails shows the error screen with a reference that matches the `digest` of its `request_error` line. Logs never hold message text: errors keep their name, code, first message line and stack frames, and a failed query's parameters and a database error's detail are dropped.
 - **Environment variables** for every Vercel environment:
   - `DATABASE_URL` (Neon, same region; the Neon–Vercel integration can create a branch per preview);
   - `SESSION_SECRET`, `FINGERPRINT_SECRET` (on Vercel, Railway, Render, Fly.io and Cloud Run the app refuses to run without them; on any other host set `DEPLOYED=1` to get the same check);
   - `OPERATOR_KEY` (needed for any public URL; a long random value);
+  - `DEMO_SIGNIN` only if this deployment should offer demo sign-in (`on`); unset, every deployment keeps it off;
   - optionally `ANTHROPIC_API_KEY`.
+- **Database migrations** run in order on every deploy (`pnpm db:migrate`; Railway's pre-deploy command, the Vercel build): `drizzle/0008_rate_limits.sql` (rate limits) and `drizzle/0009_push_receipts.sql` (push receipts) are the latest.
 
 ## On a phone
 
@@ -199,11 +206,42 @@ Everyone (Mr Rao, Mrs Rao, Arjun, Meera, or your own teammates with their own nu
 3. **A lasting URL (recommended before the demo day; options and costs in [`docs/deploy.md`](docs/deploy.md)):** connect the GitHub repo to Vercel and create a Neon Postgres database. Set these environment variables in Vercel: `DATABASE_URL`, `SESSION_SECRET`, `FINGERPRINT_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (from `pnpm push:keys`), the `DEMO_*_PHONE` numbers and optionally `ANTHROPIC_API_KEY`. Every push to `main` deploys; every PR gets a preview link.
 
 **Each user on their own phone:**
-- Mr Rao's phone: sign in (any 10-digit number, code `1234`), choose "I want protection", add trusted people with their real numbers, share the codes.
+- Mr Rao's phone: sign in (any 10-digit number, code `1234`; on a deployment this needs `DEMO_SIGNIN=on`), choose "I want protection", add trusted people with their real numbers, share the codes.
 - Each trusted person: sign in with the number Mr Rao entered, choose "I protect someone", enter the code, turn on **Notifications** on the "So we can reach you fast" screen (the phone asks for permission), tap **Send me a test alert**: it should ring *and* appear in the notification bar.
 - iPhones: push only works once the app is installed (Share → Add to Home Screen); the screen says so.
 
 **Alerts when the app is closed (Web Push)** are built in: see "Push notifications" below. Without VAPID keys the app simply skips push.
+
+## Before a release: three real phones
+
+CI proves the logic (unit tests, the 40-message quality gate, three browser "phones", a real Chromium service worker, a push service speaking the real protocol, the Android watcher on an emulator). What only real hardware shows (Android's battery saver, a phone off the network, Apple's push service, a lock screen) is checked by hand before every release, on a deployment with VAPID keys set:
+
+| Phone | Plays | Set up |
+|---|---|---|
+| **Android A** | Mr Rao, with the **Pause Button app** (the watcher) | Install the APK from `/download`, sign in as Mr Rao, Settings › Watch my messages › Connect this phone, agree, allow notification access and background running |
+| **Android B** | Arjun (family), in **Chrome** or the app | Sign in as Arjun, link to Mr Rao, turn Notifications on, "Send me a test alert" |
+| **iPhone** (iOS 16.4+) | Meera (family), as an **installed web app** | Safari → Share → Add to Home Screen, open it from the Home Screen, sign in as Meera, link, turn Notifications on |
+
+Keep `/api/ops/push-health` open on a laptop (operator key): every step below should move its counts as noted.
+
+**Push (Android B and the iPhone)**
+1. Phones locked. On Android A paste the "CBI parcel call" sample. Both family phones show "Papa needs you now" on the lock screen within seconds; health: `sent` +2, `shown` +2.
+2. On Android B's lock screen tap **Block payment**: "You blocked it" shows without unlocking; Android A shows "Payment cancelled"; opening the app on the iPhone shows the payment settled ("Papa is protected").
+3. Swipe the app away on Android B and kill Safari's web app on the iPhone, paste again: both still ring, and a tap opens the paused payment straight away.
+4. Airplane mode on both family phones, paste again, wait 3 minutes, airplane mode off. The push services still accepted both pushes, so health shows them as `silent` while the phones are offline; urgent alerts live 5 minutes, so they arrive if the phones come back within that.
+5. Sign out on both family phones (that removes their push setup) and paste again: after 30 s Android A says **"Nobody has seen this yet"**, with a call button.
+6. Sign Android B back in with Notifications on, then turn off Chrome's notifications in its system settings and paste again: nothing shows; health shows `received` +1 and either `notShown` +1 or `shown` +1 (Android hides it after Chrome showed it, which no web code can see).
+
+**The watcher (Android A)**
+7. Send Android A an SMS from an unknown number with a scam text: it appears in Pause Button and Android B gets the heads-up; the Connect screen's "What we saw today" counts it as sent.
+8. Send one from a saved contact: it stays on the phone (counted "from saved contacts, not sent"). Send one from a bank-style header if you can (e.g. a real bank alert): it is checked.
+9. Airplane mode on Android A, receive two SMS, wait a minute, airplane mode off: both arrive, oldest first ("waiting for the internet" while offline).
+10. Reboot Android A and receive an SMS without opening the app: it arrives. Then `adb shell am kill ai.apty.pausebutton` and receive another: it arrives.
+11. Leave Android A locked on battery-optimised for 30 minutes, then receive an SMS. If it does not arrive, the Connect screen's battery step is the fix; note the phone model.
+12. In a busy WhatsApp group, at most 4 messages a minute are sent; an SMS from an unknown number still gets through.
+13. Remove Android A on the web app (Settings › Watch my messages): the phone shows "Pause Button stopped checking messages". Connect again, then **Disconnect this phone** on the phone: the web app no longer lists it.
+
+**Record** the date, the three phones' models and OS versions, the build (`git rev-parse --short HEAD`) and any step that failed in the release's PR. Details and the reasoning behind each step: [`docs/push.md`](docs/push.md) (push) and [`android/README.md`](android/README.md) (the watcher).
 
 ## Push notifications (alerts when the app is closed)
 
@@ -231,10 +269,12 @@ Safe messages are never pushed. A newer notification about the same message repl
 
 **Setup and deployment**
 - Environment variables, on every Vercel environment: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (print a pair with `pnpm push:keys`). Rotating the keys is safe: phones re-subscribe on their next app start.
-- Database: migration `drizzle/0007_push_deliveries.sql` (`pnpm db:migrate`, which the Vercel build runs; the embedded database migrates itself).
+- Database: migrations `drizzle/0007_push_deliveries.sql` and `drizzle/0009_push_receipts.sql` (`pnpm db:migrate`, which the deploy runs; the embedded database migrates itself).
 - HTTPS is required (Web Push works on `localhost` and over `pnpm share`, not on a LAN `http://` address).
 - Android: the Android app opens the site in Chrome (Trusted Web Activity), so Chrome asks for the notification permission, shows the notifications and the tap opens the app on the alert. No Firebase. With `/.well-known/assetlinks.json` verified (`ANDROID_CERT_SHA256`) it opens full screen inside the app.
 - iPhone: install to the home screen first (iOS 16.4+), then turn Notifications on; the screen says so.
+
+**Receipts and delivery health.** Each phone's copy carries its delivery id; the service worker confirms it once the notification is on screen (`POST /api/push/receipt`), or says why it could not show it. A push the service accepted but no phone confirmed within 2 minutes is "silent" and is logged. Operators read per-day sent / failed / gone / shown / silent counts at `GET /api/ops/push-health` (operator key). Mr Rao's verdict and paused-payment screens name anyone the alert has not reached, and say "Nobody has seen this yet" when it reached no one; for an urgent alert that includes someone with no phone set up for push whose app has not picked it up within 30 s. Details, and the real-phone checklist: [`docs/push.md`](docs/push.md).
 
 **Test matrix** (the scenarios in the brief)
 
@@ -250,7 +290,12 @@ Safe messages are never pushed. A newer notification about the same message repl
 | Permission is denied | Status "denied"; the home card and the settings say so; alerts still work while the app is open | `push.ts` client, `PushHint` (manual: deny in the browser) |
 | Sender and recipient on different devices | Subscriptions are per phone and per person; every phone of the person is told | `push.test.ts` "sends to every phone" |
 | The recipient logs out and another user logs in | Sign-out removes this phone; the next sign-in moves the endpoint to the new person | `push.test.ts` "a phone another person signs in on" |
-| Temporary delivery errors | One retry on 429/5xx/network; status and error logged in `push_deliveries` | `push.test.ts` "retries once" |
+| Temporary delivery errors | One retry on 429/5xx/network; status and error logged in `push_deliveries` | `push.test.ts` "retries once", `push.protocol.test.ts` (real HTTPS answers) |
+| Encryption and signing on the wire | `web-push` encrypts for that phone only (RFC 8291) and signs with VAPID (RFC 8292); urgent alerts go out with `Urgency: high`, TTL 5 min | `push.protocol.test.ts` (a push service in the test decrypts and verifies) |
+| A real browser receives it | Chromium's service worker shows the alert with Block built in and confirms it; the tap URL opens the payment | e2e "a real service worker shows the alert" |
+| Accepted but never shown | No receipt in 2 min: counted as silent, logged; "could not show" is recorded with its reason | `push.test.ts` "receipts, silent phones", `sw.test.ts` "receipts" |
+| Nobody can be reached | Every alerted person unreachable: Papa's verdict and hold screens say "Nobody has seen this yet" | `push.test.ts` "who Mr Rao's alert reached", e2e "nobody's phone can be reached" |
+| Real phones (FCM, autopush, Apple) | Manual checklist, including the iPhone install-then-enable flow | [`docs/push.md`](docs/push.md) |
 
 ## The Android app (APK)
 
@@ -259,6 +304,7 @@ Safe messages are never pushed. A newer notification about the same message repl
 - It opens the web app **full screen inside Chrome** (a Trusted Web Activity), so push notifications, the dialer, vibration and every screen work unchanged, with no Firebase and no WebView.
 - Its **message watcher** is the real version of the simulated inbox (screens M1–M4): after the person allows notification access, it reads new SMS and WhatsApp notifications and posts them to `POST /api/device/inbox`; the same check runs and the family gets its heads-up.
 - **Connect this phone** (`Settings › Watch my messages`) shows a 15-minute code; the app trades it for a token (`/api/device/pair`) and reports whether notification access is on (`/api/device/status`). Only a hash of the token is stored.
+- **Built for real phones:** a consent screen before notification access; an offline outbox (oldest first, at most 50, at most a day); retries with backoff, `Retry-After` on 429, and a 401 that unpairs and says so; no repeats across restarts; a cap for busy group chats; messages from saved contacts and unwatched apps left on the phone; a rebind after a reboot; "what we saw today"; and "Disconnect this phone" that the web app hears (`/api/device/disconnect`). Tested on the JVM and on an emulator in CI. Details: [`android/README.md`](android/README.md).
 
 Build: `cd android && ./gradlew assembleDebug -PPB_HOST=https://your-deployment` → `app/build/outputs/apk/debug/app-debug.apk` (about 5 MB). CI builds it on every push ("Android APK (debug)" artifact). Full-screen mode needs `/.well-known/assetlinks.json`, served from `ANDROID_CERT_SHA256`. The user manual is published as an artifact (link in the project chat) and summarised in `android/README.md`.
 
@@ -268,7 +314,9 @@ Build: `cd android && ./gradlew assembleDebug -PPB_HOST=https://your-deployment`
 
 - **Calls go through the phone's dialer.** The app never places a call itself: the person confirms in the dialer. Set the demo numbers before a live demo (see "Calls" above).
 - **Still open after phase 2:** quiet hours and escalation calls (O3); FCM full-screen alerts that ring through Do Not Disturb; native call detection (the live-call guard asks questions instead of listening to the call); Play Store listing. Hindi and Telugu strings were machine-written and need a native speaker's sign-off.
-- **Operator pages need a key on a public URL.** Set `OPERATOR_KEY`: `/demo`, the `/tests` runs, "Reset demo data" and the Block/Reject review on `/reports` then ask for it once per browser tab. The read-only operator pages (`/campaigns`, the `/reports` list) stay open, and so does everything on a laptop without the key.
-- **Demo sign-in stays open.** "Continue as Mr Rao (demo)" and the code 1234 need no key, so anyone with a public URL can still run checks (and have Claude read the unsure ones, if a key is set). Put the whole site behind a password, or remove the demo sign-in, before a real launch.
+- **Operator pages need a key on a public URL.** Set `OPERATOR_KEY`: every operator page and route (`/demo`, `/tests`, `/campaigns`, `/reports`, their `/api/ops/*` and `/api/tests/*` data, "Reset demo data", Block / Reject / Unblock on `/reports`) then asks for it once per browser tab. Without the key (on a laptop) they stay open.
+- **Demo sign-in is off on a deployment.** "Continue as Mr Rao (demo)" and the code 1234 let anyone become a demo persona, and no real SMS code exists yet, so on Vercel, Railway, Render, Fly.io, Cloud Run (or with `DEPLOYED=1`) both answer "Sign-in is not open on this site yet" unless `DEMO_SIGNIN=on`. Turn it on only for a deployment that is itself protected (Vercel deployment protection or a password). A laptop or CI keeps it on.
+- **Rate limits.** Checks and calls (which can reach the Anthropic API), the phone watcher's inbox, demo sign-in and code sign-in are limited per caller IP and per person, phone or number tried (`src/lib/server/ratelimit.ts`). Over the limit the API answers 429 with "Too many tries in a short time. Please wait a minute and try again." and a `Retry-After` header, before any AI call. Counters live in the `rate_limits` table (only a hash of the IP is kept); "Reset demo data" clears them. The IP comes from `x-real-ip` / `x-forwarded-for`, which Vercel sets; on another host put a proxy in front that overwrites them.
+- **A wrongly blocked domain can be un-blocked** from `/reports` (Unblock, operator key). Its reports end as rejected and it leaves the live blocklist within 15 seconds on every server. Official bank domains still can never be blocked.
 - **The rules are a starting point.** The test set is small and team-written, and the training data is synthetic. Treat the numbers as a sanity check, not real-world accuracy.
 - **Claude refusals and timeouts fall back to rules only.** No refusal fallback model is configured.

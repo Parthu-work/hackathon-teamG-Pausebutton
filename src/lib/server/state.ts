@@ -24,6 +24,7 @@ export function toMeView(u: User): MeView {
     unknownOnly: u.unknownOnly,
     autoTellFamily: u.autoTellFamily,
     alertNotify: u.alertNotify,
+    isDemo: u.isDemo,
   };
 }
 
@@ -65,7 +66,7 @@ export async function familyState(db: Db, me: User): Promise<FamilyState> {
     orderBy: asc(schema.links.linkedAt),
   });
   const base = {
-    me: { id: me.id, name: me.name, alertNotify: me.alertNotify, alertSound: me.alertSound, alertVibrate: me.alertVibrate, alertsReady: me.alertsReady },
+    me: { id: me.id, name: me.name, alertNotify: me.alertNotify, alertSound: me.alertSound, alertVibrate: me.alertVibrate, alertsReady: me.alertsReady, isDemo: me.isDemo },
     serverNow: new Date().toISOString(),
   };
   if (!links.length) return { ...base, people: [], alerts: [] };

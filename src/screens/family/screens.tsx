@@ -12,7 +12,8 @@ import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
 import { closeNotifications, pushPermission, pushStatusText, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
 import { signOut } from "@/lib/client/sign-out";
-import { api, operatorApi, post } from "@/lib/client/api";
+import { deleteMyAccount } from "@/lib/client/account";
+import { api, ApiError, operatorApi, post } from "@/lib/client/api";
 import type { ActivityItem, CheckView, EventView, HoldView, ProtectedView, SharedMessage } from "@/lib/views";
 import { LedgerCards, useCallOnArrival, useLedger } from "./phase2";
 import { useFamily, useTabLabel } from "./shell";
@@ -987,7 +988,7 @@ export function ActivityScreen() {
         </button>
       ))}
       <div className="spacer" />
-      <p className="sm center-text">We keep only the warning phrases, not full messages.</p>
+      <p className="sm center-text">Full messages can be read for 24 hours, then they are deleted. The warning phrases stay.</p>
     </Screen>
   );
 }
@@ -1002,6 +1003,7 @@ export function FamilySettingsScreen() {
   const test = useTestAlert();
   const { data } = useFamily();
   const [unlinking, setUnlinking] = useState<ProtectedView | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function reset() {
     await operatorApi("/api/demo/reset", { body: {} });
@@ -1020,19 +1022,43 @@ export function FamilySettingsScreen() {
     queryClient.clear();
     router.push("/welcome");
   }
+  /** docs/retention.md: what goes, and what stays with the people they protected. */
+  async function deleteAccount() {
+    try {
+      await deleteMyAccount("family");
+    } catch (e) {
+      setDeleting(false);
+      const onHold = e instanceof ApiError && e.status === 409;
+      toast({ title: "Could not delete your account", sub: onHold ? "A payment is on hold. Block or approve it first." : (e as Error).message, icon: "warn", tone: "red" });
+      return;
+    }
+    queryClient.clear();
+    router.push("/welcome");
+  }
 
   return (
     <Screen
       tabs={<FamilyTabs active="settings" callName={label} />}
       overlay={
-        unlinking && (
+        (unlinking && (
           <Sheet onClose={() => setUnlinking(null)}>
             <h2 className="h2">Unlink from {unlinking.name}?</h2>
             <p className="p">You will stop getting their alerts. They can invite you again with a new code.</p>
             <button className="btn red" onClick={unlink}>Yes, unlink</button>
             <button className="btn line" onClick={() => setUnlinking(null)}>Stay linked</button>
           </Sheet>
-        )
+        )) ||
+        (deleting && (
+          <Sheet onClose={() => setDeleting(false)}>
+            <h2 className="h2">Delete your account?</h2>
+            <p className="p">
+              Your account, alerts, answers and advice are deleted, and you are unlinked from everyone you protect. Their activity log may still name
+              you for up to 30 days, and alerts already on your phone stay until you clear them. This cannot be undone.
+            </p>
+            <button className="btn red" onClick={deleteAccount} data-testid="confirm-delete-account">Yes, delete my account</button>
+            <button className="btn line" onClick={() => setDeleting(false)}>Keep my account</button>
+          </Sheet>
+        ))
       }
     >
       <h1 className="h1">Settings</h1>
@@ -1059,6 +1085,11 @@ export function FamilySettingsScreen() {
       </div>
       <div className="spacer" />
       <button className="ghost" style={{ alignSelf: "center" }} onClick={leave}>Sign out</button>
+      {data?.me.isDemo ? (
+        <p className="sm center-text">This is a shared demo account, so it cannot be deleted.</p>
+      ) : (
+        <button className="ghost" style={{ alignSelf: "center" }} onClick={() => setDeleting(true)} data-testid="delete-account">Delete my account</button>
+      )}
     </Screen>
   );
 }

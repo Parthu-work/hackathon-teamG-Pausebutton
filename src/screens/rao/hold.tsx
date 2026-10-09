@@ -8,10 +8,11 @@ import { clockTime, LoadingScreen, Marks, Ring, Screen, TitleRow, useCountdown, 
 import { rupees } from "@/lib/check/copy";
 import { api, ApiError, post } from "@/lib/client/api";
 import { closeNotifications } from "@/lib/client/push";
+import type { FamilyReach } from "@/lib/server/checks";
 import type { HoldView } from "@/lib/views";
 import { HELPLINE } from "@/lib/phone";
 import { useHelper, useJoinNames, useT } from "./shell";
-import { useRaoCall } from "./verdict";
+import { UnreachableCard, useRaoCall } from "./verdict";
 
 /** H1 waiting · H2 advice · H3 blocked · H4 approved · H5 expired · F13 two keys · F14a unreachable */
 export function HoldScreen() {
@@ -24,7 +25,7 @@ export function HoldScreen() {
   const helper = useHelper();
   const q = useQuery({
     queryKey: ["hold", id],
-    queryFn: () => api<{ hold: HoldView; serverNow: string }>(`/api/me/holds/${id}`),
+    queryFn: () => api<{ hold: HoldView; reach: FamilyReach; serverNow: string }>(`/api/me/holds/${id}`),
     refetchInterval: 2000,
   });
   useLeaveIfGone(q.error, "/");
@@ -178,6 +179,7 @@ export function HoldScreen() {
           </div>
         </div>
       )}
+      {q.data?.reach && <UnreachableCard names={q.data.reach.unreachableNames} nobody={q.data.reach.nobodyReached} withCall={false} />}
       <div className="spacer" />
       <button className="btn ink" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />{t("common.callName", { name: helper.first })}</button>
       <button className="btn line" onClick={() => call(t("common.helplineName"), HELPLINE)}>{t("common.helpline")}</button>

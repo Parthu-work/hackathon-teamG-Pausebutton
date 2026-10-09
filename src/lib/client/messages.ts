@@ -20,3 +20,12 @@ export function loadMessage(checkId: string): string | null {
     return null;
   }
 }
+
+/** Delete my history or account: the texts kept on this phone go too. */
+export function forgetMessages() {
+  try {
+    for (const k of Object.keys(sessionStorage)) if (k.startsWith("pb-msg-")) sessionStorage.removeItem(k);
+  } catch {
+    /* storage unavailable: nothing was kept */
+  }
+}

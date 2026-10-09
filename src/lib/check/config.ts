@@ -46,3 +46,6 @@ export const AI_MODELS = {
   sonnet: "claude-sonnet-5-5",
 } as const;
 export type AiModelKey = keyof typeof AI_MODELS;
+
+// The household activity log (events) and the push delivery log are deleted after this many days (docs/retention.md).
+export const LOG_DAYS = 30;
