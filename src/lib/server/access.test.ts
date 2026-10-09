@@ -42,7 +42,8 @@ import { rateLimit, TOO_MANY } from "./ratelimit";
 import { liveBlockedDomains, reviewDomain, seedReport } from "./reports";
 import { demoSignInOpen, sessionToken } from "./session";
 
-const saved = { OPERATOR_KEY: process.env.OPERATOR_KEY, VERCEL: process.env.VERCEL, DEMO_SIGNIN: process.env.DEMO_SIGNIN };
+const HOST_VARS = ["VERCEL", "RAILWAY_ENVIRONMENT_NAME", "RENDER", "FLY_APP_NAME", "K_SERVICE", "DEPLOYED"];
+const saved = Object.fromEntries(["OPERATOR_KEY", "DEMO_SIGNIN", ...HOST_VARS].map((name) => [name, process.env[name]]));
 afterEach(() => {
   for (const [name, value] of Object.entries(saved)) {
     if (value === undefined) delete process.env[name];
@@ -148,15 +149,19 @@ describe("operator-only reads", () => {
 });
 
 describe("demo sign-in switch", () => {
-  it("is on for a laptop or CI, off on Vercel, and DEMO_SIGNIN decides when set", () => {
+  it("is on for a laptop or CI, off on any deployment, and DEMO_SIGNIN decides when set", () => {
     delete process.env.DEMO_SIGNIN;
-    delete process.env.VERCEL;
+    HOST_VARS.forEach((name) => delete process.env[name]);
     expect(demoSignInOpen()).toBe(true);
-    process.env.VERCEL = "1";
-    expect(demoSignInOpen()).toBe(false);
+    for (const host of ["VERCEL", "RAILWAY_ENVIRONMENT_NAME", "DEPLOYED"]) {
+      process.env[host] = "1";
+      expect(demoSignInOpen()).toBe(false);
+      delete process.env[host];
+    }
+    process.env.RAILWAY_ENVIRONMENT_NAME = "production";
     process.env.DEMO_SIGNIN = "on";
     expect(demoSignInOpen()).toBe(true);
-    delete process.env.VERCEL;
+    delete process.env.RAILWAY_ENVIRONMENT_NAME;
     process.env.DEMO_SIGNIN = "off";
     expect(demoSignInOpen()).toBe(false);
   });
