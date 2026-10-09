@@ -19,3 +19,11 @@ test("the health check answers", async ({ request }) => {
   expect(res.status()).toBe(200);
   expect(await res.json()).toEqual({ ok: true });
 });
+
+test("assetlinks.json names the app's signing key from the running server's environment", async ({ request }) => {
+  // Prerendered at build time it would stay [] whatever the host sets later.
+  const res = await request.get("/.well-known/assetlinks.json");
+  expect(res.status()).toBe(200);
+  const [link] = await res.json();
+  expect(link.target).toMatchObject({ namespace: "android_app", package_name: "ai.apty.pausebutton", sha256_cert_fingerprints: ["AA:BB:CC"] });
+});

@@ -26,21 +26,29 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 ```
 
 - `PB_HOST` is where the web app is deployed. For the emulator use `http://10.0.2.2:3000` (the host machine's `pnpm dev`); for a phone on the same Wi‑Fi use the laptop's address, e.g. `http://192.168.1.20:3000`; for anyone anywhere, the Vercel URL or a `pnpm share` tunnel link.
+- **Signing:** every build, on any laptop or in CI, signs with the shared debug key committed as `android/debug.keystore` (password `android`, alias `androiddebugkey`), not your machine's own `~/.android/debug.keystore`. So a newer APK installs over an older one, and the site can vouch for the key (see "Full screen"). Anyone with the repository can sign with it: for a public release use your own key (`PB_KEYSTORE`, below).
 - `./gradlew assembleRelease` signs with the debug key unless `PB_KEYSTORE`, `PB_KEYSTORE_PASSWORD`, `PB_KEY_ALIAS` and `PB_KEY_PASSWORD` are given (`-P…` or in `~/.gradle/gradle.properties`).
-- CI builds the debug APK on every push and attaches it to the workflow run as **pause-button-debug-apk** (job "Android APK (debug)" in `.github/workflows/ci.yml`). Set the repository variable `PB_HOST` to your deployment.
+- CI builds the debug APK on every push and attaches it to the workflow run as **pause-button-debug-apk** (job "Android APK (debug)" in `.github/workflows/ci.yml`). When `android/` changes on `main`, **Publish APK to the website** rebuilds it for the live site and publishes it at `/pause-button.apk` (the QR code's download). Set the repository variable `PB_HOST` to point it at another deployment.
 
 ## Install on a phone
 
 1. Copy `app-debug.apk` to the phone (WhatsApp to yourself, Google Drive, USB, or `adb install app-debug.apk`).
 2. Open it. Android asks to allow installing from this source once; allow it.
+   If Android says "App not installed", an APK signed with a different key is already on the phone (builds before the shared key, or one built with another key): uninstall it, then install again.
 3. Follow the user manual (`docs/user-manual` artifact, linked from the main README).
 
 ## Full screen (no Chrome bar)
 
-Chrome shows the site full screen only when the site vouches for the app: `https://<host>/.well-known/assetlinks.json` must list the app's package and signing fingerprint. The web app serves that file from the `ANDROID_CERT_SHA256` environment variable (comma-separated fingerprints). Get a fingerprint with:
+Chrome shows the site full screen only when the site vouches for the app: `https://<host>/.well-known/assetlinks.json` must list the app's package and signing fingerprint. The web app serves that file from the `ANDROID_CERT_SHA256` environment variable (comma-separated fingerprints), read on every request. For the shared debug key it is:
+
+```
+E1:5A:42:AC:11:84:2D:CA:5A:4D:E0:CC:B5:2F:85:A5:A3:EA:4C:49:3C:12:90:40:8E:ED:D2:D0:E8:C7:63:B0
+```
+
+(set on the Railway deployment). For another key, get its fingerprint with:
 
 ```bash
-keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep SHA256
+keytool -list -v -keystore android/debug.keystore -storepass android -alias androiddebugkey | grep SHA256
 ```
 
 Without it the app still works; Chrome just shows its address bar.

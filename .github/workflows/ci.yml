@@ -78,6 +78,8 @@ jobs:
       - name: Build the debug APK
         # PB_HOST: where the web app is deployed (set a repository variable); the person can change it in the app.
         run: cd android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug -PPB_HOST="${{ vars.PB_HOST || 'https://hackathon-teamg-pausebutton-production.up.railway.app' }}"
+      - name: Signed with the shared debug key (android/debug.keystore)
+        run: bash scripts/check-apk-signer.sh android/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: pause-button-debug-apk

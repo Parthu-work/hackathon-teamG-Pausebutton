@@ -24,7 +24,8 @@ export default defineConfig({
   webServer: {
     command: `pnpm start -p ${PORT}`,
     url: `http://localhost:${PORT}/welcome`,
-    env: { PGLITE_DIR: "memory" },
+    // ANDROID_CERT_SHA256 is set only when the server starts (not at build), as on a host.
+    env: { PGLITE_DIR: "memory", ANDROID_CERT_SHA256: "AA:BB:CC" },
     reuseExistingServer: false,
     timeout: 60_000,
   },
