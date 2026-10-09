@@ -62,6 +62,14 @@ describe("Claude reader fallback", () => {
     expect(r.ai.status).toBe("error");
   });
 
+  it("a reading that did not end normally is not trusted, even when it parses", async () => {
+    reply = { text: JSON.stringify({ signals: [], scam_type: "none", label: "safe" }), stop_reason: "max_tokens" };
+    const { checkMessage } = await import("./pipeline");
+    const r = await checkMessage(COURIER);
+    expect(r.ai.status).toBe("error");
+    expect(r.degraded).toBe(true);
+  });
+
   it("a good reading can still raise the verdict", async () => {
     reply = { text: JSON.stringify({ signals: [], scam_type: "fake courier fee", label: "scam" }), stop_reason: "end_turn" };
     const { checkMessage } = await import("./pipeline");

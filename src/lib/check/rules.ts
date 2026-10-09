@@ -68,7 +68,9 @@ const NEGATED = new RegExp(
   B +
     String.raw`(?:never|not|don['’]?t|doesn['’]?t|won['’]?t|shouldn['’]?t|can['’]?t|cannot|nobody|no ?one(?: from(?: [\p{L}\p{N}]+){1,3})?|mat|nahi)` +
     String.raw`(?: (?:will|would|shall|should|ever|kabhi|bhi))*` +
-    String.raw`(?: (?:ask|asks|asked|request|requests|requested|call|calls|message|messages|need|needs|want|wants)(?: (?:you|customers|anyone))?(?: to)?)?` +
+    // The "to" is required: "never call you to share" is a warning, but "Do not
+    // call anyone. Share the OTP" (or the same across a line break) is a request.
+    String.raw`(?: (?:ask|asks|asked|request|requests|requested|call|calls|message|messages|need|needs|want|wants)(?: (?:you|customers|anyone))? to)?` +
     String.raw`(?: (?:install|download|use|open))? ?$`,
   "u",
 );
@@ -152,7 +154,8 @@ export function detectFamily(normalizedText: string): ScamFamily {
 
 // ---------- amount and payee (for the payment hold) ----------
 
-const AMOUNT_RE = /(?<![\p{L}\p{N}])(?:rs\.?|₹|inr|rupees?)\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(lakh|lakhs|crore))?|(\d[\d,]*(?:\.\d+)?)\s?(lakh|lakhs|crore)?\s?(?:rupees|रुपये|రూపాయలు)/giu;
+// "rs" must start a word ("officers 98765…" is a phone number); "₹" can be glued to one ("Pay₹500").
+const AMOUNT_RE = /(?:(?<![\p{L}\p{N}])(?:rs\.?|inr|rupees?)|₹)\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(lakh|lakhs|crore))?|(\d[\d,]*(?:\.\d+)?)\s?(lakh|lakhs|crore)?\s?(?:rupees|रुपये|రూపాయలు)/giu;
 
 export function findAmount(
   original: string,

@@ -15,7 +15,7 @@ const OFFICIAL = [
 
 // Words that, inside an unofficial domain, mean it is pretending to be a brand.
 const BRANDS = [
-  "sbi", "yono", "hdfc", "icici", "axis", "kotak", "pnb", "baroda", "canara", "paytm", "phonepe",
+  "sbi", "yono", "hdfc", "icici", "axis", "axisbank", "kotak", "pnb", "baroda", "canara", "paytm", "phonepe",
   "gpay", "googlepay", "amazon", "flipkart", "indiapost", "bluedart", "fedex", "dhl", "delhivery",
   "irctc", "uidai", "aadhaar", "aadhar", "incometax", "epfo", "npci", "rbi", "lic", "airtel",
   "jio", "trai", "bses", "tatapower",
@@ -25,12 +25,17 @@ const BRANDS = [
 // whole word counts for these.
 const WORD_LIKE = new Set(["trai", "axis"]);
 
-// Words that, next to a brand name, show the site is fishing for logins or codes.
+// Words that, next to a brand name, show the site is fishing for logins or codes,
+// or is dressed up as the brand's shop, wallet or courier ("flipkartsale", "irctctatkal").
 const PHISHING_WORDS = [
   "kyc", "verify", "verif", "update", "secure", "login", "signin", "netbanking", "banking", "support",
   "care", "reward", "refund", "cashback", "bonus", "claim", "prize", "account", "helpline", "unblock",
-  "activate", "gift", "otp", "offer",
+  "activate", "gift", "otp", "offer", "sale", "deal", "tatkal", "ticket", "booking", "wallet", "recharge",
+  "delivery", "courier", "parcel", "bank", "pay", "india",
 ];
+
+// Brands inside one word. "lic" sits inside everyday words (click, public), so it never counts.
+const brandsIn = (word: string) => BRANDS.filter((b) => b !== "lic" && word.includes(b));
 
 const SHORTENERS = [
   "bit.ly", "tinyurl.com", "t.co", "goo.gl", "is.gd", "cutt.ly", "rb.gy", "shorturl.at", "t.ly",
@@ -88,14 +93,17 @@ function classify(domain: string, isIp: boolean): { status: LinkStatus; reason: 
       reason: `It uses the name “${brand.toUpperCase()}” but is not their official site.`,
     };
   }
+  // A bank's own name with a different ending ("hdfcbank.net") copies the real site.
+  const copied = labels[0].length >= 5 ? OFFICIAL.find((o) => o.split(".")[0] === labels[0]) : undefined;
+  if (copied) return { status: "lookalike", reason: `It copies the name of ${copied} with a different ending.` };
   const near = nearOfficial(labels[0]);
   if (near?.close) return { status: "lookalike", reason: `It looks like ${near.site} but is spelled differently.` };
-  // A brand inside a longer word is proof only with a phishing word or an odd
-  // ending ("hdfcnetbanking-login.com"). Alone it can be an ordinary site
-  // ("s3.amazonaws.com"), so it is only a warning sign.
+  // A brand inside a longer word is proof only with a phishing word, a second
+  // brand ("yonosbi") or an odd ending ("hdfcnetbanking-login.com"). Alone it
+  // can be an ordinary site ("s3.amazonaws.com"), so it is only a warning sign.
   const inside = BRANDS.find((b) => b.length >= 4 && !WORD_LIKE.has(b) && words.some((w) => w.includes(b)));
   if (inside) {
-    const proof = ODD_TLDS.has(tld) || words.some((w) => PHISHING_WORDS.some((p) => w.includes(p)));
+    const proof = ODD_TLDS.has(tld) || words.some((w) => PHISHING_WORDS.some((p) => w.includes(p)) || brandsIn(w).length >= 2);
     return {
       status: proof ? "lookalike" : "risky",
       reason: `It uses the name “${inside.toUpperCase()}” but is not their official site.`,
@@ -107,7 +115,8 @@ function classify(domain: string, isIp: boolean): { status: LinkStatus; reason: 
 }
 
 function isOfficial(domain: string) {
-  if (domain.endsWith(".gov.in") || domain.endsWith(".nic.in")) return true;
+  // ".sbi" is State Bank of India's own top-level domain (yono.sbi, bank.sbi).
+  if (domain.endsWith(".gov.in") || domain.endsWith(".nic.in") || domain.endsWith(".sbi")) return true;
   return OFFICIAL.some((o) => domain === o || domain.endsWith("." + o));
 }
 
@@ -129,11 +138,14 @@ function nearOfficial(label: string): { site: string; close: boolean } | null {
   return weak ? { site: weak, close: false } : null;
 }
 
+/** Edits between two words. Two neighbours swapped ("kotka" for kotak) count as one. */
 function editDistance(a: string, b: string) {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...new Array(b.length).fill(0)]);
   for (let j = 1; j <= b.length; j++) dp[0][j] = j;
   for (let i = 1; i <= a.length; i++)
-    for (let j = 1; j <= b.length; j++)
+    for (let j = 1; j <= b.length; j++) {
       dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + 1);
+    }
   return dp[a.length][b.length];
 }

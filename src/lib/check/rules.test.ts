@@ -74,6 +74,11 @@ describe("signals", () => {
       "Do not disconnect. Share the OTP you received.",
       "Don't worry just share the OTP",
       "I will not ask you to pay, just share the OTP.",
+      // A negation on the line before, with no full stop, does not reach the request.
+      "Do not call anyone\nShare the OTP now",
+      "Bank officials never call\nShare the OTP with me now",
+      "Sir I am from SBI. Our executive will not call you\nShare the OTP here only",
+      "No one will ask you\nShare OTP now",
     ]) {
       expect(runRules(text).credential, text).toHaveLength(1);
     }
@@ -121,6 +126,27 @@ describe("links", () => {
     expect(status("Sale at mantra.com")).toBe("risky");
     expect(status("Log in at hdfcnetbanking-login.com")).toBe("lookalike");
   });
+
+  it("still calls copies of a bank's name, brand-plus-suffix sites and swapped-letter typos fakes", () => {
+    // The real name with a different ending.
+    expect(status("Login at hdfcbank.net")).toBe("lookalike");
+    expect(status("Check at icicibank.co/cashback")).toBe("lookalike");
+    expect(status("Update at axisbank.co")).toBe("lookalike");
+    // Axis Bank fakes: "axis" alone is a word, but "axisbank" is the bank.
+    expect(status("Complete at axisbank-kyc.com")).toBe("lookalike");
+    expect(status("Rewards at axisbankkyc.in")).toBe("lookalike");
+    // Brand plus a shop, wallet or second brand.
+    expect(status("View at yonosbi.in")).toBe("lookalike");
+    expect(status("Sale at flipkartsale.com")).toBe("lookalike");
+    expect(status("Download at irctctatkal.com")).toBe("lookalike");
+    expect(status("Update at uidaiaadhaar.in")).toBe("lookalike");
+    // Two letters swapped is one edit: a warning sign, like kodak.com.
+    expect(status("Visit kotka.com")).toBe("risky");
+    expect(status("Complete at patym.in")).toBe("risky");
+    expect(status("Retry at airtle.in")).toBe("risky");
+    // SBI's own top-level domain.
+    expect(status("Login to YONO at yono.sbi")).toBe("known");
+  });
 });
 
 describe("family, amount and payee", () => {
@@ -146,5 +172,10 @@ describe("family, amount and payee", () => {
     ]) {
       expect(findAmount(text, runRules(text).signals.filter((s) => s.type === "payment")), text).toBeNull();
     }
+  });
+
+  it("reads a rupee sign glued to the word before it", () => {
+    const text = "Transfer now. Pay₹500 to this UPI.";
+    expect(findAmount(text, runRules(text).signals.filter((s) => s.type === "payment"))?.value).toBe(500);
   });
 });

@@ -34,6 +34,27 @@ describe("real messages that once got SCAM", () => {
   }
 });
 
+describe("scam messages that must stay SCAM", () => {
+  for (const text of [
+    "Do not call anyone\nShare the OTP now",
+    "Bank officials never call\nShare the OTP with me now",
+    "Dear customer, your HDFC netbanking statement is ready. Login at hdfcbank.net",
+    "ICICI Bank: Your cashback of Rs 1,500 is credited. Check at icicibank.co/cashback",
+    "Axis Bank: Your KYC is pending. Complete at axisbank-kyc.com to avoid service interruption",
+    "SBI YONO: Rs 2,000 cashback credited to your account. View at yonosbi.in",
+    "Your IRCTC tatkal ticket is confirmed. Download at irctctatkal.com",
+    "Big Billion Days! iPhone at 90% off only today at flipkartsale.com",
+  ]) {
+    it(text.replace("\n", " / "), async () => {
+      expect((await checkMessage(text, { ai: "off" })).verdict).toBe("SCAM");
+    });
+  }
+
+  it("SBI's own yono.sbi is not a fake", async () => {
+    expect((await checkMessage("Login to YONO at yono.sbi for your statement", { ai: "off" })).verdict).not.toBe("SCAM");
+  });
+});
+
 describe("40-message test set (rules + model, no AI)", () => {
   it("catches every scam and raises no false alarm", async () => {
     const results = await Promise.all(
