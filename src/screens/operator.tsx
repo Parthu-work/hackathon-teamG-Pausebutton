@@ -1,13 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, ToastOutlet, ToastProvider, useToast, VerdictPill } from "@/components/ui";
 import { api, broadcastWifiDrop, post } from "@/lib/client/api";
 import type { TestResult, TestSummary } from "@/lib/server/testset";
 import type { EventView } from "@/lib/views";
+import { DisagreementsPanel, FamiliesPanel, OpNav } from "./operator-phase2";
 
 type Latest = {
   run: { id: string; createdAt: string; summary: TestSummary; results: TestResult[] } | null;
@@ -29,23 +29,22 @@ function OpHeader({ title, sub }: { title: string; sub: string }) {
         <h1 className="h1" style={{ fontSize: 34 }}>{title}</h1>
         <p className="sm" style={{ marginTop: 6 }}>{sub}</p>
       </div>
-      <nav className="row" style={{ gap: 6 }}>
-        <Link className="ghost" href="/tests">Test set</Link>
-        <Link className="ghost" href="/demo">Demo panel</Link>
-        <Link className="ghost" href="/">Mr Rao&apos;s phone</Link>
-        <Link className="ghost" href="/family">Family phone</Link>
-      </nav>
+      <OpNav />
     </div>
   );
 }
 
-/** L1 · Operator: test set page (/tests) */
+/** L1 · Operator: test set page (/tests), with the F4 and F7 reports as tabs */
 export function TestsPage() {
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState<"tests" | "disagreements" | "families">("tests");
   const q = useQuery({ queryKey: ["tests-latest"], queryFn: () => api<Latest>("/api/tests/latest") });
   const run = useMutation({
     mutationFn: (mode: "rules" | "haiku" | "sonnet") => post("/api/tests/run", { mode }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tests-latest"] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tests-latest"] });
+      void queryClient.invalidateQueries({ queryKey: ["ops-families"] });
+    },
   });
   const r = q.data?.run;
   const s = r?.summary;
@@ -53,6 +52,30 @@ export function TestsPage() {
   const genuine = r?.results.filter((x) => x.label === "genuine") ?? [];
   const missed = r?.results.filter((x) => x.outcome === "missed") ?? [];
   const falseAlarms = r?.results.filter((x) => x.outcome === "false_alarm") ?? [];
+
+  const tabs = (
+    <div className="op-tabs" role="tablist">
+      {([["tests", "Test set"], ["disagreements", "Disagreements"], ["families", "Families"]] as const).map(([key, label]) => (
+        <button key={key} role="tab" aria-selected={tab === key} className={`chip ${tab === key ? "on" : ""}`} onClick={() => setTab(key)}>{label}</button>
+      ))}
+    </div>
+  );
+
+  if (tab !== "tests") {
+    return (
+      <div className="op">
+        <div className="syn">SYNTHETIC DEMO DATA</div>
+        <main className="op-main">
+          <OpHeader
+            title={tab === "disagreements" ? "Disagreement report" : "Measure the scam family"}
+            sub={tab === "disagreements" ? "The only quality signal we can get without storing text. Route: /tests → Disagreements" : "The explanation nobody had ever checked. Route: /tests → Families"}
+          />
+          {tabs}
+          {tab === "disagreements" ? <DisagreementsPanel /> : <FamiliesPanel />}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="op">
@@ -62,6 +85,7 @@ export function TestsPage() {
           title="Test set: 40 messages"
           sub="20 scam and 20 genuine, written by the team. Every message goes through the same check as the app. The page lists the misses. Route: /tests"
         />
+        {tabs}
         <div className="row wrap" style={{ gap: 10 }}>
           <button className="btn ink" disabled={run.isPending} onClick={() => run.mutate("rules")}>Run rules + model (no AI)</button>
           <button className="btn amber" disabled={run.isPending || !q.data?.aiAvailable} onClick={() => run.mutate("haiku")}>Run on Haiku (fast)</button>
@@ -165,6 +189,8 @@ function DemoPanel() {
   const toast = useToast();
   const [tokens, setTokens] = useState<{ rao: string; mom: string; arjun: string; meera: string } | null>(null);
   const [left, setLeft] = useState<"rao" | "mom">("rao");
+  // F2: show a family phone as locked (its lock screen, with Block built into the notification).
+  const [locked, setLocked] = useState<{ arjun: boolean; meera: boolean }>({ arjun: false, meera: false });
   const ready = !!tokens;
   const [events, setEvents] = useState<EventView[]>([]);
   const [lastSync, setLastSync] = useState<number | null>(null);
@@ -248,6 +274,7 @@ function DemoPanel() {
               <p className="sm grow" style={{ minWidth: 260 }}>
                 Reset keeps Arjun and Meera linked to both parents. Tap each family phone once so it may play sound. One “scam”
                 (or Block) from either of them settles it; “not a scam” (or Approve) needs both. Switch the left phone between Papa and Mummy.
+                “Lock screen” shows a family phone locked: Block works from the notification.
               </p>
             </div>
             <div className="demo-grid">
@@ -260,15 +287,18 @@ function DemoPanel() {
                 {/* The frame's name carries the persona's token, so Papa's and Mummy's phones can share one browser. */}
                 <iframe key={`${left}-${frameKey}`} name={`pb-rao:${tokens[left]}`} title={left === "rao" ? "Mr Rao's phone" : "Mrs Rao's phone"} src="/" />
               </div>
-              <div className="col">
-                <div className="lbl">Arjun (son) · route /family</div>
-                {/* The frame's name carries Arjun's token, so both family phones can share one browser. */}
-                <iframe key={`arjun-${frameKey}`} name={`pb-family:${tokens.arjun}`} title="Arjun's phone" src="/family" allow="autoplay" />
-              </div>
-              <div className="col">
-                <div className="lbl">Meera (daughter) · route /family</div>
-                <iframe key={`meera-${frameKey}`} name={`pb-family:${tokens.meera}`} title="Meera's phone" src="/family" allow="autoplay" />
-              </div>
+              {(["arjun", "meera"] as const).map((who) => (
+                <div className="col" key={who}>
+                  <div className="row" style={{ gap: 8 }}>
+                    <div className="lbl grow">{who === "arjun" ? "Arjun (son)" : "Meera (daughter)"} · route {locked[who] ? "/family/lock" : "/family"}</div>
+                    <button className={`chip ${locked[who] ? "on" : ""}`} style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => setLocked((l) => ({ ...l, [who]: !l[who] }))}>
+                      {locked[who] ? "Unlock" : "Lock screen"}
+                    </button>
+                  </div>
+                  {/* The frame's name carries the persona's token, so both family phones can share one browser. */}
+                  <iframe key={`${who}-${frameKey}-${locked[who]}`} name={`pb-family:${tokens[who]}`} title={`${who === "arjun" ? "Arjun" : "Meera"}'s phone`} src={locked[who] ? "/family/lock" : "/family"} allow="autoplay" />
+                </div>
+              ))}
             </div>
             <div ref={logBox} className="card" style={{ gap: 10, maxHeight: 420, overflowY: "auto" }}>
               <div className="lbl">Event log (live)</div>

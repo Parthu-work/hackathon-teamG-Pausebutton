@@ -17,5 +17,8 @@ export default function manifest(): MetadataRoute.Manifest {
     ],
     orientation: "portrait",
     categories: ["utilities", "security"],
-  };
+    // F1 · Forward to Pause: once installed, "Pause Button" appears in the
+    // phone's Share sheet. The shared text lands on /share and is checked.
+    share_target: { action: "/share", method: "GET", params: { text: "text", title: "title", url: "url" } },
+  } as MetadataRoute.Manifest;
 }

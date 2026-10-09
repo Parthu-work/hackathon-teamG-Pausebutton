@@ -7,7 +7,7 @@ import { checkMessage } from "./pipeline";
 // quality gate in CI: no scam may be called SAFE and no genuine message SCAM.
 
 describe("demo examples match the designs", () => {
-  const expected: Record<string, string> = { cbi: "SCAM", kyc: "SCAM", courier: "SUSPICIOUS", lottery: "SCAM", bank: "SAFE" };
+  const expected: Record<string, string> = { cbi: "SCAM", kyc: "SCAM", courier: "SUSPICIOUS", lottery: "SCAM", bank: "SAFE", hindi: "SCAM" };
   for (const e of examples) {
     it(`${e.label} → ${expected[e.id]}`, async () => {
       const r = await checkMessage(e.text, { ai: "off" });

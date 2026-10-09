@@ -5,8 +5,11 @@ A small native app around the web app:
 - **`LauncherActivity`** opens the web app as a *Trusted Web Activity*: full screen inside Chrome, so everything the web app does (push notifications, the dialer, vibration, the family screens) works unchanged. No Firebase and no WebView quirks.
 - **`MessageWatcherService`** is the real version of the simulated inbox (screens M1–M4): once the person allows notification access, it reads new SMS and WhatsApp notifications and posts their text to `POST /api/device/inbox`, where the same check runs and the family gets its heads-up.
 - **`PairActivity`** ("Connect this phone") connects the phone to the person's account with a short code from the web app (`Settings › Watch my messages › Connect this phone`), and helps with the two Android permissions (notification access, battery).
+- **`ShareActivity`** (F1 · Forward to Pause) puts "Pause Button" in the Share sheet of WhatsApp, Messages and any app that shares text. The shared text is handed to the web app's `/share` page, which checks it at once; the verdict says which app it came from.
 
 The web app's address is baked in at build time (`PB_HOST`) and can be changed on the Connect screen.
+
+Phase 2 features that need nothing native, and so work in this app as they do in the browser: lock-screen notifications with **Block payment** built in (F2, Web Push actions handled by `public/sw.js`), the live-call guard (F6), reading aloud and speaking (F10, Chrome's Web Speech), Hindi and Telugu (F5).
 
 ## Build
 
@@ -49,6 +52,8 @@ adb shell cmd notification allow_listener ai.apty.pausebutton/.MessageWatcherSer
 adb shell am start -a android.intent.action.VIEW -d "pausebutton://pair?code=XXXXXX&host=http://10.0.2.2:3000"
 # a fake incoming SMS (debug builds accept notifications from the shell):
 adb shell cmd notification post -S bigtext -t "+91 9XXXX XXXXX" demo "Sir this is CBI Mumbai. Stay on the call, tell no one, and transfer Rs 80,000."
+# F1: share text to the app, as WhatsApp's Share sheet would:
+adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "Sir this is CBI Mumbai. Stay on the call, tell no one, and transfer Rs 80,000." -n ai.apty.pausebutton/.ShareActivity
 ```
 
 The message appears on Mr Rao's phone (My checks, the inbox) and the family phones get the heads-up.

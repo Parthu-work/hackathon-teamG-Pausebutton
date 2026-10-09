@@ -6,21 +6,27 @@ import { keyPhrases } from "@/lib/check/phrases";
 import { finalVerdict } from "@/lib/check/final";
 import { checkMessage, MAX_MESSAGE_CHARS } from "@/lib/check/pipeline";
 import { SHARE_TEXT_HOURS } from "@/lib/check/config";
-import type { CheckResult, ScamFamily } from "@/lib/check/types";
+import type { CallAnswers, CheckResult, CheckSource, ScamFamily } from "@/lib/check/types";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
+import type { Language } from "@/lib/views";
 import type { CheckView, SharedMessage } from "@/lib/views";
 import { answerSummary, giveAnswer } from "./answers";
 import { logEvent } from "./events";
 import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, userNames } from "./holds";
 import { callNameOf, joinNames, linkedFamily, ownerView } from "./people";
-import { pushToUsers } from "./push";
+import { pushToUsers, type PushPayload } from "./push";
+import { liveBlockedDomains, reportableFor } from "./reports";
 import { HttpError } from "./session";
+import { campaignFor, recordSighting } from "./sightings";
 
 type User = typeof schema.users.$inferSelect;
 type Check = typeof schema.checks.$inferSelect;
 
-const TITLES: Record<ScamFamily, string> = {
+/** Sources where the person brought the message to us (as against a detected one): they get the hold and the urgent alert. */
+export const DIRECT_SOURCES: CheckSource[] = ["paste", "share", "voice", "call"];
+
+export const TITLES: Record<ScamFamily, string> = {
   fake_officer: "Fake officer message",
   bank_kyc: "Bank KYC link",
   courier_fee: "Courier fee message",
@@ -46,14 +52,17 @@ function defaultTitle(r: CheckResult, normalized: string) {
 }
 
 /** A keyed hash of the normalised text: lets us spot repeats without keeping the message. */
-function fingerprint(normalized: string) {
+export function fingerprint(normalized: string) {
   const key = process.env.FINGERPRINT_SECRET ?? "pause-button-dev-fingerprint";
   return crypto.createHmac("sha256", key).update(normalized).digest("hex").slice(0, 32);
 }
 
+/** The fingerprint of a message as pasted (used by the demo seed and by "Ask anyway"). */
+export const fingerprintOf = (text: string) => fingerprint(normalizeForMatch(text.slice(0, MAX_MESSAGE_CHARS)).text);
+
 export type NewCheck = {
   text: string;
-  source: "paste" | "sms" | "whatsapp";
+  source: CheckSource;
   senderLabel?: string | null;
   title?: string | null;
 };
@@ -61,16 +70,30 @@ export type NewCheck = {
 /**
  * Runs the check, stores the result (never the message text) and does what
  * the verdict calls for:
- *  - pasted SCAM: urgent alert to every linked family member, plus a
- *    10-minute payment hold when the message asks for an amount;
- *  - detected SCAM (simulated inbox): a quiet heads-up, if Mr Rao turned on
- *    "Tell Arjun automatically"; the hold starts if he then tries to pay.
+ *  - a message the person brought us (pasted, forwarded, spoken) that is a
+ *    SCAM: urgent alert to every linked family member, plus a payment hold
+ *    when the message asks for an amount (10 minutes; an hour above Rs 50,000);
+ *  - detected SCAM (simulated inbox, Android watcher): a quiet heads-up, if
+ *    Mr Rao turned on "Tell Arjun automatically"; the hold starts if he then
+ *    tries to pay.
  */
 export async function createCheck(db: Db, owner: User, input: NewCheck) {
-  await purgeSharedText(db);
   const text = input.text.slice(0, MAX_MESSAGE_CHARS);
-  const result = await checkMessage(text);
+  const result = await checkMessage(text, { blockedDomains: await liveBlockedDomains(db) });
+  return storeCheck(db, owner, input, result, text);
+}
+
+/** Stores a result (from checkMessage or the live-call guard) and sends what it calls for. */
+export async function storeCheck(
+  db: Db,
+  owner: User,
+  input: NewCheck & { callAnswers?: CallAnswers | null },
+  result: CheckResult,
+  text: string,
+) {
+  await purgeSharedText(db);
   const normalized = normalizeForMatch(input.text).text;
+  const print = fingerprint(normalized);
   const [check] = await db
     .insert(schema.checks)
     .values({
@@ -78,7 +101,7 @@ export async function createCheck(db: Db, owner: User, input: NewCheck) {
       source: input.source,
       senderLabel: input.senderLabel ?? null,
       title: input.title || defaultTitle(result, normalized),
-      fingerprint: fingerprint(normalized),
+      fingerprint: print,
       verdict: result.verdict,
       score: result.score,
       rulesScore: result.rulesScore,
@@ -95,6 +118,9 @@ export async function createCheck(db: Db, owner: User, input: NewCheck) {
       modelTerms: result.modelTerms,
       aiStatus: result.ai.status,
       aiModel: result.ai.model ?? null,
+      aiScamType: result.ai.family ?? null,
+      novel: result.novel,
+      callAnswers: input.callAnswers ?? null,
       degraded: result.degraded,
       safeHint: result.verdict === "SAFE" && /debited|credited|a\/c|avl bal|account ending/.test(normalized) ? "bank" : null,
       // Family members who are alerted read the exact message (24 h). Safe messages are not kept.
@@ -102,18 +128,29 @@ export async function createCheck(db: Db, owner: User, input: NewCheck) {
     })
     .returning();
 
+  // Campaign radar: the fingerprint, never the words (F3). Safe messages are not counted.
+  if (result.verdict !== "SAFE" && input.source !== "call") {
+    await recordSighting(db, { fingerprint: print, householdKey: owner.id, family: result.family, title: check.title, domain: result.link?.domain ?? null });
+  }
+
   const how = result.hardRule ? `hard rule ${result.hardRule}` : `${result.score}%`;
-  const from = input.source === "paste" ? "pasted" : `${input.source.toUpperCase()} from ${input.senderLabel}`;
-  await logEvent(db, owner.id, "Check service", "verdict", `Verdict ${result.verdict} (${how}) · ${from}`);
+  const from =
+    input.source === "paste" ? "pasted"
+    : input.source === "share" ? `forwarded from ${input.senderLabel ?? "another app"}`
+    : input.source === "voice" ? "spoken"
+    : input.source === "call" ? "live-call guard"
+    : `${input.source.toUpperCase()} from ${input.senderLabel}`;
+  await logEvent(db, owner.id, "Check service", "verdict", `Verdict ${result.verdict} (${how}) · ${from}${result.novel ? " · new trick" : ""}`);
 
   let holdId: string | null = null;
   if (result.verdict === "SCAM") {
     const family = await linkedFamily(db, owner.id);
-    if (input.source === "paste") {
+    if (DIRECT_SOURCES.includes(input.source)) {
       if (check.amount) {
         const hold = await createHold(db, check, owner);
         holdId = hold.id;
-        await logEvent(db, owner.id, "Check service", "hold", `Hold created automatically · ${rupees(hold.amount)} paused for 10 min`, hold.id);
+        const minutes = Math.round((hold.expiresAt.getTime() - hold.createdAt.getTime()) / 60_000);
+        await logEvent(db, owner.id, "Check service", "hold", `Hold created automatically · ${rupees(hold.amount)} paused for ${minutes} min${minutes > 10 ? " · two keys to release" : ""}`, hold.id);
       }
       await sendAlerts(db, owner, check, family.map((f) => f.familyId), "urgent", holdId);
     } else if (owner.autoTellFamily) {
@@ -146,11 +183,15 @@ async function sendAlerts(
       const who = callNameOf(owner, family.find((f) => f.familyId === a.recipientId)?.relation);
       const text =
         kind === "urgent"
-          ? { title: `${who} needs you now`, body: `${who} got a scam message${check.amount ? ` asking for ${rupees(check.amount)}` : ""}. Nothing is paid. Tell ${who} what to do.`, urgent: true }
+          ? check.source === "call"
+            ? { title: `${who} is on a scam call`, body: `A caller is pressuring ${who} right now. Call ${who} and tell them to hang up.`, urgent: true }
+            : { title: `${who} needs you now`, body: `${who} got a scam message${check.amount ? ` asking for ${rupees(check.amount)}` : ""}. Nothing is paid. Tell ${who} what to do.`, urgent: true }
           : kind === "headsup"
             ? { title: `Heads-up: ${who} got a ${check.verdict === "SCAM" ? "scam" : "suspicious"} message`, body: `${phrases || check.title}. ${who} has not tried to pay.`, urgent: false }
             : { title: `${who} is asking: is this message safe?`, body: phrases || check.title, urgent: false };
-      return pushToUsers(db, [a.recipientId], { ...text, url: `/family/alert/${a.id}`, tag: `alert-${a.id}` });
+      // F2: a paused payment can be blocked from the lock screen, without unlocking the phone.
+      const actions: PushPayload["actions"] = holdId ? [{ action: "block", title: "Block payment" }, { action: "fine", title: "It's fine" }] : undefined;
+      return pushToUsers(db, [a.recipientId], { ...text, url: `/family/alert/${a.id}`, tag: `alert-${a.id}`, holdId, actions, who });
     }),
   );
   const pushed = sent.reduce((n, r) => n + r.sent, 0);
@@ -165,10 +206,7 @@ export async function askFamily(db: Db, owner: User, checkId: string, text?: str
   if (!family.length) throw new HttpError(400, "Add a trusted person first.");
   // A SAFE message's text was not kept; the phone sends it along so family can
   // read it too. It must be the same message that was checked.
-  const shareText =
-    !check.messageText && text && fingerprint(normalizeForMatch(text.slice(0, MAX_MESSAGE_CHARS)).text) === check.fingerprint
-      ? text.slice(0, MAX_MESSAGE_CHARS)
-      : undefined;
+  const shareText = !check.messageText && text && fingerprintOf(text) === check.fingerprint ? text.slice(0, MAX_MESSAGE_CHARS) : undefined;
   await db
     .update(schema.checks)
     .set({ askedFamilyAt: new Date(), ...(shareText ? { messageText: shareText } : {}) })
@@ -250,12 +288,14 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
   const alertRows = await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, check.id) });
   const names = await userNames(db, [...alertRows.map((a) => a.recipientId), check.familyVerdictBy ?? ""]);
   const hold = await db.query.holds.findFirst({ where: eq(schema.holds.checkId, check.id), orderBy: desc(schema.holds.createdAt) });
-  const sim = check.source === "paste" ? null : await db.query.simMessages.findFirst({ where: eq(schema.simMessages.checkId, check.id) });
-  const copy = verdictCopy(check, helperFirst, check.safeHint === "bank" ? "debited" : "");
+  const sim = check.source === "sms" || check.source === "whatsapp" ? await db.query.simMessages.findFirst({ where: eq(schema.simMessages.checkId, check.id) }) : null;
+  // The owner reads the verdict in their own language (F5); family members read English.
+  const lang: Language = opts.member ? "en" : (owner.language as Language);
+  const copy = verdictCopy(check, helperFirst, check.safeHint === "bank" ? "debited" : "", lang);
   const said = await answerSummary(db, check.id);
   // Family members read the exact message only if they were alerted or asked about it.
   const memberNotAlerted = !!opts.member && !alertRows.some((a) => a.recipientId === opts.member!.id);
-  const fc = check.verdict === "SAFE" ? null : familyCopy(check.family);
+  const fc = check.verdict === "SAFE" ? null : familyCopy(check.family, lang);
 
   return {
     id: check.id,
@@ -283,7 +323,12 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
     modelTerms: check.modelTerms,
     aiStatus: check.aiStatus,
     aiModel: check.aiModel,
+    aiScamType: check.aiScamType,
     degraded: check.degraded,
+    novel: check.novel,
+    callAnswers: check.callAnswers ?? null,
+    campaign: check.verdict === "SAFE" ? null : await campaignFor(db, check.fingerprint, check.userId),
+    reportable: opts.member && !memberNotAlerted ? await reportableFor(db, check, opts.member) : null,
     createdAt: check.createdAt.toISOString(),
     alertedNames: family.filter((f) => alertRows.some((a) => a.kind !== "ask" && a.recipientId === f.familyId)).map((f) => names[f.familyId] ?? f.name),
     askedFamilyAt: check.askedFamilyAt?.toISOString() ?? null,
@@ -322,9 +367,12 @@ export async function listChecks(db: Db, userId: string) {
       createdAt: c.createdAt.toISOString(),
       phrases: keyPhrases(c.signals, c.link, c.hardPhrases, 2),
       holdStatus: hold ? holdStatus(hold) : null,
+      amount: c.amount,
     };
   });
 }
+
+export type CheckRow = Awaited<ReturnType<typeof listChecks>>[number];
 
 export async function deleteHistory(db: Db, owner: User) {
   await db.delete(schema.checks).where(eq(schema.checks.userId, owner.id));

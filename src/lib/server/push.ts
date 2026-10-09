@@ -8,7 +8,18 @@ import * as schema from "@/lib/db/schema";
 // when the app is closed. Needs VAPID keys in the environment (`pnpm push:keys`);
 // without them everything else works and this module just does nothing.
 
-export type PushPayload = { title: string; body: string; url: string; tag: string; urgent: boolean };
+export type PushPayload = {
+  title: string;
+  body: string;
+  url: string;
+  tag: string;
+  urgent: boolean;
+  /** F2: a paused payment the notification's buttons can block without opening the app. */
+  holdId?: string | null;
+  actions?: { action: "block" | "fine"; title: string }[];
+  /** "Papa": for the follow-up notification after a lock-screen Block. */
+  who?: string;
+};
 
 export const subscriptionSchema = z.object({
   endpoint: z.string().url(),

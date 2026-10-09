@@ -2,11 +2,12 @@
 
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { Icon } from "@/components/icons";
 import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
+import { bcp47, joinNamesIn, translator, type T } from "@/lib/i18n";
 import { api, ApiError, post } from "@/lib/client/api";
-import type { RaoState } from "@/lib/views";
+import type { Language, RaoState } from "@/lib/views";
 
 const RaoContext = createContext<UseQueryResult<RaoState, Error> | null>(null);
 
@@ -17,12 +18,30 @@ export function useRao() {
   return q;
 }
 
+/** The language Mr Rao chose in Settings (F5): "en" until his state has loaded. */
+export function useLang(): Language {
+  return useRao().data?.me.language ?? "en";
+}
+
+/** t("home.doorCall") in Mr Rao's language, with {name} placeholders filled from the second argument. */
+export function useT(): T {
+  const lang = useLang();
+  return useMemo(() => translator(lang), [lang]);
+}
+
+/** "Arjun and Meera" with the language's own "and". */
+export function useJoinNames() {
+  const t = useT();
+  return (names: string[]) => joinNamesIn(t, names);
+}
+
 export function useHelper() {
   const { data } = useRao();
+  const t = useT();
   const names = data?.helperNames ?? [];
   const linked = (data?.people ?? []).filter((p) => p.status === "linked");
   return {
-    first: names[0] ?? "your family",
+    first: names[0] ?? t("common.yourFamily"),
     all: names,
     /** Phone of the first trusted person, for "Call Arjun". */
     phone: linked[0]?.phone ?? null,
@@ -46,6 +65,13 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
   const q = useQuery({ queryKey: ["rao-state"], queryFn: () => api<RaoState>("/api/me/state"), refetchInterval: 2000 });
   const offline = q.error instanceof ApiError && q.error.status === 0;
   const wasOffline = useRef(false);
+  const lang = q.data?.me.language ?? "en";
+  const t = useMemo(() => translator(lang), [lang]);
+
+  // The page's language follows his choice, so screen readers and fonts do too.
+  useEffect(() => {
+    document.documentElement.lang = bcp47(lang).slice(0, 2);
+  }, [lang]);
 
   useEffect(() => {
     if (q.error instanceof ApiError && q.error.status === 401 && q.fetchStatus === "idle") router.replace("/welcome");
@@ -55,9 +81,9 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
     if (offline) wasOffline.current = true;
     else if (wasOffline.current && q.data) {
       wasOffline.current = false;
-      toast({ title: "Back online", sub: "Checks are working again", icon: "wifi" });
+      toast({ title: t("common.backOnline"), sub: t("common.checksWorking"), icon: "wifi" });
     }
-  }, [offline, q.data, toast]);
+  }, [offline, q.data, toast, t]);
 
   // "This screen opens when Arjun decides": jump to the outcome (H3/H4).
   const outcomeId = q.data?.outcome?.id;
@@ -66,14 +92,15 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
   }, [outcomeId, pathname, router]);
 
   const banner = q.data?.banner;
-  const showBanner = banner && !pathname.startsWith("/check/") && !pathname.startsWith("/hold/");
+  const showBanner = banner && !pathname.startsWith("/check/") && !pathname.startsWith("/hold/") && !pathname.startsWith("/call");
+  const helperName = q.data?.helperNames[0] ?? t("common.yourFamily");
 
   async function onBanner(action: "see" | "tell") {
     if (!banner) return;
     await post(`/api/me/inbox/${banner.id}/seen`).catch(() => {});
     if (action === "tell" && banner.checkId) {
       await post(`/api/me/checks/${banner.checkId}/ask`).catch(() => {});
-      toast({ title: `${q.data?.helperNames[0] ?? "Your family"} has been told`, sub: "They can see the warning phrases", icon: "bell" });
+      toast({ title: t("banner.told", { name: helperName }), sub: t("banner.seePhrases"), icon: "bell" });
     }
     await queryClient.invalidateQueries({ queryKey: ["rao-state"] });
     if (banner.checkId) router.push(`/check/${banner.checkId}`);
@@ -89,7 +116,7 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
               <div className="banner" style={{ background: "var(--track2)", color: "var(--text)", border: 0, top: 44, padding: "10px 14px" }}>
                 <div className="row" style={{ gap: 8, fontWeight: 700, fontSize: 14 }}>
                   <Icon name="wifi" size={20} />
-                  Reconnecting…
+                  {t("common.reconnecting")}
                 </div>
               </div>
             )}
@@ -97,20 +124,20 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
               <div className={`banner ${banner.verdict === "SUSPICIOUS" ? "amber-edge" : ""}`} role="alert">
                 <div className="row" style={{ gap: 8 }}>
                   <span className="pm" style={{ gap: 3 }}><i /><i /></span>
-                  <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".04em" }}>PAUSE BUTTON · NOW</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".04em" }}>{t("banner.now")}</span>
                 </div>
                 <b style={{ fontSize: 18, lineHeight: 1.25 }}>
-                  Possible {banner.verdict} from {banner.sender}
+                  {t("banner.possible", { verdict: t(`verdictLabel.${banner.verdict as "SCAM" | "SUSPICIOUS" | "SAFE"}`), sender: banner.sender })}
                 </b>
                 <span style={{ fontSize: 15, lineHeight: 1.35, color: "#ECE8E0" }}>
-                  {banner.phrases.length ? `“${banner.phrases.join("”, “")}”` : banner.text.slice(0, 60) + "…"} Do not reply.
+                  {banner.phrases.length ? `“${banner.phrases.join("”, “")}”` : banner.text.slice(0, 60) + "…"} {t("banner.doNotReply")}
                 </span>
                 <div className="row" style={{ gap: 10, marginTop: 2 }}>
                   <button className="btn amber" style={{ minHeight: 44, fontSize: 15, borderRadius: 12 }} onClick={() => onBanner("see")}>
-                    See why
+                    {t("banner.seeWhy")}
                   </button>
                   <button className="btn whiteline" style={{ minHeight: 44, fontSize: 15, borderRadius: 12 }} onClick={() => onBanner("tell")}>
-                    Tell {q.data?.helperNames[0] ?? "family"}
+                    {t("banner.tell", { name: helperName })}
                   </button>
                 </div>
               </div>

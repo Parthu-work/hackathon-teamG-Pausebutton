@@ -1,5 +1,5 @@
 import { boolean, integer, jsonb, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
-import type { AiStatus, Evidence, HardRule, LinkInfo, ScamFamily, Verdict } from "../check/types";
+import type { AiStatus, CallAnswers, CheckSource, Evidence, HardRule, LinkInfo, ScamFamily, Verdict } from "../check/types";
 
 const id = () => text("id").primaryKey().$defaultFn(() => crypto.randomUUID());
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -54,7 +54,8 @@ export const links = pgTable("links", {
 export const checks = pgTable("checks", {
   id: id(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  source: text("source").$type<"paste" | "sms" | "whatsapp">().notNull(),
+  /** paste · sms/whatsapp (detected) · share (forwarded, F1) · voice (spoken, F10) · call (live-call guard, F6). */
+  source: text("source").$type<CheckSource>().notNull(),
   senderLabel: text("sender_label"),
   title: text("title").notNull(),
   fingerprint: text("fingerprint").notNull(),
@@ -74,6 +75,12 @@ export const checks = pgTable("checks", {
   modelTerms: jsonb("model_terms").$type<string[]>().notNull(),
   aiStatus: text("ai_status").$type<AiStatus>().notNull(),
   aiModel: text("ai_model"),
+  /** The trick as Claude named it ("fake courier fee"), kept so the story we show can be measured (F7). */
+  aiScamType: text("ai_scam_type"),
+  /** No rule matched; the AI's own quoted phrases convicted it (F8). */
+  novel: boolean("novel").notNull().default(false),
+  /** Live-call guard: the three answers (F6). */
+  callAnswers: jsonb("call_answers").$type<CallAnswers | null>(),
   degraded: boolean("degraded").notNull().default(false),
   safeHint: text("safe_hint"),
   messageText: text("message_text"),
@@ -194,6 +201,45 @@ export const devices = pgTable("devices", {
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
   listenerOn: boolean("listener_on").notNull().default(false),
   messagesSeen: integer("messages_seen").notNull().default(0),
+  createdAt: createdAt(),
+});
+
+/**
+ * Campaign radar (F3): one row per scam or suspicious message seen by a
+ * household, keyed by the message fingerprint only. No text is stored, so two
+ * families that got the same message make the same fingerprint and nothing
+ * else. Synthetic rows stand in for other households in the demo.
+ */
+export const sightings = pgTable("sightings", {
+  id: id(),
+  fingerprint: text("fingerprint").notNull(),
+  /** The protected person's id for real checks; a made-up key for synthetic demo households. */
+  householdKey: text("household_key").notNull(),
+  family: text("family").$type<ScamFamily>(),
+  title: text("title").notNull(),
+  /** The worst link's domain, when the message had one (F9: "11 families protected"). */
+  domain: text("domain"),
+  synthetic: boolean("synthetic").notNull().default(false),
+  seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Family-reported domains (F9). A report waits for a reviewer; "blocked" rows
+ * join the live blocklist with no redeploy. Official bank domains can never be
+ * reported, let alone blocked.
+ */
+export const reportedDomains = pgTable("reported_domains", {
+  id: id(),
+  domain: text("domain").notNull(),
+  reportedById: text("reported_by_id").references(() => users.id, { onDelete: "set null" }),
+  reportedByName: text("reported_by_name").notNull(),
+  checkId: text("check_id").references(() => checks.id, { onDelete: "set null" }),
+  status: text("status").$type<"pending" | "blocked" | "rejected">().notNull().default("pending"),
+  /** What the link checker already says about it: lookalike, risky (odd ending), unknown. */
+  autoCheck: text("auto_check").notNull(),
+  autoReason: text("auto_reason").notNull(),
+  synthetic: boolean("synthetic").notNull().default(false),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 

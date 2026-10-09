@@ -84,12 +84,20 @@ describe("web push", () => {
     const { checkId } = await createCheck(db, rao, { text: examples.find((e) => e.id === "cbi")!.text, source: "paste" });
     const alert = (await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) })).find((a) => a.recipientId === arjun.id)!;
     const payloads = sendNotification.mock.calls.map((c) => JSON.parse(c[1]));
-    expect(payloads).toContainEqual({
-      title: "Papa needs you now",
-      body: "Papa got a scam message asking for Rs 80,000. Nothing is paid. Tell Papa what to do.",
-      urgent: true,
-      url: `/family/alert/${alert.id}`,
-      tag: `alert-${alert.id}`,
-    });
+    expect(payloads).toContainEqual(
+      expect.objectContaining({
+        title: "Papa needs you now",
+        body: "Papa got a scam message asking for Rs 80,000. Nothing is paid. Tell Papa what to do.",
+        urgent: true,
+        url: `/family/alert/${alert.id}`,
+        tag: `alert-${alert.id}`,
+        // F2: the paused payment can be blocked from the notification itself.
+        holdId: expect.any(String),
+        actions: [
+          { action: "block", title: "Block payment" },
+          { action: "fine", title: "It's fine" },
+        ],
+      }),
+    );
   });
 });

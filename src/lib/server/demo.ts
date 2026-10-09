@@ -1,10 +1,19 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { INVITE_HOURS } from "@/lib/check/config";
+import { findLinks, worstLink } from "@/lib/check/links";
+import { normalizeForMatch } from "@/lib/check/normalize";
+import { detectFamily } from "@/lib/check/rules";
 import { formatPhone } from "@/lib/phone";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
+import campaigns from "@/data/campaigns.json";
+import examples from "@/data/examples.json";
+import simData from "@/data/sim-messages.json";
+import { fingerprintOf, TITLES } from "./checks";
 import { logEvent } from "./events";
+import { clearSyntheticReports, seedReport } from "./reports";
 import { seedInbox } from "./sim";
+import { clearSyntheticSightings, recordSighting } from "./sightings";
 
 // The demo household: Mr Rao ("Papa") and Mrs Rao ("Mummy") are both
 // protected by their son Arjun and daughter Meera; Mr Rao's friend Dinesh is
@@ -80,6 +89,46 @@ export async function ensureDemoHousehold(db: Db) {
     await logEvent(db, owner.id, "Simulator", "seeded", `Demo household created for ${owner.name}`);
     await seedInbox(db, owner);
   }
+  if (created.size) await seedOtherHouseholds(db);
+}
+
+type CampaignSeed = { example?: string; library?: number; text?: string; title?: string; households: number; today: number; firstSeenDaysAgo: number };
+
+/**
+ * The other households of the demo (F3, F9, F12): synthetic sightings of the
+ * sample scams, so "47 other families got this today" has something to count,
+ * and a review queue of reported links. Only fingerprints are stored.
+ */
+export async function seedOtherHouseholds(db: Db) {
+  await clearSyntheticSightings(db);
+  await clearSyntheticReports(db);
+  const library = simData.library as { text: string }[];
+  const now = Date.now();
+  let slug = 0;
+  for (const c of campaigns as CampaignSeed[]) {
+    const text = c.text ?? (c.example ? examples.find((e) => e.id === c.example)?.text : undefined) ?? (c.library !== undefined ? library[c.library]?.text : undefined);
+    if (!text) continue;
+    slug += 1;
+    const family = detectFamily(normalizeForMatch(text).text);
+    const title = c.title ?? TITLES[family];
+    const domain = worstLink(findLinks(text))?.domain ?? null;
+    const print = fingerprintOf(text);
+    const firstSeen = now - c.firstSeenDaysAgo * 86400_000;
+    for (let i = 0; i < c.households; i++) {
+      // The first `today` households saw it in the last 24 hours, spread evenly; the rest between first seen and yesterday.
+      const seenAt =
+        i < c.today
+          ? now - Math.round(((i + 1) / (c.today + 1)) * 23 * 3600_000)
+          : firstSeen + Math.round(((i - c.today + 1) / (c.households - c.today + 1)) * Math.max(1, now - 25 * 3600_000 - firstSeen));
+      await recordSighting(db, { fingerprint: print, householdKey: `demo-${slug}-${i}`, family, title, domain, synthetic: true, seenAt: new Date(seenAt) });
+    }
+  }
+  // The review queue (F9b): other families' reports. The demo household's own
+  // members have not reported anything yet, so Arjun can report the KYC link live.
+  await seedReport(db, { domain: "sbi-kyc-verify.in", reportedByName: "S. Mehta", daysAgo: 1 });
+  await seedReport(db, { domain: "rbi-refund.xyz", reportedByName: "K. Reddy" });
+  await seedReport(db, { domain: "onlinesbi.com", reportedByName: "S. Kumar" }); // official: refused on sight
+  await seedReport(db, { domain: "parcel-duty-pay.top", reportedByName: "R. Nair", status: "blocked", daysAgo: 2 });
 }
 
 async function relinkTrusted(db: Db, ownerId: string, list: Trusted[]) {
@@ -115,11 +164,14 @@ export async function resetDemo(db: Db) {
     await db.delete(schema.events).where(eq(schema.events.householdId, owner.id));
     await db
       .update(schema.users)
-      .set({ watchSms: true, watchWhatsapp: true, unknownOnly: true, autoTellFamily: true })
+      .set({ watchSms: true, watchWhatsapp: true, unknownOnly: true, autoTellFamily: true, language: "en", textSize: "A" })
       .where(eq(schema.users.id, owner.id));
     await relinkTrusted(db, owner.id, TRUSTED[key]);
     await logEvent(db, owner.id, "Operator", "reset", `Demo data reset for ${owner.name} · holds and checks cleared · Arjun and Meera still linked`);
     await seedInbox(db, { ...owner, watchSms: true, watchWhatsapp: true, unknownOnly: true, autoTellFamily: true });
   }
+  // Real sightings of the demo household go too; the synthetic other households come back fresh.
+  await db.delete(schema.sightings).where(eq(schema.sightings.synthetic, false));
+  await seedOtherHouseholds(db);
   return (await personaUser(db, "rao"))!;
 }

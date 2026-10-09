@@ -1,10 +1,25 @@
-import { devices, expect, test, type Browser, type Page } from "@playwright/test";
+import { devices, expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 // Mr Rao, Arjun and Meera on three "phones" (browser contexts), one service.
 // One "scam" (or Block) from either trusted person settles it; "not a scam"
 // (or Approve) needs both of them.
 
 const HEADED = !!process.env.HEADED;
+
+// Every "phone" is its own browser context. Playwright does not close contexts
+// made with browser.newContext() when a test ends, and a leftover Mr Rao or
+// Arjun page would keep polling the same demo users and race the next test
+// (a stale page can even consume a hold outcome first). So track them and
+// close them all after each test.
+const contexts: BrowserContext[] = [];
+async function newContext(browser: Browser, options?: Parameters<Browser["newContext"]>[0]) {
+  const ctx = await browser.newContext(options);
+  contexts.push(ctx);
+  return ctx;
+}
+test.afterEach(async () => {
+  await Promise.all(contexts.splice(0).map((c) => c.close().catch(() => {})));
+});
 
 /** Taps a "Call …" button and returns the number the phone's dialer was opened with. */
 async function dialedNumber(page: Page, button: string | RegExp) {
@@ -25,7 +40,7 @@ async function placeWindow(page: Page, slot: number) {
 }
 
 async function phone(browser: Browser, persona: "Mr Rao" | "Mrs Rao" | "Arjun" | "Meera"): Promise<Page> {
-  const page = await (await browser.newContext()).newPage();
+  const page = await (await newContext(browser)).newPage();
   if (HEADED) await placeWindow(page, ["Mr Rao", "Arjun", "Meera", "Mrs Rao"].indexOf(persona));
   await page.goto("/sign-in");
   await page.getByRole("button", { name: `Continue as ${persona} (demo)` }).click();
@@ -67,12 +82,14 @@ test("scam: STOP, payment held, one Block from Arjun settles it for everyone", a
     "Sir this is CBI Mumbai. A parcel in your name has illegal items. Stay on the call, tell no one",
   );
 
+  // F13: Rs 80,000 is above the two-key line, so the hold says so on both phones.
+  await expect(arjun.getByTestId("two-keys")).toBeVisible();
   // Approve needs a second confirm; he keeps it blocked, sends advice, then blocks.
-  await arjun.getByRole("button", { name: "Approve (I know this payment)" }).click();
+  await arjun.getByRole("button", { name: /^Approve/ }).click();
   await arjun.getByRole("button", { name: "No, keep it blocked" }).click();
   // Sends the advice and opens the dialer with Papa's number.
-  expect(await dialedNumber(arjun, /Send advice and call Papa/)).toMatch(/^tel:\+91\d{10}$/);
-  await arjun.getByRole("button", { name: "Block this payment" }).click();
+  expect(await dialedNumber(arjun, /Send and call Papa/)).toMatch(/^tel:\+91\d{10}$/);
+  await arjun.getByTestId("block").click();
   await expect(arjun.getByRole("heading", { name: "You blocked it" })).toBeVisible();
   // Meera was alerted too; Arjun's Block settled it, so her alert is gone and Papa's card is green again.
   await expect(meera.getByText("Papa is protected")).toBeVisible({ timeout: 10_000 });
@@ -81,6 +98,179 @@ test("scam: STOP, payment held, one Block from Arjun settles it for everyone", a
   await expect(rao.getByRole("heading", { name: "Payment cancelled" })).toBeVisible({ timeout: 10_000 });
   await expect(rao.getByText("Arjun blocked it.")).toBeVisible();
   await expect(rao.getByText("“Hang up. Do not pay or click anything.”")).toBeVisible();
+
+  // F12: the family home now carries the ledger: one payment paused, Rs 80,000 kept.
+  await arjun.getByRole("button", { name: "Back to home" }).click();
+  await expect(arjun.getByTestId("ledger")).toContainText(/1\s*payment paused/);
+  await expect(arjun.getByTestId("ledger")).toContainText("Rs 80,000");
+  await expect(arjun.getByText("CBI parcel message")).toBeVisible();
+});
+
+test("F3 campaign radar: the CBI message is one other families got today", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByTestId("check-button").click();
+  await rao.getByTestId("stop-continue").click();
+  await expect(rao.getByTestId("campaign")).toContainText(/\d+ other families got this today/);
+  await expect(rao.getByText("How we know, without reading your messages")).toBeVisible();
+});
+
+test("F1 forward to Pause: share a message from the inbox, no copy, no paste", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  await rao.getByRole("link", { name: "Open the simulated inbox" }).click();
+  await rao.getByRole("button", { name: "Receive a test scam message" }).click();
+  await rao.getByRole("button", { name: "Share +91 9XXXX XXXXX" }).click();
+  await rao.getByTestId("send-to-pause").click();
+  await rao.waitForURL(/\/stop$/, { waitUntil: "commit" });
+  await rao.getByTestId("stop-continue").click();
+  await expect(rao.getByText("FORWARDED FROM WHATSAPP")).toBeVisible();
+  await expect(rao.getByText("What they asked for")).toBeVisible();
+  await expect(rao.getByText("Arjun and Meera were alerted")).toBeVisible();
+  // Arjun's phone first opened the quiet heads-up for the inbox message; the forwarded
+  // check brings the urgent alert (with the Rs 80,000 hold). Wait for that one, then open it.
+  await expect(arjun.getByText(/It asks for Rs 80,000/)).toBeVisible({ timeout: 10_000 });
+  await arjun.getByRole("button", { name: "Open", exact: true }).click();
+  await expect(arjun.getByTestId("victim-message")).toContainText("Papa forwarded it from WhatsApp");
+});
+
+test("F1 forward to a signed-out phone: the text survives the welcome and sign-in screens", async ({ browser }) => {
+  // The Android Share sheet opens /share in Chrome, which may not be signed in yet.
+  const page = await (await newContext(browser)).newPage();
+  const text = "Sir this is CBI Mumbai. A parcel in your name has illegal items. Stay on the call, tell no one, and transfer Rs 80,000 to the verification account.";
+  await page.goto(`/share?${new URLSearchParams({ text, from: "whatsapp" })}`);
+  await page.waitForURL("/welcome");
+  await page.getByRole("button", { name: "Get started" }).click();
+  await page.getByRole("button", { name: "Continue as Mr Rao (demo)" }).click();
+  // Home picks the forwarded message up and checks it straight away.
+  await page.waitForURL(/\/stop$/, { timeout: 15_000 });
+  await page.getByTestId("stop-continue").click();
+  await expect(page.getByText("FORWARDED FROM WHATSAPP")).toBeVisible();
+});
+
+test("F6 live-call guard: three questions, HANG UP, and Arjun is told at once", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  await rao.getByTestId("door-call").click();
+  await expect(rao.getByRole("heading", { name: "Did they video-call you?" })).toBeVisible();
+  await rao.getByRole("button", { name: "Yes, they did" }).click();
+  await expect(rao.getByRole("heading", { name: "Did they ask for money, an OTP or a code?" })).toBeVisible();
+  await rao.getByRole("button", { name: "No, they did not" }).click();
+  await rao.getByRole("button", { name: "No, they did not" }).click();
+  await expect(rao.getByRole("heading", { name: "HANG UP" })).toBeVisible({ timeout: 10_000 });
+  await expect(rao.getByText("Arjun is calling you now")).toBeVisible();
+
+  await openAlert(arjun, "Papa is on a scam call");
+  await expect(arjun.getByRole("heading", { name: "Papa is on a scam call" })).toBeVisible();
+  await expect(arjun.getByTestId("victim-message")).toContainText("Someone is calling me and says they are an officer.");
+  await expect(arjun.getByText("Video call: yes")).toBeVisible();
+  await arjun.getByRole("button", { name: "It's a scam" }).click();
+
+  await rao.getByRole("button", { name: "I have hung up" }).click();
+  await expect(rao.getByText("LIVE CALL")).toBeVisible();
+  await expect(rao.getByText("What you told us")).toBeVisible();
+});
+
+test("F2 lock screen: Arjun blocks the payment from the notification without unlocking", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByTestId("check-button").click();
+  await rao.getByTestId("stop-continue").click();
+  await arjun.goto("/family/lock");
+  await expect(arjun.getByTestId("lock-alert")).toContainText("Papa got a scam message", { timeout: 10_000 });
+  await expect(arjun.getByTestId("lock-alert")).toContainText("Rs 80,000 is paused");
+  await arjun.getByRole("button", { name: "Block payment" }).click();
+  await expect(arjun.getByTestId("lock-blocked")).toContainText("You blocked it");
+  await expect(arjun.getByText("He never unlocked the phone")).toBeVisible();
+  await expect(rao.getByRole("heading", { name: "Payment cancelled" })).toBeVisible({ timeout: 10_000 });
+});
+
+test("F11 advice in his own words: a sentence from Arjun lands on Papa's screen", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByTestId("check-button").click();
+  await rao.getByTestId("stop-continue").click();
+  await openAlert(arjun, "Papa got a scam message");
+  await arjun.getByRole("textbox", { name: "Your message" }).fill("Papa, this is the same trick that got Sharma uncle. Do not pick up if they ring again.");
+  await expect(arjun.getByText("86 / 200")).toBeVisible();
+  await arjun.getByRole("button", { name: "Send and block this payment" }).click();
+  await expect(arjun.getByRole("heading", { name: "You blocked it" })).toBeVisible();
+  await expect(rao.getByRole("heading", { name: "Payment cancelled" })).toBeVisible({ timeout: 10_000 });
+  await expect(rao.getByText("“Papa, this is the same trick that got Sharma uncle. Do not pick up if they ring again.”")).toBeVisible();
+});
+
+test("F9 reported domains: Arjun reports the fake bank link, a reviewer blocks it", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  await rao.getByRole("button", { name: "Bank KYC link" }).click();
+  await rao.getByTestId("check-button").click();
+  await rao.getByTestId("stop-continue").click();
+  await openAlert(arjun, "Papa got a scam message");
+  await arjun.getByTestId("link-row").click();
+  await expect(arjun.getByRole("heading", { name: "The link in Papa's message" })).toBeVisible();
+  // The previous screen stays mounted but hidden (Next keeps visited routes alive), so scope to this screen's domain line.
+  await expect(arjun.locator("b.grow", { hasText: "sbi-kyc-verify.in" })).toBeVisible();
+  await expect(arjun.getByText("Pretends to be SBI. Not a SBI address.")).toBeVisible();
+  await arjun.getByTestId("report-link").click();
+  await expect(arjun.getByText("Reported. Thank you.").first()).toBeVisible();
+  await expect(arjun.getByText(/\d+ families protected/)).toBeVisible();
+
+  // The operator's review queue: another family reported it first, Arjun is "1 more". Block puts it on the live blocklist.
+  const ops = await (await newContext(browser)).newPage();
+  await ops.goto("/reports");
+  const row = ops.getByTestId("report-sbi-kyc-verify.in");
+  await expect(row).toContainText("1 more");
+  await row.getByRole("button", { name: "Block" }).click();
+  await expect(row).toContainText("BLOCKED");
+  await expect(arjun.getByText("Blocked for everyone")).toBeVisible({ timeout: 10_000 });
+});
+
+test("F5 Hindi: every screen and the verdict speak Hindi after the switch", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  await rao.goto("/settings");
+  await rao.getByTestId("language-row").click();
+  await rao.getByRole("radio", { name: /हिन्दी/ }).click();
+  await rao.getByRole("button", { name: "Save" }).click();
+  await rao.waitForURL("/settings");
+  await expect.poll(() => rao.evaluate(() => document.documentElement.lang)).toBe("hi");
+  await rao.goto("/");
+  await rao.getByRole("button", { name: "लॉटरी (Hindi)" }).click();
+  await rao.getByTestId("check-button").click();
+  await rao.waitForURL(/\/stop$/, { waitUntil: "commit" });
+  await rao.getByTestId("stop-continue").click();
+  await expect(rao.locator("[data-verdict=SCAM]").first()).toHaveText("धोखा");
+  await expect(rao.getByRole("button", { name: "अब क्या करें" })).toBeVisible();
+});
+
+test("F14 history: a failed load is not an empty list, and search works once the list is there", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByTestId("check-button").click();
+  await rao.getByTestId("stop-continue").click();
+  await rao.goto("/");
+  await rao.getByRole("button", { name: "Real bank alert" }).click();
+  await rao.getByTestId("check-button").click();
+  await expect(rao.getByRole("heading", { name: "This looks like a normal bank message." })).toBeVisible();
+
+  // F14b: the list cannot load → it says so, instead of "No checks yet".
+  await rao.route("**/api/me/checks", (r) => r.abort());
+  await rao.goto("/history");
+  await expect(rao.getByText("We could not load your history")).toBeVisible();
+  await expect(rao.getByText("No checks yet")).toHaveCount(0);
+  await rao.unroute("**/api/me/checks");
+  await rao.getByRole("button", { name: "Try again" }).click();
+
+  // F14c: search and filters.
+  await expect(rao.getByText("CBI parcel message")).toBeVisible();
+  await rao.getByRole("textbox", { name: "Search checks" }).fill("bank");
+  await expect(rao.getByText("Bank debit alert")).toBeVisible();
+  await expect(rao.getByText("CBI parcel message")).toHaveCount(0);
+  await rao.getByRole("textbox", { name: "Search checks" }).fill("");
+  await rao.getByRole("button", { name: "Scams" }).click();
+  await expect(rao.getByText("CBI parcel message")).toBeVisible();
+  await expect(rao.getByText("Bank debit alert")).toHaveCount(0);
 });
 
 test("suspicious: Mr Rao asks; Arjun says fine, it waits for Meera; both fine → not a scam", async ({ browser }) => {
@@ -109,7 +299,7 @@ test("suspicious: Mr Rao asks; Arjun says fine, it waits for Meera; both fine �
 
   await expect(rao.getByRole("heading", { name: "Arjun and Meera checked it. It is not a scam." })).toBeVisible({ timeout: 10_000 });
   await rao.getByRole("button", { name: "Done" }).click();
-  await expect(rao.getByRole("heading", { name: "Got a worrying message?" })).toBeVisible();
+  await expect(rao.getByText("Something worrying you? Start here.")).toBeVisible();
 });
 
 test("one scam settles it: Arjun says fine, Meera says scam → SCAM", async ({ browser }) => {
@@ -141,7 +331,7 @@ test("family clears a SCAM only when both say so: then Papa's screen no longer s
 
   await expect(arjun.getByRole("heading", { name: "Papa got a scam message" })).toBeVisible({ timeout: 10_000 });
   await arjun.getByRole("button", { name: "Open", exact: true }).click();
-  await expect(arjun.getByTestId("victim-message")).toContainText("sbi-kyc-update.com");
+  await expect(arjun.getByTestId("victim-message")).toContainText("sbi-kyc-verify.in");
   // Clearing something the app called SCAM needs a second confirm.
   await arjun.getByRole("button", { name: "This is not a scam" }).click();
   await arjun.getByRole("button", { name: "Yes, it is not a scam" }).click();
@@ -168,16 +358,18 @@ test("a paused payment is released only when Arjun and Meera both approve", asyn
   await rao.getByRole("button", { name: "Check this message" }).click();
   await rao.getByRole("button", { name: "I will not do anything" }).click();
   await rao.getByRole("link", { name: /payment paused/ }).click();
+  // F13: two keys on Papa's screen too, with the hour-long ring.
+  await expect(rao.getByTestId("two-keys")).toBeVisible();
 
   await openAlert(arjun, "Papa got a scam message");
-  await arjun.getByRole("button", { name: "Approve (I know this payment)" }).click();
+  await arjun.getByRole("button", { name: /^Approve/ }).click();
   await expect(arjun.getByText("Meera must approve too before the money moves.", { exact: false })).toBeVisible();
   await arjun.getByRole("button", { name: "Yes, approve" }).click();
-  await expect(arjun.getByText("You approved. Waiting for Meera.")).toBeVisible();
+  await expect(arjun.getByText("You approved. Release needs Meera too.")).toBeVisible();
   await expect(rao.getByText("Arjun approved.")).toBeVisible({ timeout: 10_000 });
 
   await openAlert(meera, "Papa got a scam message");
-  await meera.getByRole("button", { name: "Approve (I know this payment)" }).click();
+  await meera.getByRole("button", { name: /^Approve/ }).click();
   await meera.getByRole("button", { name: "Yes, approve" }).click();
   await expect(meera.getByRole("heading", { name: "Everyone approved it" })).toBeVisible();
   await expect(rao.getByRole("heading", { name: "Arjun and Meera approved this payment" })).toBeVisible({ timeout: 10_000 });
@@ -199,7 +391,7 @@ test("Arjun protects two people: Mummy's scam is told apart from Papa's", async 
   await openAlert(arjun, "Mummy got a scam message");
   await expect(arjun.getByRole("heading", { name: "Mummy's payment" })).toBeVisible();
   await expect(arjun.getByTestId("victim-message")).toContainText("Mummy pasted it into Pause Button");
-  await arjun.getByRole("button", { name: "Block this payment" }).click();
+  await arjun.getByTestId("block").click();
   await expect(arjun.getByRole("heading", { name: "You blocked it" })).toBeVisible();
   await arjun.getByRole("button", { name: "Back to home" }).click();
 
@@ -211,7 +403,7 @@ test("Arjun protects two people: Mummy's scam is told apart from Papa's", async 
 });
 
 test("a family phone registers the service worker that shows alerts when the app is closed", async ({ browser }) => {
-  const ctx = await browser.newContext({ permissions: ["notifications"] });
+  const ctx = await newContext(browser, { permissions: ["notifications"] });
   const page = await ctx.newPage();
   await page.goto("/sign-in");
   await page.getByRole("button", { name: "Continue as Meera (demo)" }).click();
@@ -235,12 +427,12 @@ test("safe: a real bank alert needs nobody", async ({ browser }) => {
 });
 
 test("on a laptop, Call shows the number instead of dialing", async ({ browser }) => {
-  const page = await (await browser.newContext({ ...devices["Desktop Chrome"] })).newPage();
+  const page = await (await newContext(browser, { ...devices["Desktop Chrome"] })).newPage();
   await page.goto("/sign-in");
   await page.getByRole("button", { name: "Continue as Mr Rao (demo)" }).click();
   await page.waitForURL("/");
   await page.getByRole("button", { name: "CBI parcel call" }).click();
-  await page.getByRole("button", { name: "Check this message" }).click();
+  await page.getByTestId("check-button").click();
   await page.waitForURL(/\/stop$/);
   await page.getByRole("button", { name: "Call Arjun" }).click();
   await expect(page.getByText(/^Call Arjun: \+91 \d{5} \d{5}$/)).toBeVisible();

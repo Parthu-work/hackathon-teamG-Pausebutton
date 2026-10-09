@@ -4,79 +4,80 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
-import { HighlightedText, LoadingScreen, Marks, Screen, TitleRow, useCall, useCountdown, useToast, VerdictPill } from "@/components/ui";
-import { DO_LIST, DONT_LIST, rupees, SIGNAL_LABEL, SIGNAL_WHY } from "@/lib/check/copy";
+import { HighlightedText, LoadingScreen, Marks, Screen, TitleRow, useCountdown, useToast, VerdictPill } from "@/components/ui";
+import { DO_LIST, DONT_LIST, rupees } from "@/lib/check/copy";
 import { keyPhrases } from "@/lib/check/phrases";
 import type { HardRule, SignalType } from "@/lib/check/types";
-import { post } from "@/lib/client/api";
+import { ApiError, post } from "@/lib/client/api";
 import { loadMessage } from "@/lib/client/messages";
 import { HELPLINE } from "@/lib/phone";
-import { useHelper } from "./shell";
-import { useCheck } from "./verdict";
+import { useHelper, useJoinNames, useLang, useT } from "./shell";
+import { useCheck, useRaoCall } from "./verdict";
 
-const FLOOR: Record<HardRule, string> = {
-  secrecy_payment: "Secrecy and payment together is always a SCAM, whatever the AI says.",
-  credential_request: "Asking for an OTP, PIN or screen-sharing app is always a SCAM.",
-  bad_link: "A link that copies a bank or brand, or a known scam site, is always a SCAM.",
+const FLOOR_KEY: Record<HardRule, "why.floorSecrecy" | "why.floorCredential" | "why.floorLink" | "why.floorCall"> = {
+  secrecy_payment: "why.floorSecrecy",
+  credential_request: "why.floorCredential",
+  bad_link: "why.floorLink",
+  live_call: "why.floorCall",
 };
 
 /** F1 · Why it is a scam · F3 · rules only */
 export function WhyScreen() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const t = useT();
   const { data: c } = useCheck(id);
-  if (!c) return <LoadingScreen />;
+  if (!c) return <LoadingScreen title={t("common.loading")} />;
 
   const text = c.simText ?? c.messageText ?? loadMessage(id);
   const order: SignalType[] = [];
   [...c.signals].sort((a, b) => a.start - b.start).forEach((s) => !order.includes(s.type) && order.push(s.type));
-  (["authority", "fear", "secrecy", "payment"] as SignalType[]).forEach((t) => !order.includes(t) && order.push(t));
+  (["authority", "fear", "secrecy", "payment"] as SignalType[]).forEach((s) => !order.includes(s) && order.push(s));
   const numbers = new Map<SignalType, number>();
   let n = 0;
-  order.forEach((t) => c.signals.some((s) => s.type === t) && numbers.set(t, ++n));
+  order.forEach((s) => c.signals.some((x) => x.type === s) && numbers.set(s, ++n));
   const noAi = c.degraded;
+  const verdictLabel = t(`verdictLabel.${c.finalVerdict}`);
 
   return (
-    <Screen note={noAi ? <div className="note" style={{ margin: "12px 20px 0" }}><Icon name="info" />Checked by rules only — AI unavailable</div> : undefined}>
+    <Screen note={noAi ? <div className="note" style={{ margin: "12px 20px 0" }}><Icon name="info" />{t("verdict.rulesOnly")}</div> : undefined}>
       <TitleRow
-        title={c.familyVerdict === "not_scam" ? "Why we flagged it" : "Why we think so"}
+        title={c.familyVerdict === "not_scam" ? t("why.titleFlagged") : t("why.title")}
         back={`/check/${id}`}
-        right={<VerdictPill verdict={c.finalVerdict} size="medium" icon={false} />}
+        right={<VerdictPill verdict={c.finalVerdict} size="medium" icon={false} label={verdictLabel} />}
       />
       {c.familyVerdict && (
         <div className={`card ${c.familyVerdict === "not_scam" ? "tint-green" : "tint-red"}`} style={{ padding: "10px 14px" }}>
-          <b style={{ fontSize: 16 }}>
-            {c.familyVerdictByName} checked it: {c.familyVerdict === "not_scam" ? "not a scam" : "a scam"}.
-          </b>
-          {c.familyVerdict === "not_scam" && <p className="sm" style={{ color: "var(--text)" }}>Below is what Pause Button had flagged before they looked at it.</p>}
+          <b style={{ fontSize: 16 }}>{t("why.checkedIt", { name: c.familyVerdictByName ?? "", verdict: c.familyVerdict === "not_scam" ? t("common.notAScam") : t("common.aScam") })}</b>
+          {c.familyVerdict === "not_scam" && <p className="sm" style={{ color: "var(--text)" }}>{t("why.belowFlagged")}</p>}
         </div>
       )}
       <div className="card" style={{ padding: "12px 14px" }}>
-        <div className="lbl">Your message</div>
+        <div className="lbl">{c.source === "call" ? t("verdict.whatYouTold") : t("home.yourMessage")}</div>
         {text ? (
           <HighlightedText text={text} signals={c.signals} numbers={numbers} link={c.link} onLink={() => router.push(`/check/${id}/link`)} />
         ) : (
           <>
-            <p className="sm">We do not keep your messages. These are the warning phrases we found:</p>
+            <p className="sm">{t("why.noKeep")}</p>
             <Marks phrases={keyPhrases(c.signals, c.link, c.hardPhrases, 5)} size={16} />
           </>
         )}
       </div>
-      {order.map((t) => {
-        const found = c.signals.filter((s) => s.type === t);
-        const num = numbers.get(t);
+      {order.map((s) => {
+        const found = c.signals.filter((x) => x.type === s);
+        const num = numbers.get(s);
         return (
-          <div className="card" key={t} style={{ padding: "10px 14px" }}>
+          <div className="card" key={s} style={{ padding: "10px 14px" }}>
             <div className="row">
               <span className={`num ${num ? "" : "no"}`}>{num ?? "–"}</span>
               <div className="grow">
-                <b style={{ fontSize: 16, color: num ? undefined : "var(--muted)" }}>{SIGNAL_LABEL[t]}</b>
+                <b style={{ fontSize: 16, color: num ? undefined : "var(--muted)" }}>{t(`signal.${s}`)}</b>
                 <p className="sm" style={{ fontSize: 13 }}>
-                  {num ? SIGNAL_WHY[t] : noAi ? "Not found by rules. The AI would normally check this." : "Not found in this message."}
+                  {num ? t(`signalWhy.${s}`) : noAi ? t("why.notFoundRules") : t("why.notInMessage")}
                 </p>
               </div>
               {num && <span className={`tag ${found.some((f) => f.by === "ai") && !found.some((f) => f.by === "rules") ? "a" : ""}`}>
-                {found.some((f) => f.by === "rules") ? "RULES" : "AI READ"}
+                {found.some((f) => f.by === "rules") ? t("why.rules") : t("why.aiRead")}
               </span>}
             </div>
           </div>
@@ -87,10 +88,10 @@ export function WhyScreen() {
           <div className="row">
             <span className="num" style={{ background: "#C6372B" }}>!</span>
             <div className="grow">
-              <b style={{ fontSize: 16 }}>Asks for a code or app</b>
-              <p className="sm" style={{ fontSize: 13 }}>“{c.hardPhrases[0].phrase}”. Nobody genuine asks for this.</p>
+              <b style={{ fontSize: 16 }}>{t("why.asksCode")}</b>
+              <p className="sm" style={{ fontSize: 13 }}>{t("why.nobodyAsks", { phrase: c.hardPhrases[0].phrase })}</p>
             </div>
-            <span className="tag">RULES</span>
+            <span className="tag">{t("why.rules")}</span>
           </div>
         </div>
       )}
@@ -108,26 +109,27 @@ export function WhyScreen() {
       )}
       {c.hardRule && (
         <div className="card tint-amber" style={{ padding: "10px 14px" }}>
-          <div className="lbl" style={{ color: "var(--text)" }}>The floor</div>
-          <p className="sm" style={{ color: "var(--text)" }}>{FLOOR[c.hardRule]}</p>
+          <div className="lbl" style={{ color: "var(--text)" }}>{t("why.floor")}</div>
+          <p className="sm" style={{ color: "var(--text)" }}>{t(FLOOR_KEY[c.hardRule])}</p>
         </div>
       )}
       {c.familyTitle && (
         <div className="card tint-red" style={{ padding: "10px 14px" }}>
-          <div className="lbl" style={{ color: "var(--red-text)" }}>This looks like</div>
+          <div className="lbl" style={{ color: "var(--red-text)" }}>{t("why.looksLike")}</div>
           <b style={{ fontSize: 17 }}>{c.familyTitle}</b>
           <p className="sm" style={{ fontSize: 13, color: "var(--text)" }}>{c.familyStory}</p>
         </div>
       )}
       <p className="sm">
-        Spam score {c.score}% · warning signs {c.rulesScore}%{c.modelScore !== null ? ` · pattern model ${c.modelScore}%` : ""}
-        {c.decidedBy === "ai" ? " · confirmed by AI" : ""}
+        {t("why.spamScore", { score: c.score, rules: c.rulesScore })}
+        {c.modelScore !== null ? t("why.patternModel", { model: c.modelScore }) : ""}
+        {c.decidedBy === "ai" ? t("why.confirmedAi") : ""}
       </p>
       <div className="spacer" />
       {c.verdict === "SAFE" ? (
-        <button className="btn green" onClick={() => router.push("/")}>Done</button>
+        <button className="btn green" onClick={() => router.push("/")}>{t("common.done")}</button>
       ) : (
-        <button className="btn amber" onClick={() => router.push(`/check/${id}/todo`)}>What to do now</button>
+        <button className="btn amber" onClick={() => router.push(`/check/${id}/todo`)}>{t("verdict.whatToDo")}</button>
       )}
     </Screen>
   );
@@ -136,30 +138,32 @@ export function WhyScreen() {
 /** F2 · What to do and what not to do */
 export function TodoScreen() {
   const { id } = useParams<{ id: string }>();
-  const call = useCall();
+  const t = useT();
+  const lang = useLang();
+  const call = useRaoCall();
   const helper = useHelper();
   const { data: c } = useCheck(id);
-  if (!c) return <LoadingScreen />;
-  const who = helper.all.length ? helper.all.join(" or ") : "your family";
+  if (!c) return <LoadingScreen title={t("common.loading")} />;
+  const who = helper.all.length ? helper.all.join(` ${t("common.or")} `) : t("common.yourFamily");
   return (
     <Screen>
-      <TitleRow title="What to do now" back={`/check/${id}`} right={<VerdictPill verdict={c.verdict} size="medium" icon={false} />} />
+      <TitleRow title={t("todo.title")} back={`/check/${id}`} right={<VerdictPill verdict={c.verdict} size="medium" icon={false} label={t(`verdictLabel.${c.verdict}`)} />} />
       <div className="card tint-green" style={{ gap: 9 }}>
-        <div className="lbl" style={{ color: "var(--green-ink)" }}>Do</div>
-        {DO_LIST(who).map((t) => (
-          <div className="li" key={t}><span style={{ color: "var(--green-text)" }}><Icon name="check" /></span><span>{t}</span></div>
+        <div className="lbl" style={{ color: "var(--green-ink)" }}>{t("todo.do")}</div>
+        {DO_LIST(who, lang).map((s) => (
+          <div className="li" key={s}><span style={{ color: "var(--green-text)" }}><Icon name="check" /></span><span>{s}</span></div>
         ))}
       </div>
       <div className="card tint-red" style={{ gap: 9 }}>
-        <div className="lbl" style={{ color: "var(--red-text)" }}>Do not</div>
-        {DONT_LIST.map((t) => (
-          <div className="li" key={t}><span style={{ color: "var(--red-text)" }}><Icon name="x" /></span><span>{t}</span></div>
+        <div className="lbl" style={{ color: "var(--red-text)" }}>{t("todo.dont")}</div>
+        {DONT_LIST(lang).map((s) => (
+          <div className="li" key={s}><span style={{ color: "var(--red-text)" }}><Icon name="x" /></span><span>{s}</span></div>
         ))}
       </div>
       <div className="spacer" />
-      <button className="btn green" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />Call {helper.first}</button>
-      <button className="btn line" onClick={() => call("cyber helpline 1930", HELPLINE)}>Call cyber helpline 1930</button>
-      <p className="sm center-text">You can also report it at cybercrime.gov.in or on Sanchar Saathi (Chakshu).</p>
+      <button className="btn green" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />{t("common.callName", { name: helper.first })}</button>
+      <button className="btn line" onClick={() => call(t("common.helplineName"), HELPLINE)}>{t("common.helpline")}</button>
+      <p className="sm center-text">{t("todo.report")}</p>
     </Screen>
   );
 }
@@ -168,50 +172,51 @@ export function TodoScreen() {
 export function LinkScreen() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const t = useT();
   const { data: c } = useCheck(id);
-  if (!c) return <LoadingScreen />;
+  if (!c) return <LoadingScreen title={t("common.loading")} />;
   const link = c.link;
   return (
     <Screen>
-      <TitleRow title="Link stopped" back={`/check/${id}`} />
+      <TitleRow title={t("link.title")} back={`/check/${id}`} />
       <div style={{ display: "flex", justifyContent: "center", marginTop: 8 }}>
         <span className="circle" style={{ width: 96, height: 96, background: "#C6372B", color: "#fff" }}><Icon name="link" size={48} /></span>
       </div>
-      <h1 className="h1 center-text">We stopped this link</h1>
+      <h1 className="h1 center-text">{t("link.stopped")}</h1>
       <div className="card" style={{ gap: 8 }}>
         <div className="row">
-          <b className="grow" style={{ fontSize: 18, wordBreak: "break-all" }}>{link?.domain ?? "Unknown link"}</b>
-          <span className="tag">{link?.status === "lookalike" ? "FAKE SITE" : link?.status === "blocked" ? "SCAM SITE" : "UNKNOWN SITE"}</span>
+          <b className="grow" style={{ fontSize: 18, wordBreak: "break-all" }}>{link?.domain ?? t("link.unknownLink")}</b>
+          <span className="tag">{link?.status === "lookalike" ? t("verdict.fakeSite") : link?.status === "blocked" ? t("verdict.scamSite") : t("verdict.unknownSite")}</span>
         </div>
-        <p className="sm">It came in a {c.verdict === "SCAM" ? "scam" : "suspicious"} message.</p>
+        <p className="sm">{c.verdict === "SCAM" ? t("link.cameInScam") : t("link.cameInSuspicious")}</p>
       </div>
       <div className="card tint-red">
-        <b style={{ fontSize: 17 }}>Why it is not safe</b>
-        <p className="sm" style={{ color: "var(--text)" }}>
-          Opening it can steal your money, your passwords or take over your phone. {link?.reason}
-        </p>
+        <b style={{ fontSize: 17 }}>{t("link.whyNotSafe")}</b>
+        <p className="sm" style={{ color: "var(--text)" }}>{t("link.openingCan")} {link?.reason}</p>
       </div>
       <div className="spacer" />
-      <button className="btn ink" onClick={() => router.push(`/check/${id}`)}>Go back to safety</button>
-      <button className="btn line" onClick={() => router.push(`/check/${id}/todo`)}>What should I do now?</button>
+      <button className="btn ink" onClick={() => router.push(`/check/${id}`)}>{t("link.goBack")}</button>
+      <button className="btn line" onClick={() => router.push(`/check/${id}/todo`)}>{t("link.whatNow")}</button>
     </Screen>
   );
 }
 
-/** G2 · He opens the payment anyway: it is locked while family decides */
+/** G2 · He opens the payment anyway: it is locked while family decides. F14a · the money screen says what happened when the app is unreachable. */
 export function PayScreen() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const call = useCall();
+  const t = useT();
+  const join = useJoinNames();
+  const call = useRaoCall();
   const toast = useToast();
   const helper = useHelper();
-  const { data: c } = useCheck(id);
+  const { data: c, error, refetch } = useCheck(id);
   const open = useMutation({ mutationFn: () => post<{ holdId: string }>(`/api/me/checks/${id}/pay`) });
   const cancel = useMutation({
     mutationFn: (holdId: string) => post(`/api/me/holds/${holdId}/cancel`),
     onSuccess: async () => {
-      toast({ title: "Payment cancelled", sub: "Nothing was paid", icon: "check" });
+      toast({ title: t("pay.cancelled"), sub: t("pay.nothingPaid"), icon: "check" });
       await queryClient.invalidateQueries();
       router.push("/");
     },
@@ -225,45 +230,78 @@ export function PayScreen() {
   }, [open, id, queryClient]);
 
   const hold = c?.hold?.status === "pending" ? c.hold : null;
-  const clock = useCountdown(hold?.expiresAt);
-  if (!c) return <LoadingScreen />;
-  const who = helper.all.length ? helper.all.join(" and ") : "Your family";
+  const clock = useCountdown(hold?.expiresAt, undefined, (hold?.holdMinutes ?? 10) * 60_000);
+
+  // F14a: the app cannot be reached and we have nothing to show. The money stays held either way.
+  const unreachable = (error instanceof ApiError && error.status === 0) || (open.isError && open.error instanceof ApiError && open.error.status === 0);
+  if (!c && unreachable) {
+    return (
+      <Screen>
+        <TitleRow title={t("pay.title")} back={`/check/${id}`} />
+        <div className="note"><Icon name="wifi" />{t("common.reconnecting")}</div>
+        <div className="card tint-red" style={{ gap: 6 }}>
+          <div className="row"><Icon name="wifi" /><b style={{ fontSize: 19 }}>{t("pay.cannotReachApp")}</b></div>
+          <p className="sm" style={{ color: "var(--text)" }}>{t("pay.internetDropped")}</p>
+        </div>
+        <div className="card row-card tint-amber">
+          <Icon name="lock" />
+          <div className="grow">
+            <b style={{ fontSize: 17 }}>{t("pay.stillHeld")}</b>
+            <p className="sm" style={{ color: "var(--text)" }}>{t("pay.neverReleased")}</p>
+          </div>
+        </div>
+        <div className="spacer" />
+        <button className="btn amber" onClick={() => { started.current = false; open.reset(); void refetch(); }}>{t("common.tryAgain")}</button>
+        <button className="btn line" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />{t("common.callName", { name: helper.first })}</button>
+      </Screen>
+    );
+  }
+  if (!c) return <LoadingScreen title={t("common.loading")} />;
+  const who = helper.all.length ? join(helper.all) : t("common.yourFamily");
 
   return (
     <Screen>
-      <TitleRow title="Payment (demo)" back={`/check/${id}`} />
+      <TitleRow title={t("pay.title")} back={`/check/${id}`} />
       <div style={{ border: "2px solid #C6372B", borderRadius: 12, padding: "10px 12px", fontSize: 14, fontWeight: 800, letterSpacing: ".04em", color: "var(--red-text)", textAlign: "center" }}>
-        DEMO PAYMENT · NOT A BANK · NO MONEY MOVES
+        {t("pay.demoBar")}
       </div>
       <div className="card solid-red" style={{ gap: 6 }}>
-        <div className="row"><Icon name="warn" /><b style={{ fontSize: 19 }}>STOP. This payment is for a {c.verdict === "SCAM" ? "scam" : "suspicious message"}.</b></div>
-        <p className="sm" style={{ color: "#fff" }}>The message you checked asked for this money. Do not pay.</p>
+        <div className="row"><Icon name="warn" /><b style={{ fontSize: 19 }}>{c.verdict === "SCAM" ? t("pay.stopScam") : t("pay.stopSuspicious")}</b></div>
+        <p className="sm" style={{ color: "#fff" }}>{t("pay.askedMoney")}</p>
       </div>
       <div className="card" style={{ gap: 12, padding: 16 }}>
         <div>
-          <div className="lbl">Pay to</div>
-          <div style={{ fontWeight: 800, fontSize: 19 }}>{c.payee ?? "Unknown account"}</div>
+          <div className="lbl">{t("pay.payTo")}</div>
+          <div style={{ fontWeight: 800, fontSize: 19 }}>{c.payee ?? t("pay.unknownAccount")}</div>
         </div>
         <div>
-          <div className="lbl">Amount</div>
+          <div className="lbl">{t("pay.amount")}</div>
           <div className="display" style={{ fontWeight: 800, fontSize: 44, lineHeight: 1.1 }}>{c.amount ? rupees(c.amount) : "—"}</div>
         </div>
       </div>
       <div className="card row-card tint-amber">
         <Icon name="lock" />
         <div className="grow">
-          <b style={{ fontSize: 17 }}>Locked while family decides</b>
+          <b style={{ fontSize: 17 }}>{t("pay.locked")}</b>
           <p className="sm" style={{ color: "var(--text)" }}>
-            {hold ? `${who} ${helper.all.length > 1 ? "are" : "is"} looking at this. ${clock.label} left.` : open.isError ? open.error.message : "Locking the payment…"}
+            {hold
+              ? helper.all.length > 1 ? t("pay.lookingAtMany", { who, time: clock.label }) : t("pay.lookingAt", { who, time: clock.label })
+              : open.isError ? open.error.message : t("pay.locking")}
           </p>
         </div>
       </div>
+      {hold?.twoKeys && (
+        <div className="card" style={{ border: "2px solid var(--text)", gap: 4 }}>
+          <b style={{ fontSize: 16 }}>{t("hold.twoKeys")}</b>
+          <p className="sm">{t("hold.twoKeysBody")}</p>
+        </div>
+      )}
       <div className="spacer" />
       <button className="btn green" style={{ minHeight: 68, fontSize: 22 }} disabled={!hold || cancel.isPending} onClick={() => hold && cancel.mutate(hold.id)}>
-        Cancel this payment
+        {t("pay.cancel")}
       </button>
-      <button className="btn off md-btn" disabled><Icon name="lock" />Pay is locked</button>
-      <button className="ghost" style={{ alignSelf: "center" }} onClick={() => call(helper.first, helper.phone)}>Call {helper.first}</button>
+      <button className="btn off md-btn" disabled><Icon name="lock" />{t("pay.payLocked")}</button>
+      <button className="ghost" style={{ alignSelf: "center" }} onClick={() => call(helper.first, helper.phone)}>{t("common.callName", { name: helper.first })}</button>
     </Screen>
   );
 }

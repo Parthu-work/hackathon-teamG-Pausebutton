@@ -1,0 +1,36 @@
+[
+  { "example": "cbi", "households": 50, "today": 47, "firstSeenDaysAgo": 3 },
+  { "example": "kyc", "households": 29, "today": 14, "firstSeenDaysAgo": 7 },
+  { "example": "courier", "households": 18, "today": 6, "firstSeenDaysAgo": 11 },
+  { "example": "lottery", "households": 11, "today": 2, "firstSeenDaysAgo": 18 },
+  { "library": 0, "households": 50, "today": 47, "firstSeenDaysAgo": 3 },
+  { "library": 2, "households": 9, "today": 4, "firstSeenDaysAgo": 2 },
+  {
+    "text": "Dear SBI customer, your KYC is incomplete. Verify today at sbi-kyc-verify.in or your account will be blocked.",
+    "title": "Bank KYC link",
+    "households": 11,
+    "today": 5,
+    "firstSeenDaysAgo": 4
+  },
+  {
+    "text": "RBI refund of Rs 4,999 is pending in your name. Claim it at rbi-refund.xyz before midnight.",
+    "title": "Tax refund message",
+    "households": 4,
+    "today": 1,
+    "firstSeenDaysAgo": 2
+  },
+  {
+    "text": "Customs duty of Rs 1,250 is due on your parcel. Pay at parcel-duty-pay.top to release it.",
+    "title": "Courier fee message",
+    "households": 11,
+    "today": 3,
+    "firstSeenDaysAgo": 5
+  },
+  {
+    "text": "Your gas subsidy will lapse tonight unless you confirm your account at gas-subsidy-renew.top. Kindly keep this between us.",
+    "title": "Fake gas subsidy link",
+    "households": 29,
+    "today": 9,
+    "firstSeenDaysAgo": 6
+  }
+]

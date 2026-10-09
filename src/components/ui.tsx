@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { SIGNAL_LABEL } from "@/lib/check/copy";
-import { SIGNAL_TYPES, type Evidence, type LinkInfo, type Verdict } from "@/lib/check/types";
+import { SIGNAL_TYPES, type Evidence, type LinkInfo, type SignalType, type Verdict } from "@/lib/check/types";
 import { ApiError } from "@/lib/client/api";
 import { telHref } from "@/lib/phone";
 import { Icon, type IconName } from "./icons";
@@ -122,12 +122,13 @@ export function TitleRow({ title, back, right }: { title: string; back?: string 
   );
 }
 
-export function RaoTabs({ active }: { active: "check" | "checks" | "settings" }) {
+export function RaoTabs({ active, labels }: { active: "check" | "checks" | "settings"; labels?: { check: string; checks: string; settings: string } }) {
+  const l = labels ?? { check: "Check", checks: "My checks", settings: "Settings" };
   return (
     <nav className="tabs">
-      <Link className={`tab ${active === "check" ? "on" : ""}`} href="/"><Icon name="shield" />Check</Link>
-      <Link className={`tab ${active === "checks" ? "on" : ""}`} href="/history"><Icon name="list" />My checks</Link>
-      <Link className={`tab ${active === "settings" ? "on" : ""}`} href="/settings"><Icon name="gear" />Settings</Link>
+      <Link className={`tab ${active === "check" ? "on" : ""}`} href="/"><Icon name="shield" />{l.check}</Link>
+      <Link className={`tab ${active === "checks" ? "on" : ""}`} href="/history"><Icon name="list" />{l.checks}</Link>
+      <Link className={`tab ${active === "settings" ? "on" : ""}`} href="/settings"><Icon name="gear" />{l.settings}</Link>
     </nav>
   );
 }
@@ -150,12 +151,12 @@ const VERDICT_STYLE: Record<Verdict, { cls: string; icon: IconName }> = {
   SAFE: { cls: "green", icon: "check" },
 };
 
-export function VerdictPill({ verdict, size = "big", icon = true }: { verdict: Verdict; size?: "big" | "medium" | "small"; icon?: boolean }) {
+export function VerdictPill({ verdict, size = "big", icon = true, label }: { verdict: Verdict; size?: "big" | "medium" | "small"; icon?: boolean; label?: string }) {
   const s = VERDICT_STYLE[verdict];
   return (
-    <span className={`pill ${s.cls} ${size === "big" ? "" : size}`}>
+    <span className={`pill ${s.cls} ${size === "big" ? "" : size}`} data-verdict={verdict}>
       {icon && size === "big" && <Icon name={s.icon} />}
-      {verdict}
+      {label ?? verdict}
     </span>
   );
 }
@@ -178,28 +179,39 @@ export function Marks({ phrases, size = 17 }: { phrases: string[]; size?: number
   );
 }
 
-export function SignalBars({ signals, amber }: { signals: Evidence[]; amber?: boolean }) {
+/** Labels the signal rows can show in Mr Rao's language (F5); English when left out. */
+export type SignalWords = {
+  labels?: Record<SignalType, string>;
+  notFound?: string;
+  words?: string;
+  link?: string;
+  unknownSite?: string;
+  scamSite?: string;
+  fakeSite?: string;
+};
+
+export function SignalBars({ signals, amber, labels }: { signals: Evidence[]; amber?: boolean; labels?: Record<SignalType, string> }) {
   const found = new Set(signals.map((s) => s.type));
   return (
     <div className={`seg ${amber ? "am" : ""}`}>
       {SIGNAL_TYPES.map((t) => (
         <div key={t} className={found.has(t) ? "f" : ""}>
           <b />
-          {SIGNAL_LABEL[t]}
+          {labels?.[t] ?? SIGNAL_LABEL[t]}
         </div>
       ))}
     </div>
   );
 }
 
-export function SignalRows({ signals, link, modelTerms }: { signals: Evidence[]; link: LinkInfo | null; modelTerms?: string[] }) {
+export function SignalRows({ signals, link, modelTerms, words }: { signals: Evidence[]; link: LinkInfo | null; modelTerms?: string[]; words?: SignalWords }) {
   return (
     <div className="col">
       {SIGNAL_TYPES.map((t) => {
         const found = signals.filter((s) => s.type === t);
         return (
           <div className="mv" key={t}>
-            <span className="lbl">{SIGNAL_LABEL[t]}</span>
+            <span className="lbl">{words?.labels?.[t] ?? SIGNAL_LABEL[t]}</span>
             {found.length ? (
               <span className="phr">
                 {found.slice(0, 2).map((s, i) => (
@@ -207,22 +219,24 @@ export function SignalRows({ signals, link, modelTerms }: { signals: Evidence[];
                 ))}
               </span>
             ) : (
-              <span className="sm">Not found</span>
+              <span className="sm">{words?.notFound ?? "Not found"}</span>
             )}
           </div>
         );
       })}
       {link && link.status !== "known" && (
         <div className="mv">
-          <span className="lbl">Link</span>
+          <span className="lbl">{words?.link ?? "Link"}</span>
           <mark style={{ wordBreak: "break-all" }}>{link.domain}</mark>
           <span className="grow" />
-          <span className="tag">{link.status === "unknown" || link.status === "risky" ? "UNKNOWN SITE" : link.status === "blocked" ? "SCAM SITE" : "FAKE SITE"}</span>
+          <span className="tag">
+            {link.status === "unknown" || link.status === "risky" ? words?.unknownSite ?? "UNKNOWN SITE" : link.status === "blocked" ? words?.scamSite ?? "SCAM SITE" : words?.fakeSite ?? "FAKE SITE"}
+          </span>
         </div>
       )}
       {!!modelTerms?.length && !signals.length && (
         <div className="mv">
-          <span className="lbl">Words</span>
+          <span className="lbl">{words?.words ?? "Words"}</span>
           <span className="phr">
             {modelTerms.map((t) => (
               <mark key={t}>{t}</mark>
@@ -276,6 +290,28 @@ export function Ring({ fraction, label, sub }: { fraction: number; label: string
       </div>
     </div>
   );
+}
+
+// ---------------- client-only values ----------------
+
+const noSubscribe = () => () => {};
+
+/** A value only the phone knows (its clock, its microphone): `server` while rendering on the server, `get()` after hydration. */
+export function useClientValue<T>(get: () => T, server: T): T {
+  return useSyncExternalStore(noSubscribe, get, () => server);
+}
+
+/** The wall clock, refreshed every `ms`; null on the server. */
+export function useNow(ms = 10_000): Date | null {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const t = setInterval(onChange, ms);
+      return () => clearInterval(t);
+    },
+    [ms],
+  );
+  const tick = useSyncExternalStore(subscribe, () => Math.floor(Date.now() / ms), () => -1);
+  return tick < 0 ? null : new Date(tick * ms);
 }
 
 // ---------------- time ----------------
@@ -373,21 +409,21 @@ function isPhone() {
  * opens the phone's dialer with the number filled in (the person still taps
  * the green call button). On a laptop, e.g. the demo panel, it shows the number.
  */
-export function useCall() {
+export function useCall(words?: { noNumber: string; addNumber: string; callShows: string; onPhoneDialer: string }) {
   const toast = useToast();
   return useCallback(
     (who: string, phone: string | null | undefined) => {
       if (!phone) {
-        toast({ title: `No number for ${who}`, sub: "Add it in Settings › Trusted people", icon: "phone", tone: "red" });
+        toast({ title: words ? words.noNumber.replace("{name}", who) : `No number for ${who}`, sub: words?.addNumber ?? "Add it in Settings › Trusted people", icon: "phone", tone: "red" });
         return;
       }
       if (isPhone()) {
         window.location.href = telHref(phone);
         return;
       }
-      toast({ title: `Call ${who}: ${phone}`, sub: "On a phone this opens the dialer.", icon: "phone" });
+      toast({ title: words ? words.callShows.replace("{name}", who).replace("{phone}", phone) : `Call ${who}: ${phone}`, sub: words?.onPhoneDialer ?? "On a phone this opens the dialer.", icon: "phone" });
     },
-    [toast],
+    [toast, words],
   );
 }
 

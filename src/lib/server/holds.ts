@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { HOLD_MINUTES } from "@/lib/check/config";
+import { HOLD_MINUTES, TWO_KEY_AMOUNT, TWO_KEY_HOLD_MINUTES } from "@/lib/check/config";
 import { keyPhrases } from "@/lib/check/phrases";
 import { rupees } from "@/lib/check/copy";
 import type { Db } from "@/lib/db";
@@ -23,15 +23,20 @@ export function holdStatus(h: Hold, now = Date.now()): HoldStatus {
   return h.status;
 }
 
+/** F13: large amounts get the long hold and two keys to release. */
+export const twoKeysFor = (amount: number) => amount > TWO_KEY_AMOUNT;
+export const holdMinutesFor = (amount: number) => (twoKeysFor(amount) ? TWO_KEY_HOLD_MINUTES : HOLD_MINUTES);
+
 export async function createHold(db: Db, check: Check, owner: User) {
+  const amount = check.amount ?? 0;
   const [hold] = await db
     .insert(schema.holds)
     .values({
       checkId: check.id,
       userId: owner.id,
       payee: check.payee ?? "Unknown account",
-      amount: check.amount ?? 0,
-      expiresAt: new Date(Date.now() + HOLD_MINUTES * 60_000),
+      amount,
+      expiresAt: new Date(Date.now() + holdMinutesFor(amount) * 60_000),
     })
     .returning();
   return hold;
@@ -84,6 +89,8 @@ export async function toHoldView(db: Db, hold: Hold, check?: Check): Promise<Hol
     verdict: c.verdict,
     advice: await adviceFor(db, { holdId: hold.id }),
     owner: ownerView(owner),
+    twoKeys: twoKeysFor(hold.amount),
+    holdMinutes: Math.max(1, Math.round((hold.expiresAt.getTime() - hold.createdAt.getTime()) / 60_000)),
   };
 }
 
