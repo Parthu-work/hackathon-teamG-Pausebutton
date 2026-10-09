@@ -24,6 +24,7 @@ describe("operator key", () => {
     process.env.OPERATOR_KEY = "s3cret";
     expect(() => requireOperator(call())).toThrow("operator key");
     expect(() => requireOperator(call("wrong"))).toThrow("operator key");
+    expect(() => requireOperator(call("s3cre7"))).toThrow("operator key"); // same length, wrong content
     expect(() => requireOperator(call("s3cret"))).not.toThrow();
   });
 });

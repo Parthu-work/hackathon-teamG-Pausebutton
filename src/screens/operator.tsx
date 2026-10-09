@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, ToastOutlet, ToastProvider, useToast, VerdictPill } from "@/components/ui";
-import { api, broadcastWifiDrop, operatorApi } from "@/lib/client/api";
+import { api, ApiError, broadcastWifiDrop, operatorApi } from "@/lib/client/api";
 import type { TestResult, TestSummary } from "@/lib/server/testset";
 import type { EventView } from "@/lib/views";
 
@@ -164,6 +164,7 @@ export function DemoPage() {
 function DemoPanel() {
   const toast = useToast();
   const [ready, setReady] = useState(false);
+  const [keyError, setKeyError] = useState(false);
   const [events, setEvents] = useState<EventView[]>([]);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -174,7 +175,7 @@ function DemoPanel() {
   useEffect(() => {
     void operatorApi("/api/demo/personas", { body: {} })
       .then(() => setReady(true))
-      .catch(() => {});
+      .catch((e) => setKeyError(e instanceof ApiError && e.status === 401));
   }, []);
 
   useEffect(() => {
@@ -189,8 +190,9 @@ function DemoPanel() {
           setEvents((list) => [...list, ...r.events].slice(-120));
         }
         setLastSync(Date.now());
-      } catch {
-        /* offline: shown by the sync line */
+      } catch (e) {
+        // Offline shows on the sync line; a refused key needs a reload to ask again.
+        if (e instanceof ApiError && e.status === 401) setKeyError(true);
       }
     };
     void tick();
@@ -234,7 +236,9 @@ function DemoPanel() {
         />
         <p className="sm" style={{ fontWeight: 700 }}>
           <span className="dot" style={{ display: "inline-block", background: lastSync && now - lastSync < 5000 ? "#2E7D5B" : "#C6372B", marginRight: 8 }} />
-          {lastSync && now - lastSync < 5000 ? "Online" : "Offline"} · polling every 2 s · last sync {ago} s ago
+          {keyError
+            ? "Operator key missing or wrong. Reload this page to enter it."
+            : `${lastSync && now - lastSync < 5000 ? "Online" : "Offline"} · polling every 2 s · last sync ${ago} s ago`}
         </p>
         {ready && (
           <div className="demo-grid">
