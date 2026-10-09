@@ -68,3 +68,21 @@ test("safe: a real bank alert needs nobody", async ({ browser }) => {
   await rao.getByRole("button", { name: "Check this message" }).click();
   await expect(rao.getByRole("heading", { name: "This looks like a normal bank message." })).toBeVisible();
 });
+
+test("scam with no amount: Arjun's home keeps the alert until he answers", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+
+  await rao.getByRole("button", { name: "Bank KYC link" }).click();
+  await rao.getByRole("button", { name: "Check this message" }).click();
+  await expect(rao.getByRole("heading", { name: "STOP" })).toBeVisible();
+
+  await expect(arjun.getByRole("heading", { name: "Papa got a scam message" })).toBeVisible({ timeout: 10_000 });
+  await arjun.getByRole("button", { name: "Open" }).click();
+  await expect(arjun.getByRole("heading", { name: "Scam alert" })).toBeVisible();
+
+  // He goes back without answering: his home must still show it.
+  await arjun.goto("/family");
+  await expect(arjun.getByText("Papa got a scam message")).toBeVisible();
+  await expect(arjun.getByText("Papa is protected")).toHaveCount(0);
+});

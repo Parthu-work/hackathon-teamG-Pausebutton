@@ -149,7 +149,8 @@ export function FamilyHomeScreen() {
   const clock = useCountdown(hold?.expiresAt, data?.serverNow);
   if (!data?.protectedUser) return <LoadingScreen />;
   const p = data.protectedUser;
-  const openAsks = data.alerts.filter((a) => a.kind !== "urgent");
+  // Questions, heads-ups, and scam alerts with no payment to block (e.g. a fake KYC link).
+  const openItems = data.alerts.filter((a) => a.kind !== "urgent" || !a.holdId);
 
   return (
     <Screen tabs={<FamilyTabs active="home" callName={callName} />}>
@@ -178,17 +179,23 @@ export function FamilyHomeScreen() {
           <button className="btn ink" style={{ minHeight: 56 }} onClick={() => router.push(`/family/hold/${hold.id}`)}>Open</button>
         </div>
       )}
-      {openAsks.map((a) => (
-        <button key={a.id} className="card tint-amber" onClick={() => router.push(`/family/check/${a.checkId}?alert=${a.id}`)}>
+      {openItems.map((a) => (
+        <button key={a.id} className={`card ${a.kind === "urgent" ? "tint-red" : "tint-amber"}`} onClick={() => router.push(`/family/check/${a.checkId}?alert=${a.id}`)}>
           <div className="row">
             <Icon name="bell" />
-            <b className="grow" style={{ fontSize: 17 }}>{a.kind === "ask" ? `${callName} is asking you about a message` : `Heads-up: ${callName} got a ${a.verdict.toLowerCase()} message`}</b>
+            <b className="grow" style={{ fontSize: 17 }}>
+              {a.kind === "ask"
+                ? `${callName} is asking you about a message`
+                : a.kind === "urgent"
+                  ? `${callName} got a scam message`
+                  : `Heads-up: ${callName} got a ${a.verdict.toLowerCase()} message`}
+            </b>
             <Icon name="chev" />
           </div>
           <Marks phrases={a.phrases} size={15} />
         </button>
       ))}
-      {!hold && !openAsks.length && (
+      {!hold && !openItems.length && (
         <div className="card tint-green" style={{ alignItems: "flex-start", padding: 22, gap: 10 }}>
           <span style={{ color: "var(--green-text)" }}><Icon name="shieldCheck" size={32} /></span>
           <h2 className="h2">{callName} is protected</h2>
@@ -490,11 +497,12 @@ export function FamilyCheckScreen() {
   const c = q.data;
   if (!c) return <LoadingScreen />;
   const fromAsk = fam?.alerts.some((a) => a.checkId === id && a.kind === "ask") || (!!c.askedFamilyAt && !c.familyVerdict);
+  const urgent = !fromAsk && !!fam?.alerts.some((a) => a.checkId === id && a.kind === "urgent");
   const pending = c.hold && c.hold.status === "pending";
 
   return (
     <Screen>
-      <TitleRow title={fromAsk ? `${callName} is asking` : "Heads-up"} back="/family" right={<VerdictPill verdict={c.verdict} size="medium" icon={false} />} />
+      <TitleRow title={fromAsk ? `${callName} is asking` : urgent ? "Scam alert" : "Heads-up"} back="/family" right={<VerdictPill verdict={c.verdict} size="medium" icon={false} />} />
       <p className="sm">
         {c.source === "paste" ? `Checked by ${callName}` : `Detected on ${callName}'s phone · ${c.source === "sms" ? "SMS" : "WhatsApp"} · ${c.senderLabel}`} · {clockTime(c.createdAt)}
       </p>
@@ -530,7 +538,7 @@ export function FamilyCheckScreen() {
       {!c.familyVerdict && (
         <>
           <button className="btn red" onClick={() => answer.mutate({ verdict: "scam", note: "It is a scam. Do not pay or reply." })}>
-            {fromAsk ? "It's a scam" : "Mark as handled"}
+            {fromAsk || urgent ? "It's a scam" : "Mark as handled"}
           </button>
           <button className="btn line" onClick={() => answer.mutate({ verdict: "not_scam", note: "I checked. This one is fine." })}>This is not a scam</button>
         </>
