@@ -3,6 +3,8 @@ import type { AiStatus, CallAnswers, CheckSource, Evidence, HardRule, LinkInfo, 
 
 export type HoldStatus = "pending" | "blocked" | "approved" | "cancelled" | "expired";
 export type Language = "en" | "hi" | "te";
+/** An inbox message: being checked · checked · skipped (not watched, or a saved contact) · failed (the check threw; it is retried). */
+export type SimStatus = "received" | "checked" | "skipped" | "failed";
 
 export type AdviceView = { id: string; fromName: string; text: string; createdAt: string };
 
@@ -33,8 +35,9 @@ export type HoldView = {
   advice: AdviceView[];
   /** Whose payment this is. */
   owner: OwnerView;
-  /** F13: above Rs 50,000 the hold lasts an hour and release needs every trusted person. */
+  /** F13: above Rs 50,000 release needs every trusted person (one Block still stops it). */
   twoKeys: boolean;
+  /** How long this hold was given (Settings › Payment hold time when it was created). */
   holdMinutes: number;
 };
 
@@ -156,6 +159,8 @@ export type MeView = {
   alertNotify: boolean;
   /** A shared demo persona: it cannot be deleted. */
   isDemo: boolean;
+  /** Settings › Payment hold time, in minutes (one of HOLD_CHOICES). */
+  holdMinutes: number;
 };
 
 export type SimMessageView = {
@@ -169,6 +174,8 @@ export type SimMessageView = {
   checkId: string | null;
   verdict: Verdict | "SKIPPED" | null;
   phrases: string[];
+  /** failed: "We could not check this message" (tap to try again); received: still being checked. */
+  status: SimStatus;
 };
 
 export type RaoState = {
@@ -211,6 +218,10 @@ export type ProtectedView = OwnerView & {
   today: { total: number; scam: number; suspicious: number; safe: number };
   /** Open questions and heads-ups from this person. */
   openAlerts: number;
+  /** Their payment hold time (family can change it in Settings). */
+  holdMinutes: number;
+  /** The Android watcher on their phone: none paired · ok · quiet (no report for over an hour). */
+  watcher: "none" | "ok" | "quiet";
 };
 
 export type FamilyState = {
@@ -347,6 +358,26 @@ export type DeviceView = {
   lastMessageAt: string | null;
   listenerOn: boolean;
   messagesSeen: number;
+  /** The phone has not reported for over an hour (two missed 30-minute syncs). */
+  notSyncing: boolean;
+  lastSyncAt: string | null;
+  /** Messages waiting in the phone's outbox at its last sync. */
+  waiting: number;
 };
+
+/** One run of the 30-minute sync job. */
+export type SyncRunView = {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  rechecked: number;
+  recheckFailed: number;
+  repushed: number;
+  quietDevices: number;
+  error: string | null;
+};
+
+/** GET /api/ops/sync-health: the last runs, and whether one is overdue. */
+export type SyncHealthView = { lastRun: SyncRunView | null; runs: SyncRunView[]; overdue: boolean; intervalMinutes: number };
 
 export type EventView = { id: number; actor: string; type: string; message: string; createdAt: string };

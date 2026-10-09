@@ -12,7 +12,7 @@ import { ApiError, post } from "@/lib/client/api";
 import { loadMessage } from "@/lib/client/messages";
 import { HELPLINE } from "@/lib/phone";
 import type { HoldStatus } from "@/lib/views";
-import { useHelper, useJoinNames, useLang, useT } from "./shell";
+import { useHelper, useJoinNames, useLang, useRao, useT } from "./shell";
 import { useCheck, useRaoCall } from "./verdict";
 
 const FLOOR_KEY: Record<HardRule, "why.floorSecrecy" | "why.floorCredential" | "why.floorLink" | "why.floorCall"> = {
@@ -208,6 +208,7 @@ export function PayScreen() {
   const call = useRaoCall();
   const toast = useToast();
   const helper = useHelper();
+  const rao = useRao();
   const { data: c, error, refetch } = useCheck(id);
   const open = useMutation({ mutationFn: () => post<{ holdId: string; status: HoldStatus }>(`/api/me/checks/${id}/pay`) });
   const cancel = useMutation({

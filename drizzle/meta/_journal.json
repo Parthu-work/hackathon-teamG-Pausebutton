@@ -78,6 +78,13 @@
       "when": 1791586882997,
       "tag": "0010_sim_text_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791590071974,
+      "tag": "0011_old_solo",
+      "breakpoints": true
     }
   ]
 }

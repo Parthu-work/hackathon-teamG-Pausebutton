@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
 import { APP_UTC_OFFSET_MINUTES } from "@/lib/check/config";
 import { finalVerdict } from "@/lib/check/final";
 import { keyPhrases } from "@/lib/check/phrases";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import type { ActivityItem, AlertView, FamilyState, Language, LockView, MeView, ProtectedView, RaoState } from "@/lib/views";
+import { watcherStatus } from "./devices";
 import { logEvent } from "./events";
 import { holdStatus, latestHoldFor, toHoldView, userNames } from "./holds";
 import { linkedFamily, listPeople, ownerView } from "./people";
@@ -25,6 +26,7 @@ export function toMeView(u: User): MeView {
     autoTellFamily: u.autoTellFamily,
     alertNotify: u.alertNotify,
     isDemo: u.isDemo,
+    holdMinutes: u.holdMinutes,
   };
 }
 
@@ -122,6 +124,7 @@ export async function familyState(db: Db, me: User): Promise<FamilyState> {
   });
 
   const todayStart = startOfToday();
+  const phones = await db.query.devices.findMany({ where: and(inArray(schema.devices.userId, owners.map((o) => o.id)), isNotNull(schema.devices.pairedAt)) });
   const people: ProtectedView[] = [];
   for (const link of links) {
     const owner = owners.find((o) => o.id === link.protectedId);
@@ -147,6 +150,8 @@ export async function familyState(db: Db, me: User): Promise<FamilyState> {
         safe: todays.filter((c) => finalVerdict(c.verdict, c.familyVerdict) === "SAFE").length,
       },
       openAlerts: alerts.filter((a) => a.owner.id === owner.id && (a.kind !== "urgent" || !a.holdId)).length,
+      holdMinutes: owner.holdMinutes,
+      watcher: watcherStatus(phones.filter((d) => d.userId === owner.id)),
     });
   }
   return { ...base, people, alerts };

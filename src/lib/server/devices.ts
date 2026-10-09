@@ -34,7 +34,17 @@ export function toDeviceView(d: Device): DeviceView {
     lastMessageAt: d.lastMessageAt?.toISOString() ?? null,
     listenerOn: d.listenerOn,
     messagesSeen: d.messagesSeen,
+    notSyncing: !!d.notSyncingSince,
+    lastSyncAt: d.lastSyncAt?.toISOString() ?? null,
+    waiting: d.waiting,
   };
+}
+
+/** How a person's watcher looks to their family: no phone paired, fine, or quiet (no report for over an hour). */
+export function watcherStatus(paired: Pick<Device, "pairedAt" | "notSyncingSince">[]): "none" | "ok" | "quiet" {
+  const phones = paired.filter((d) => d.pairedAt);
+  if (!phones.length) return "none";
+  return phones.every((d) => d.notSyncingSince) ? "quiet" : "ok";
 }
 
 /** M2 "Connect this phone": a code (and a link that opens the app) valid for 15 minutes. */
@@ -79,7 +89,8 @@ export async function deviceByToken(db: Db, authorization: string | null) {
   const device = await db.query.devices.findFirst({ where: and(eq(schema.devices.tokenHash, hash(token)), isNotNull(schema.devices.pairedAt)) });
   if (!device) throw new HttpError(401, "This phone is no longer connected. Connect it again.");
   const user = (await db.query.users.findFirst({ where: eq(schema.users.id, device.userId) }))!;
-  await db.update(schema.devices).set({ lastSeenAt: new Date() }).where(eq(schema.devices.id, device.id));
+  // Heard from: if the sync job had marked it quiet, it is syncing again.
+  await db.update(schema.devices).set({ lastSeenAt: new Date(), notSyncingSince: null }).where(eq(schema.devices.id, device.id));
   return { device, user };
 }
 

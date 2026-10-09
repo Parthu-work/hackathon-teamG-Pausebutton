@@ -106,6 +106,7 @@ async function toViews(db: Db, rows: SimRow[]): Promise<SimMessageView[]> {
       checkId: r.checkId,
       verdict: c ? finalVerdict(c.verdict, c.familyVerdict) : r.fromContact ? "SKIPPED" : null,
       phrases: c ? keyPhrases(c.signals, c.link, c.hardPhrases, 2) : [],
+      status: r.status,
     };
   });
 }

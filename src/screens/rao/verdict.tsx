@@ -17,7 +17,7 @@ import { canSpeak, speak, stopSpeaking } from "@/lib/client/speech";
 import type { CheckView } from "@/lib/views";
 import { HELPLINE } from "@/lib/phone";
 import { appLabel } from "./share";
-import { useHelper, useJoinNames, useLang, useT } from "./shell";
+import { useHelper, useJoinNames, useLang, useRao, useT } from "./shell";
 
 export function useCheck(id: string) {
   return useQuery({ queryKey: ["check", id], queryFn: () => api<CheckView>(`/api/me/checks/${id}`), refetchInterval: 3000 });
@@ -163,6 +163,7 @@ export function VerdictScreen() {
   const call = useRaoCall();
   const toast = useToast();
   const helper = useHelper();
+  const rao = useRao();
   const { data: c, error } = useCheck(id);
   const [dismissed, setDismissed] = useState(false);
   const holdClock = useCountdown(c?.hold?.status === "pending" ? c.hold.expiresAt : undefined, rao.data?.serverNow, holdTotalMs(c?.hold));

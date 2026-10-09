@@ -26,8 +26,6 @@ export const SUSPICIOUS_AT = 30;
 export const HOLD_CHOICES = [5, 10, 15, 30, 60] as const;
 export type HoldChoice = (typeof HOLD_CHOICES)[number];
 export const DEFAULT_HOLD_MINUTES: HoldChoice = 10;
-
-export const INVITE_HOURS = 24;
 export const INVITE_HOURS = 24;
 
 // "Today" on the family home starts at midnight in India (IST is UTC+5:30, no daylight saving).
