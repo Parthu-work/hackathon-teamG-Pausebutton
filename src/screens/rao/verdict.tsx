@@ -108,6 +108,29 @@ function CampaignCard({ c }: { c: CheckView }) {
   );
 }
 
+/**
+ * The alert could not reach someone's phone (every push failed or the phone
+ * is gone) and they have not opened it: say so, and offer the call, so he
+ * does not sit waiting for an answer that is not coming.
+ */
+function UnreachableCard({ c }: { c: CheckView }) {
+  const t = useT();
+  const join = useJoinNames();
+  const helper = useHelper();
+  const call = useRaoCall();
+  if (!c.unreachableNames.length) return null;
+  const first = c.unreachableNames[0];
+  return (
+    <div className="card tint-amber" style={{ gap: 8 }} data-testid="unreachable">
+      <div className="row"><Icon name="warn" /><b className="grow" style={{ fontSize: 17 }}>{t("verdict.unreachableTitle", { names: join(c.unreachableNames) })}</b></div>
+      <p className="sm" style={{ color: "var(--text)" }}>{t("verdict.unreachableBody", { names: join(c.unreachableNames) })}</p>
+      <button className="btn ink" style={{ minHeight: 48 }} onClick={() => call(first, helper.phoneOf(first))}>
+        <Icon name="phone" />{t("common.callName", { name: first })}
+      </button>
+    </div>
+  );
+}
+
 /** F1b/F8/F10 · "What they asked for": the payment and secrecy phrases, as a sentence. */
 function WhatAsked({ c }: { c: CheckView }) {
   const t = useT();
@@ -365,6 +388,7 @@ export function VerdictScreen() {
             </div>
           </div>
         )}
+        <UnreachableCard c={c} />
         <div className="spacer" />
         {detected ? (
           <button className="btn ink" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />{t("common.callName", { name: helper.first })}</button>
@@ -413,6 +437,7 @@ export function VerdictScreen() {
             </div>
           </div>
         )}
+        <UnreachableCard c={c} />
         <div className="spacer" />
         {asked ? (
           <button className="btn ink" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />{t("common.callName", { name: helper.first })}</button>
