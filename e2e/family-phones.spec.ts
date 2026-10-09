@@ -15,6 +15,7 @@ const HEADED = !!process.env.HEADED;
 const contexts: BrowserContext[] = [];
 async function newContext(browser: Browser, options?: Parameters<Browser["newContext"]>[0]) {
   const ctx = await browser.newContext(options);
+  await ctx.addInitScript(recordDialer);
   contexts.push(ctx);
   return ctx;
 }
@@ -24,11 +25,32 @@ test.afterEach(async () => {
   await Promise.all(browsers.splice(0).map((b) => b.close().catch(() => {})));
 });
 
+/**
+ * The phones' dialer. "Call …" opens a tel: link. In a visible (headed)
+ * browser that hands the number to the computer, which shows a system prompt
+ * ("Open FaceTime?") over the window and swallows the next tap there. So each
+ * test phone records the tel: link the app opened and cancels the hand-off,
+ * through the Navigation API's "navigate" event, in headed and headless runs
+ * alike. The app is unchanged: it still sets location.href to the tel: link.
+ */
+function recordDialer() {
+  const w = window as Window & { __pbDialed?: string | null; navigation?: EventTarget };
+  w.navigation?.addEventListener("navigate", (event) => {
+    const e = event as Event & { destination: { url: string } };
+    if (e.destination.url.startsWith("tel:")) {
+      w.__pbDialed = e.destination.url;
+      e.preventDefault();
+    }
+  });
+}
+
 /** Taps a "Call …" button and returns the number the phone's dialer was opened with. */
 async function dialedNumber(page: Page, button: string | RegExp) {
-  const dial = page.waitForRequest((r) => r.url().startsWith("tel:"));
+  const dialed = () => page.evaluate(() => (window as Window & { __pbDialed?: string | null }).__pbDialed ?? null);
+  await page.evaluate(() => ((window as Window & { __pbDialed?: string | null }).__pbDialed = null));
   await page.getByRole("button", { name: button }).click();
-  return (await dial).url();
+  await expect.poll(dialed, { message: "the dialer was not opened" }).not.toBeNull();
+  return (await dialed())!;
 }
 
 /** In headed mode, put Mr Rao's window on the left and Arjun's on the right. */
