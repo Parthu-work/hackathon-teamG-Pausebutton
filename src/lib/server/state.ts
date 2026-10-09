@@ -4,7 +4,7 @@ import { finalVerdict } from "@/lib/check/final";
 import { keyPhrases } from "@/lib/check/phrases";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import type { ActivityItem, AlertView, FamilyState, MeView, ProtectedView, RaoState } from "@/lib/views";
+import type { ActivityItem, AlertView, FamilyState, Language, LockView, MeView, ProtectedView, RaoState } from "@/lib/views";
 import { logEvent } from "./events";
 import { holdStatus, latestHoldFor, toHoldView, userNames } from "./holds";
 import { linkedFamily, listPeople, ownerView } from "./people";
@@ -18,7 +18,7 @@ export function toMeView(u: User): MeView {
     name: u.name,
     phone: u.phone,
     textSize: u.textSize,
-    language: u.language,
+    language: (["en", "hi", "te"].includes(u.language) ? u.language : "en") as Language,
     watchSms: u.watchSms,
     watchWhatsapp: u.watchWhatsapp,
     unknownOnly: u.unknownOnly,
@@ -148,6 +148,14 @@ export async function familyState(db: Db, me: User): Promise<FamilyState> {
     });
   }
   return { ...base, people, alerts };
+}
+
+/** F2: the lock screen shows the newest urgent alert that still needs this person, with its payment. */
+export async function lockView(db: Db, me: User): Promise<LockView> {
+  const fam = await familyState(db, me);
+  const alert = fam.alerts.find((a) => a.kind === "urgent") ?? null;
+  const hold = alert?.holdId ? await db.query.holds.findFirst({ where: eq(schema.holds.id, alert.holdId) }) : null;
+  return { alert, hold: hold ? await toHoldView(db, hold) : null, serverNow: fam.serverNow };
 }
 
 /** J3: everything this member's protected people checked, and the payments decided, newest first. */

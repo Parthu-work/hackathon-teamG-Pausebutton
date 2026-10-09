@@ -13,7 +13,10 @@ import { playAlarm, unlockAudio } from "@/lib/client/alarm";
 import { pushStatusText, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
 import { api, operatorApi, post } from "@/lib/client/api";
 import type { ActivityItem, CheckView, EventView, HoldView, ProtectedView, SharedMessage } from "@/lib/views";
+import { LedgerCards, useCallOnArrival, useLedger } from "./phase2";
 import { useFamily, useTabLabel } from "./shell";
+
+const ADVICE_MAX = 200;
 
 // ---------------- C1 / Q4 · accept invite ----------------
 
@@ -190,6 +193,7 @@ export function FamilyHomeScreen() {
   const router = useRouter();
   const label = useTabLabel();
   const { data } = useFamily();
+  const ledger = useLedger();
   if (!data) return <LoadingScreen />;
   // One person: the design's J1 home. Several (Papa and Mummy): one card each.
   if (data.people.length === 1) return <PersonHome person={data.people[0]} />;
@@ -200,6 +204,7 @@ export function FamilyHomeScreen() {
       {data.people.map((p) => (
         <PersonCard key={p.id} p={p} me={data.me.name} serverNow={data.serverNow} onOpen={() => router.push(`/family/person/${p.id}`)} />
       ))}
+      {ledger.data && <LedgerCards ledger={ledger.data} me={data.me.name} />}
       <button className="btn line" onClick={() => router.push("/family/join")}><Icon name="plus" />Link another person</button>
       <div className="spacer" />
       <p className="sm center-text">Keep this app open or installed on your home screen.</p>
@@ -256,13 +261,16 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
   const router = useRouter();
   const label = useTabLabel();
   const { data } = useFamily();
+  const ledger = useLedger();
   const callName = p.callName;
   const hold = p.activeHold;
-  const clock = useCountdown(hold?.expiresAt, data?.serverNow);
+  const clock = useCountdown(hold?.expiresAt, data?.serverNow, (hold?.holdMinutes ?? 10) * 60_000);
   if (!data) return <LoadingScreen />;
   const me = data.me.name;
   // Questions, heads-ups, and scam alerts with no payment to block (e.g. a fake KYC link).
-  const openItems = data.alerts.filter((a) => a.owner.id === p.id && (a.kind !== "urgent" || !a.holdId));
+  // A live scam call has its own card below.
+  const openItems = data.alerts.filter((a) => a.owner.id === p.id && (a.kind !== "urgent" || (!a.holdId && a.source !== "call")));
+  const liveCall = data.alerts.find((a) => a.owner.id === p.id && a.kind === "urgent" && a.source === "call");
 
   return (
     <Screen tabs={<FamilyTabs active="home" callName={label} />}>
@@ -299,9 +307,16 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
         <div className="card tint-amber" style={{ gap: 10 }}>
           <span className="lbl" style={{ color: "var(--text)" }}>Time is up</span>
           <h2 className="h2">{rupees(hold.amount)} still on hold</h2>
-          <p className="p" style={{ fontSize: 16 }}>Nobody decided in 10 minutes. Block still works.</p>
+          <p className="p" style={{ fontSize: 16 }}>Nobody decided in {hold.holdMinutes} minutes. Block still works.</p>
           <button className="btn ink" style={{ minHeight: 56 }} onClick={() => router.push(`/family/hold/${hold.id}`)}>Open</button>
         </div>
+      )}
+      {liveCall && (
+        <button className="card solid-red" style={{ gap: 6 }} onClick={() => router.push(`/family/check/${liveCall.checkId}?alert=${liveCall.id}`)}>
+          <span className="lbl" style={{ color: "#fff" }}>Right now</span>
+          <h2 className="h2" style={{ color: "#fff", fontSize: 24 }}>{callName} is on a scam call</h2>
+          <p className="sm" style={{ color: "#fff" }}>A caller is pressuring {callName}. Call and tell them to hang up.</p>
+        </button>
       )}
       {openItems.map((a) => (
         <button key={a.id} className={`card ${a.kind === "urgent" ? "tint-red" : "tint-amber"}`} onClick={() => router.push(`/family/check/${a.checkId}?alert=${a.id}`)}>
@@ -333,6 +348,7 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
           <Marks phrases={p.lastCheck.phrases} size={16} />
         </button>
       )}
+      {ledger.data && <LedgerCards ledger={ledger.data} me={me} />}
       {p.today.total > 0 ? (
         <div className="card">
           <div className="lbl">Today</div>
@@ -375,17 +391,20 @@ export function AlertScreen() {
   const others = alert.otherRecipients;
 
   if (alert.kind === "urgent") {
+    const onCall = alert.source === "call";
     return (
       <Screen tone="red" center bodyStyle={{ color: "#fff", gap: 18, justifyContent: "flex-start" }}>
         <span className="lbl" style={{ color: "#fff", fontSize: 15, marginTop: 20 }}>{callName} needs you now</span>
         <div style={{ position: "relative", width: 200, height: 200, display: "flex", alignItems: "center", justifyContent: "center", margin: "6px 0" }}>
           <span className="pulse-ring" style={{ inset: 0, border: "3px solid rgba(255,255,255,.35)" }} />
           <span className="pulse-ring" style={{ inset: 26, border: "3px solid rgba(255,255,255,.6)", animationDelay: ".6s" }} />
-          <span className="circle" style={{ width: 96, height: 96, background: "#fff", color: "#B3291E" }}><Icon name="bell" size={44} /></span>
+          <span className="circle" style={{ width: 96, height: 96, background: "#fff", color: "#B3291E" }}><Icon name={onCall ? "phone" : "bell"} size={44} /></span>
         </div>
-        <h1 className="h1" style={{ color: "#fff", fontSize: 40 }}>{callName} got a scam message</h1>
+        <h1 className="h1" style={{ color: "#fff", fontSize: 40 }}>{onCall ? `${callName} is on a scam call` : `${callName} got a scam message`}</h1>
         <p className="p" style={{ fontSize: 20 }}>
-          {alert.amount ? `It asks for ${rupees(alert.amount)}. Nothing is paid. ` : "Nothing is paid. "}Tell them what to do.
+          {onCall
+            ? `A caller is pressuring ${callName} right now. Call and tell them to hang up.`
+            : `${alert.amount ? `It asks for ${rupees(alert.amount)}. Nothing is paid. ` : "Nothing is paid. "}Tell them what to do.`}
         </p>
         <span className="pill medium" style={{ background: "#fff", color: "#14202B", alignSelf: "center" }}>
           {others.length ? `Sent to ${listNames(["you", ...others])}` : "Sent to you"}
@@ -421,6 +440,7 @@ export function AlertScreen() {
 export function FamilyHoldScreen() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const search = useSearchParams();
   const queryClient = useQueryClient();
   const call = useCall();
   const toast = useToast();
@@ -432,12 +452,15 @@ export function FamilyHoldScreen() {
   });
   useLeaveIfGone(q.error, "/family");
   const [advice, setAdvice] = useState(ADVICE_PRESETS[0]);
-  const [confirm, setConfirm] = useState(false);
+  // F2 "It's fine" on the lock screen lands on the approve step; approving still needs this second confirm.
+  const [confirm, setConfirm] = useState(search.get("approve") === "1");
   const [error, setError] = useState<string | null>(null);
   const hold = q.data?.hold;
   const callName = hold?.owner.callName ?? "Papa";
   const papaPhone = hold?.owner.phone ?? null;
-  const clock = useCountdown(hold?.expiresAt, q.data?.serverNow);
+  const clock = useCountdown(hold?.expiresAt, q.data?.serverNow, (hold?.holdMinutes ?? 10) * 60_000);
+  // F2 "Call Papa" on the lock screen's "You blocked it" notification.
+  useCallOnArrival(search.get("call") === "1", callName, papaPhone);
   // Advice is oldest first (Mr Rao sees the first reply), so the one just sent is last.
   const lastAdvice = hold?.advice[hold.advice.length - 1];
 
@@ -452,7 +475,13 @@ export function FamilyHoldScreen() {
   }, [fam, id]);
 
   const decide = useMutation({
-    mutationFn: (decision: "block" | "approve") => post(`/api/family/holds/${id}/decision`, { decision, confirm: decision === "approve" }),
+    mutationFn: async (decision: "block" | "approve") => {
+      // F11: words he wrote go with the block, so Papa reads them on the green screen.
+      if (decision === "block" && advice.trim() && advice.trim() !== q.data?.hold.advice[0]?.text) {
+        await post(`/api/family/holds/${id}/advice`, { text: advice.trim().slice(0, ADVICE_MAX) }).catch(() => {});
+      }
+      return post(`/api/family/holds/${id}/decision`, { decision, confirm: decision === "approve" });
+    },
     onSuccess: async (view, decision) => {
       setConfirm(false);
       await queryClient.invalidateQueries();
@@ -475,7 +504,7 @@ export function FamilyHoldScreen() {
   async function sendAdvice() {
     // Start sending, then open the dialer straight from the tap (phones only
     // allow the dialer from a user gesture); the request carries on meanwhile.
-    const sent = post(`/api/family/holds/${id}/advice`, { text: advice });
+    const sent = post(`/api/family/holds/${id}/advice`, { text: advice.trim().slice(0, ADVICE_MAX) });
     call(callName, papaPhone);
     await sent;
     await queryClient.invalidateQueries({ queryKey: ["family-hold", id] });
@@ -488,6 +517,18 @@ export function FamilyHoldScreen() {
   const msg = q.data?.message;
   const iApproved = !!fam && hold.approvedBy.includes(fam.me.name);
   const others = hold.waitingFor.filter((n) => n !== fam?.me.name);
+  const unsent = advice.trim().length > 0 && advice.trim() !== hold.advice[0]?.text;
+  const reportable = msg?.link && msg.link.status !== "known";
+  const linkRow = reportable && (
+    <button className="card row-card" style={{ padding: "10px 14px" }} onClick={() => router.push(`/family/link/${hold.checkId}`)} data-testid="link-row">
+      <Icon name="link" />
+      <div className="grow">
+        <div className="lbl">The link in {callName}&apos;s message</div>
+        <b style={{ fontSize: 16, wordBreak: "break-all" }}>{msg!.link!.domain}</b>
+      </div>
+      <span className="tag">REPORT</span>
+    </button>
+  );
 
   if (status === "blocked" || status === "approved" || status === "cancelled") {
     const me = fam?.me.name;
@@ -529,6 +570,7 @@ export function FamilyHoldScreen() {
           ))}
         </div>
         {msg && <VictimMessage msg={msg} callName={callName} />}
+        {linkRow}
         {status !== "approved" && (
           <div className="card tint-amber">
             <b style={{ fontSize: 17 }}>Next</b>
@@ -561,10 +603,11 @@ export function FamilyHoldScreen() {
         <div className="card tint-amber" style={{ gap: 6 }}>
           <h2 className="h2">Time is up. Nothing was paid.</h2>
           <p className="p" style={{ fontSize: 16 }}>
-            Nobody decided in 10 minutes, so {callName}&apos;s money is still on hold. {callName} has been told to call you or the helpline.
+            Nobody decided in {hold.holdMinutes} minutes, so {callName}&apos;s money is still on hold. {callName} has been told to call you or the helpline.
           </p>
         </div>
         {told}
+        {linkRow}
         {error && <p className="sm" style={{ color: "var(--red-text)", fontWeight: 700 }}>{error}</p>}
         <div className="spacer" />
         <button className="btn green" style={{ minHeight: 64 }} onClick={() => call(callName, papaPhone)}><Icon name="phone" />Call {callName}</button>
@@ -577,38 +620,64 @@ export function FamilyHoldScreen() {
     <Screen overlay={confirm && <ApproveSheet hold={hold} callName={callName} onKeep={() => setConfirm(false)} onApprove={() => decide.mutate("approve")} others={others} />}>
       <TitleRow title={`${callName}'s payment`} back="/family" right={<span className="pill medium ink">{clock.label}</span>} />
       <div className="row"><VerdictPill verdict={hold.verdict} size="medium" icon={false} /><span style={{ fontWeight: 800, fontSize: 18 }}>{amount} paused</span></div>
+      {hold.twoKeys && (
+        <div className="card" style={{ border: "2px solid var(--text)", gap: 6 }} data-testid="two-keys">
+          <div className="row"><Icon name="people" /><b style={{ fontSize: 17 }}>This one needs two of you</b></div>
+          <p className="sm">Above Rs 50,000 we hold for an hour and ask two trusted people, the way a bank asks two signatures. One tired person should not carry this alone.</p>
+        </div>
+      )}
       {told}
+      {linkRow}
+      {/* F11 · advice in his own words: the chips are a start, the sentence is his. */}
       <div className="card" style={{ border: "2px solid var(--text)", gap: 10 }}>
         <div className="lbl" style={{ color: "var(--text)" }}>Tell {callName} what to do</div>
-        {ADVICE_PRESETS.map((a) => (
-          <button key={a} className="row" style={{ gap: 12, alignItems: "flex-start", minHeight: 44, background: "transparent", textAlign: "left", padding: 0, color: "inherit" }} onClick={() => setAdvice(a)}>
-            <span className={`rad ${advice === a ? "on" : ""}`} />
-            <span style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.3 }}>{a}</span>
-          </button>
-        ))}
+        <div className="row wrap" style={{ gap: 8 }}>
+          {ADVICE_PRESETS.map((a) => (
+            <button key={a} className={`chip ${advice === a ? "on" : ""}`} style={{ fontSize: 14, padding: "7px 12px" }} onClick={() => setAdvice(a)}>
+              {a.split(".")[0]}
+            </button>
+          ))}
+        </div>
+        <label>
+          <div className="lbl">Your message</div>
+          <textarea
+            className="ta small"
+            aria-label="Your message"
+            value={advice}
+            maxLength={ADVICE_MAX}
+            onChange={(e) => setAdvice(e.target.value)}
+            placeholder={`${callName}, this is the same trick that got Sharma uncle. Do not pick up if they ring again. I am leaving office now.`}
+          />
+        </label>
+        <div className="row">
+          <span className="sm grow">In your words</span>
+          <span className="sm">{advice.length} / {ADVICE_MAX}</span>
+        </div>
         {lastAdvice && <p className="sm">Sent: “{lastAdvice.text}” ({lastAdvice.fromName}, {clockTime(lastAdvice.createdAt)})</p>}
       </div>
-      {(hold.approvedBy.length > 0 || hold.waitingFor.length > 1) && (
+      {(hold.twoKeys || hold.approvedBy.length > 0 || hold.waitingFor.length > 1) && (
         <div className="card" style={{ gap: 8 }}>
-          <div className="lbl" style={{ color: "var(--text)" }}>Who decides</div>
+          <div className="lbl" style={{ color: "var(--text)" }}>{hold.twoKeys ? "Who has decided" : "Who decides"}</div>
           {hold.approvedBy.map((n) => (
             <div className="row" key={n}><span className="dot" style={{ background: "#2E7D5B" }} /><b className="grow">{n === fam?.me.name ? "You" : n} approved</b></div>
           ))}
           {hold.waitingFor.map((n) => (
-            <div className="row" key={n}><span className="dot" style={{ background: "#F2A900", border: "2px solid var(--text)" }} /><b className="grow">{n === fam?.me.name ? "You" : n}: not yet</b></div>
+            <div className="row" key={n}><span className="dot" style={{ background: "#F2A900", border: "2px solid var(--text)" }} /><b className="grow">{n === fam?.me.name ? "You" : n}: {hold.twoKeys ? "alerted · waiting" : "not yet"}</b></div>
           ))}
-          <p className="sm">One Block from anyone stops it. The money moves only when everyone approves.</p>
+          <p className="sm">{hold.twoKeys ? "One block is enough to stop it. The second person is only needed to release it." : "One Block from anyone stops it. The money moves only when everyone approves."}</p>
         </div>
       )}
-      <p className="sm">Your advice shows on {callName}&apos;s screen.</p>
+      <p className="sm">He will read this on his screen. A sentence from you lands harder than a sentence from an app.</p>
       {error && <p className="sm" style={{ color: "var(--red-text)", fontWeight: 700 }}>{error}</p>}
       <div className="spacer" />
-      <button className="btn green" style={{ minHeight: 64 }} onClick={sendAdvice}><Icon name="phone" />Send advice and call {callName}</button>
-      <button className="btn red" style={{ minHeight: 64 }} disabled={decide.isPending} onClick={() => decide.mutate("block")}>Block this payment</button>
+      <button className="btn green" style={{ minHeight: 64 }} onClick={sendAdvice}><Icon name="phone" />Send and call {callName}</button>
+      <button className="btn red" style={{ minHeight: 64 }} disabled={decide.isPending} onClick={() => decide.mutate("block")} data-testid="block">
+        {unsent ? "Send and block this payment" : "Block this payment"}
+      </button>
       {iApproved ? (
-        <p className="sm center-text">You approved. Waiting for {hold.waitingFor.join(" and ")}.</p>
+        <p className="sm center-text">You approved. {hold.twoKeys ? `Release needs ${hold.waitingFor.join(" and ")} too.` : `Waiting for ${hold.waitingFor.join(" and ")}.`}</p>
       ) : (
-        <button className="btn line sm-btn" onClick={() => setConfirm(true)}>Approve (I know this payment)</button>
+        <button className="btn line sm-btn" onClick={() => setConfirm(true)}>{hold.twoKeys && others.length ? `Approve (release needs ${others.join(" and ")} too)` : "Approve (I know this payment)"}</button>
       )}
     </Screen>
   );
@@ -636,13 +705,19 @@ function VictimMessage({ msg, callName, note }: { msg: SharedMessage; callName: 
   const from =
     msg.source === "paste"
       ? `${callName} pasted it into Pause Button`
-      : `${msg.source === "sms" ? "SMS" : "WhatsApp"} from ${msg.senderLabel ?? "an unknown number"}`;
+      : msg.source === "share"
+        ? `${callName} forwarded it from ${msg.senderLabel ?? "another app"}`
+        : msg.source === "voice"
+          ? `${callName} said it aloud to Pause Button`
+          : msg.source === "call"
+            ? `${callName} answered the call guard's questions`
+            : `${msg.source === "sms" ? "SMS" : "WhatsApp"} from ${msg.senderLabel ?? "an unknown number"}`;
   return (
     <div className="card" data-testid="victim-message">
       <div className="row">
-        <Icon name="msg" />
+        <Icon name={msg.source === "call" ? "phone" : "msg"} />
         <div className="grow">
-          <div className="lbl" style={{ color: "var(--text)" }}>The message {callName} got</div>
+          <div className="lbl" style={{ color: "var(--text)" }}>{msg.source === "call" ? `What ${callName} told us` : `The message ${callName} got`}</div>
           <p className="sm">{from}</p>
         </div>
       </div>
@@ -695,17 +770,25 @@ export function FamilyCheckScreen() {
       toast({ title: "Not saved", sub: e.message, icon: "warn", tone: "red" });
     },
   });
-  const sayScam = () => answer.mutate({ verdict: "scam", note: "It is a scam. Do not pay or reply." });
-  const sayNotScam = () => answer.mutate({ verdict: "not_scam", note: "I checked. This one is fine." });
+  const [note, setNote] = useState("");
+  const sayScam = () => answer.mutate({ verdict: "scam", note: note.trim().slice(0, ADVICE_MAX) || "It is a scam. Do not pay or reply." });
+  const sayNotScam = () => answer.mutate({ verdict: "not_scam", note: note.trim().slice(0, ADVICE_MAX) || "I checked. This one is fine." });
 
   const c = q.data;
   if (!c) return <LoadingScreen />;
   const fromAsk = fam?.alerts.some((a) => a.checkId === id && a.kind === "ask") || (!!c.askedFamilyAt && !c.familyVerdict);
-  // Urgent alerts come only from pasted scams and pay attempts, so the title
+  // Urgent alerts come only from scams he brought in himself and pay attempts, so the title
   // stays "Scam alert" when the screen is reopened after the alert is handled.
   const urgent =
-    !fromAsk && (!!fam?.alerts.some((a) => a.checkId === id && a.kind === "urgent") || !!c.hold || (c.verdict === "SCAM" && c.source === "paste"));
+    !fromAsk && (!!fam?.alerts.some((a) => a.checkId === id && a.kind === "urgent") || !!c.hold || (c.verdict === "SCAM" && c.source !== "sms" && c.source !== "whatsapp"));
   const pending = c.hold && c.hold.status === "pending";
+  const onCall = c.source === "call";
+  const sourceLine =
+    c.source === "paste" ? `Checked by ${callName}`
+    : c.source === "share" ? `Forwarded by ${callName} from ${c.senderLabel ?? "another app"}`
+    : c.source === "voice" ? `${callName} said it aloud`
+    : onCall ? `${callName} is on a call right now`
+    : `Detected on ${callName}'s phone · ${c.source === "sms" ? "SMS" : "WhatsApp"} · ${c.senderLabel}`;
   // The design's quiet heads-up (O2) says "Mark as handled"; urgent alerts and questions say "It's a scam".
   const myKinds = fam?.alerts.filter((a) => a.checkId === id).map((a) => a.kind) ?? [];
   const headsUpOnly = myKinds.length > 0 && myKinds.every((k) => k === "headsup");
@@ -727,10 +810,21 @@ export function FamilyCheckScreen() {
         )
       }
     >
-      <TitleRow title={fromAsk ? `${callName} is asking` : urgent ? "Scam alert" : "Heads-up"} back="/family" right={<VerdictPill verdict={c.finalVerdict} size="medium" icon={false} />} />
-      <p className="sm">
-        {c.source === "paste" ? `Checked by ${callName}` : `Detected on ${callName}'s phone · ${c.source === "sms" ? "SMS" : "WhatsApp"} · ${c.senderLabel}`} · {clockTime(c.createdAt)}
-      </p>
+      <TitleRow title={onCall ? `${callName} is on a scam call` : fromAsk ? `${callName} is asking` : urgent ? "Scam alert" : "Heads-up"} back="/family" right={<VerdictPill verdict={c.finalVerdict} size="medium" icon={false} />} />
+      <p className="sm">{sourceLine} · {clockTime(c.createdAt)}</p>
+      {onCall && c.callAnswers && (
+        <div className="card solid-red" style={{ gap: 8 }}>
+          <b style={{ fontSize: 18 }}>Call {callName} now and tell them to hang up.</b>
+          {(["video", "money", "secrecy"] as const).map((k) => (
+            <div className="row" key={k} style={{ color: "#fff" }}>
+              <Icon name={c.callAnswers![k] ? "x" : "check"} size={20} />
+              <span style={{ fontSize: 15, fontWeight: 700 }}>
+                {k === "video" ? "Video call" : k === "money" ? "Asked for money or a code" : "Asked for secrecy"}: {c.callAnswers![k] ? "yes" : "no"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {c.messageText ?? c.simText ? (
         <VictimMessage
           msg={{ text: (c.messageText ?? c.simText)!, signals: c.signals, link: c.link, source: c.source, senderLabel: c.senderLabel }}
@@ -744,12 +838,22 @@ export function FamilyCheckScreen() {
           {c.familyTitle && <p className="sm">Looks like {c.familyTitle[0].toLowerCase() + c.familyTitle.slice(1)}.</p>}
         </div>
       )}
+      {c.reportable && (
+        <button className="card row-card" style={{ padding: "10px 14px" }} onClick={() => router.push(`/family/link/${c.id}`)} data-testid="link-row">
+          <Icon name="link" />
+          <div className="grow">
+            <div className="lbl">The link in {callName}&apos;s message</div>
+            <b style={{ fontSize: 16, wordBreak: "break-all" }}>{c.reportable.domain}</b>
+          </div>
+          <span className="tag">{c.reportable.reported === "blocked" ? "BLOCKED" : c.reportable.reported === "none" ? "REPORT" : "REPORTED"}</span>
+        </button>
+      )}
       {pending ? (
         <button className="card solid-red" onClick={() => router.push(`/family/hold/${c.hold!.id}`)}>
           <b style={{ fontSize: 17 }}>{rupees(c.hold!.amount)} payment paused</b>
           <p className="sm" style={{ color: "#fff" }}>Open it to block or approve.</p>
         </button>
-      ) : (
+      ) : onCall ? null : (
         <div className="card">
           <b style={{ fontSize: 17 }}>No payment has been paused</b>
           <p className="sm">If {callName} tries to pay, you get an urgent alert and they cannot continue until you decide.</p>
@@ -782,6 +886,13 @@ export function FamilyCheckScreen() {
           <p style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>{whatToSay(c.verdict, callName)}</p>
         </div>
       )}
+      {c.canAnswer && !pending && (
+        <label className="card" style={{ gap: 6 }}>
+          <div className="lbl">In your words (optional)</div>
+          <textarea className="ta small" aria-label="In your words" value={note} maxLength={ADVICE_MAX} onChange={(e) => setNote(e.target.value)} placeholder={`${callName}, do not pick up if they ring again.`} />
+          <span className="sm" style={{ alignSelf: "flex-end" }}>{note.length} / {ADVICE_MAX}</span>
+        </label>
+      )}
       <div className="spacer" />
       <button className="btn green" onClick={() => call(callName, papaPhone)}><Icon name="phone" />Call {callName}</button>
       {c.canAnswer && !pending && (
@@ -808,7 +919,10 @@ export function ActivityScreen() {
   );
   return (
     <Screen tabs={<FamilyTabs active="activity" callName={label} />}>
-      <h1 className="h1">Activity</h1>
+      <div className="row">
+        <h1 className="h1 grow">Activity</h1>
+        <button className="ghost" onClick={() => router.push("/family/month")}>Your month</button>
+      </div>
       <div className="row" style={{ gap: 8 }}>
         {(["all", "scams", "safe"] as const).map((f) => (
           <button key={f} className={`chip ${filter === f ? "on" : ""}`} onClick={() => setFilter(f)}>{f[0].toUpperCase() + f.slice(1)}</button>
@@ -896,6 +1010,8 @@ export function FamilySettingsScreen() {
         <div className="lbl">Demo tools</div>
         <button className="btn redline" onClick={reset}>Reset demo data</button>
         <p className="sm">Clears all holds and checks. Use between judges.</p>
+        <button className="btn line md-btn" onClick={() => router.push("/family/lock")}><Icon name="lock" />Show the lock screen</button>
+        <p className="sm">What an urgent alert looks like with the phone locked: Block works without unlocking.</p>
       </div>
       <div className="spacer" />
       <button className="ghost" style={{ alignSelf: "center" }} onClick={signOut}>Sign out</button>

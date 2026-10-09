@@ -56,6 +56,20 @@
                 android:value="@string/default_host" />
         </activity>
 
+        <!-- F1 · "Forward to Pause": Pause Button in the Share sheet of WhatsApp, Messages and any text app. -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="@string/share_label"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
         <!-- "Connect this phone": receives pausebutton://pair?code=…&host=… from the web app. -->
         <activity
             android:name=".PairActivity"

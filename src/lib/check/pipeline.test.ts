@@ -91,4 +91,38 @@ describe("checkMessage", () => {
     const r = await checkMessage(example("courier"), { ai: "off" });
     expect(r.ai.status).toBe("unavailable");
   });
+
+  it("F8: no rule matched, the AI's quoted words convict it → SCAM marked as a new trick", async () => {
+    const msg = "Your gas subsidy will lapse tonight unless you confirm your account on this link. Kindly handle it yourself quietly.";
+    gate.probability = 0.5; // the model's hunch brings it to SUSPICIOUS, so Claude reads it
+    ai.reading = {
+      status: "ok",
+      model: "claude-haiku-5-5",
+      label: "scam",
+      scamType: "fake subsidy link",
+      signals: [
+        { type: "fear", phrase: "lapse tonight", start: 22, end: 35, by: "ai" },
+        { type: "secrecy", phrase: "handle it yourself quietly", start: 95, end: 121, by: "ai" },
+      ],
+    };
+    const r = await checkMessage(msg);
+    expect(r.verdict).toBe("SCAM");
+    expect(r.decidedBy).toBe("ai");
+    expect(r.novel).toBe(true);
+    expect(r.ai.family).toBe("fake subsidy link");
+
+    // The same AI reading on a message the rules already caught is not novel.
+    const caught = await checkMessage(example("courier"));
+    expect(caught.novel).toBe(false);
+  });
+
+  it("F9: a domain families reported and a reviewer blocked counts like the file blocklist", async () => {
+    const open = await checkMessage("Please renew at gas-subsidy-renew.top today.");
+    expect(open.link?.status).toBe("risky"); // an odd ending, but not on any list yet
+    const r = await checkMessage("Please renew at gas-subsidy-renew.top today.", { blockedDomains: ["gas-subsidy-renew.top"] });
+    expect(r.link?.status).toBe("blocked");
+    expect(r.hardRule).toBe("bad_link");
+    const official = await checkMessage("Track at bluedart.com.", { blockedDomains: ["bluedart.com"] });
+    expect(official.link?.status).toBe("known"); // official sites win over any blocklist
+  });
 });

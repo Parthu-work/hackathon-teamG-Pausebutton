@@ -73,6 +73,29 @@ const PATHS = {
   search: <path d="M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14zM21 21l-4.5-4.5" />,
   list: <path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />,
   inbox: <path d="M4 5h16v11H9l-5 4V5z" />,
+  mic: (
+    <>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />
+    </>
+  ),
+  speaker: <path d="M4 9v6h4l5 4V5L8 9H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" />,
+  share: <path d="M12 3v13M7 8l5-5 5 5M5 14v6h14v-6" />,
+  video: (
+    <>
+      <rect x="3" y="7" width="12" height="10" rx="2" />
+      <path d="M15 11l6-3v8l-6-3" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </>
+  ),
+  rupee: <path d="M7 4h10M7 8h10M7 4c5 0 7 2 7 5s-2 5-7 5l7 6" />,
+  flag: <path d="M5 21V4h11l-2 4 2 4H5" />,
+  hangup: <path d="M3 14a16 16 0 0 1 18 0l-1.5 3-4-1v-3a10 10 0 0 0-7 0v3l-4 1L3 14z" />,
 };
 
 export type IconName = keyof typeof PATHS;

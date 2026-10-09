@@ -94,18 +94,25 @@ function FamilyShellInner({ children }: { children: React.ReactNode }) {
     }
   }, [q.data, linked, pathname, router]);
 
-  // A new alert: buzz, flash and sound, then open it full screen (I1 / O1).
+  // New alerts: buzz, flash and sound, then open the most important one full
+  // screen (I1 / O1). Several can arrive in one poll (a quiet heads-up for a
+  // watched message, then the urgent alert when it is forwarded): the urgent
+  // one wins, and a lesser alert never takes over a screen that is already
+  // showing an urgent alert or its payment.
   const alerts = q.data?.alerts;
   useEffect(() => {
     if (!alerts || !q.data) return;
     const played = playedSet();
-    const fresh = alerts.find((a) => !a.openedAt && !played.has(a.id));
-    if (!fresh) return;
-    remember(fresh.id);
-    playAlarm(fresh.kind === "urgent" ? "urgent" : "quiet", { sound: q.data.me.alertSound, vibrate: q.data.me.alertVibrate });
-    void post(`/api/family/alerts/${fresh.id}/played`).catch(() => {});
-    const busyOnIt = fresh.holdId && pathname === `/family/hold/${fresh.holdId}`;
-    if (!busyOnIt) router.push(`/family/alert/${fresh.id}`);
+    const fresh = alerts.filter((a) => !a.openedAt && !played.has(a.id));
+    if (!fresh.length) return;
+    fresh.forEach((a) => remember(a.id));
+    const rank = { urgent: 0, ask: 1, headsup: 2 };
+    const top = [...fresh].sort((a, b) => rank[a.kind] - rank[b.kind])[0];
+    playAlarm(top.kind === "urgent" ? "urgent" : "quiet", { sound: q.data.me.alertSound, vibrate: q.data.me.alertVibrate });
+    for (const a of fresh) void post(`/api/family/alerts/${a.id}/played`).catch(() => {});
+    const busyOnIt = top.holdId && pathname === `/family/hold/${top.holdId}`;
+    const onUrgent = top.kind !== "urgent" && alerts.some((a) => a.kind === "urgent" && (pathname === `/family/alert/${a.id}` || (a.holdId && pathname === `/family/hold/${a.holdId}`)));
+    if (!busyOnIt && !onUrgent) router.push(`/family/alert/${top.id}`);
   }, [alerts, q.data, pathname, router]);
 
   return (

@@ -9,7 +9,11 @@ export const GET = route(async () => {
   return listChecks(db, user.id);
 });
 
-/** D2 → D3: check a pasted message. The text is checked and then dropped. */
+/**
+ * D2 → D3: check a pasted message. The text is checked and then dropped.
+ * F1: source "share" is a message forwarded from another app (senderLabel
+ * names the app); F10: "voice" is one Mr Rao spoke instead of typing.
+ */
 export const POST = route(async (req) => {
   const { db, user } = await requireUser("rao");
   const body = await readBody(
@@ -17,9 +21,11 @@ export const POST = route(async (req) => {
     z.object({
       text: z.string().trim().min(1, "Paste or pick a message first.").max(MAX_MESSAGE_CHARS),
       title: z.string().max(60).optional(),
+      source: z.enum(["paste", "share", "voice"]).default("paste"),
+      senderLabel: z.string().trim().max(40).optional(),
     }),
   );
-  return createCheck(db, user, { text: body.text, title: body.title, source: "paste" });
+  return createCheck(db, user, { text: body.text, title: body.title, source: body.source, senderLabel: body.senderLabel ?? null });
 });
 
 /** P3 "Delete my history". */

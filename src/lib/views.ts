@@ -1,7 +1,8 @@
 // JSON shapes the API returns to the screens. Dates are ISO strings.
-import type { AiStatus, Evidence, HardRule, LinkInfo, ScamFamily, Verdict } from "@/lib/check/types";
+import type { AiStatus, CallAnswers, CheckSource, Evidence, HardRule, LinkInfo, ScamFamily, Verdict } from "@/lib/check/types";
 
 export type HoldStatus = "pending" | "blocked" | "approved" | "cancelled" | "expired";
+export type Language = "en" | "hi" | "te";
 
 export type AdviceView = { id: string; fromName: string; text: string; createdAt: string };
 
@@ -32,14 +33,39 @@ export type HoldView = {
   advice: AdviceView[];
   /** Whose payment this is. */
   owner: OwnerView;
+  /** F13: above Rs 50,000 the hold lasts an hour and release needs every trusted person. */
+  twoKeys: boolean;
+  holdMinutes: number;
 };
 
 /** What the family member reads after opening an alert: the exact message, with its warning phrases. */
-export type SharedMessage = { text: string; signals: Evidence[]; link: LinkInfo | null; source: "paste" | "sms" | "whatsapp"; senderLabel: string | null };
+export type SharedMessage = { text: string; signals: Evidence[]; link: LinkInfo | null; source: CheckSource; senderLabel: string | null };
+
+/** F3: the same message seen by other households, counted by fingerprint only. */
+export type CampaignView = {
+  /** Other households that got this message in the last 24 hours. */
+  households: number;
+  firstSeenAt: string;
+  /** More than a handful in a day: "spreading fast". */
+  spreading: boolean;
+};
+
+/** F9a: the link in the message, as the family member can report it. */
+export type ReportableLink = {
+  domain: string;
+  status: LinkInfo["status"];
+  reason: string;
+  /** Official sites cannot be reported. */
+  protectedSite: boolean;
+  /** This member already reported it, or it is already blocked. */
+  reported: "none" | "pending" | "blocked" | "rejected";
+  /** Households kept away from reported-and-blocked sites this week. */
+  familiesProtected: number;
+};
 
 export type CheckView = {
   id: string;
-  source: "paste" | "sms" | "whatsapp";
+  source: CheckSource;
   senderLabel: string | null;
   title: string;
   verdict: Verdict;
@@ -64,7 +90,16 @@ export type CheckView = {
   modelTerms: string[];
   aiStatus: AiStatus;
   aiModel: string | null;
+  aiScamType: string | null;
   degraded: boolean;
+  /** F8: no rule matched; the AI's own quoted words convicted it. */
+  novel: boolean;
+  /** F6: the live-call guard's answers, for a check with source "call". */
+  callAnswers: CallAnswers | null;
+  /** F3: other households that got the same message (null when it is only this one). */
+  campaign: CampaignView | null;
+  /** F9a: for family members, the link they can report. */
+  reportable: ReportableLink | null;
   createdAt: string;
   alertedNames: string[];
   askedFamilyAt: string | null;
@@ -103,7 +138,7 @@ export type MeView = {
   name: string;
   phone: string;
   textSize: "A" | "A+" | "A++";
-  language: string;
+  language: Language;
   watchSms: boolean;
   watchWhatsapp: boolean;
   unknownOnly: boolean;
@@ -145,7 +180,7 @@ export type AlertView = {
   title: string;
   phrases: string[];
   amount: number | null;
-  source: "paste" | "sms" | "whatsapp";
+  source: CheckSource;
   senderLabel: string | null;
   otherRecipients: string[];
   /** Whose message this alert is about (Papa, Mummy, …). */
@@ -181,6 +216,108 @@ export type ActivityItem = {
   createdAt: string;
   checkId: string;
   owner: OwnerView;
+};
+
+/** F12: the household ledger, this month, for a family member. */
+export type LedgerView = {
+  /** "October 2026" */
+  month: string;
+  paused: number;
+  /** Rupees kept in the account: blocked holds this month. */
+  heldAmount: number;
+  checked: number;
+  fine: number;
+  stopped: { holdId: string; checkId: string; title: string; amount: number; by: string; at: string; owner: string }[];
+  /** Quickest block this month, from alert to decision. */
+  fastest: { ms: number; title: string; by: string } | null;
+  /** Scams going around: the week's biggest campaigns. */
+  area: { title: string; households: number }[];
+};
+
+/** F2: what the lock screen shows: the newest urgent alert that still needs this person. */
+export type LockView = {
+  alert: AlertView | null;
+  hold: HoldView | null;
+  serverNow: string;
+};
+
+// ---------------- operator views ----------------
+
+/** F3b: one campaign row on /campaigns. */
+export type CampaignRow = {
+  fingerprint: string;
+  title: string;
+  family: ScamFamily | null;
+  households: number;
+  last24h: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+};
+
+export type CampaignsView = {
+  active: number;
+  fastest: CampaignRow | null;
+  householdsReached: number;
+  rows: CampaignRow[];
+  synthetic: number;
+};
+
+/** F4: where families overruled us, grouped by the stage that decided. */
+export type DisagreementStage = {
+  stage: string;
+  checks: number;
+  agreed: number;
+  overruled: number;
+  suggests: string;
+};
+
+export type DisagreementsView = {
+  days: number;
+  withAnswer: number;
+  scamApproved: number;
+  safeSaidScam: number;
+  agreementPct: number | null;
+  stages: DisagreementStage[];
+  /** The checks a family approved after we called them a scam: signals only, never text. */
+  mostImportant: { id: string; title: string; stage: string; phrases: string[]; by: string; at: string }[];
+};
+
+/** F7: our regex story against Claude's name for the trick, on the last AI test run. */
+export type FamilyRow = {
+  id: number;
+  text: string;
+  testLabel: string;
+  ours: ScamFamily | null;
+  claude: string | null;
+  shown: string;
+  outcome: "agree" | "close" | "differ" | "fallback" | "no_ai";
+};
+
+export type FamiliesView = {
+  run: { model: string; createdAt: string } | null;
+  agree: number;
+  compared: number;
+  differ: number;
+  fallback: number;
+  enumSize: number;
+  unmatchedTestLabels: string[];
+  rows: FamilyRow[];
+  /** Real checks that carry Claude's name for the trick. */
+  storedOnChecks: number;
+};
+
+/** F9b: one reported domain in the review queue. */
+export type ReportView = {
+  id: string;
+  domain: string;
+  reportedBy: string;
+  otherReporters: number;
+  seenIn: number;
+  autoCheck: string;
+  autoReason: string;
+  status: "pending" | "blocked" | "rejected";
+  protectedSite: boolean;
+  createdAt: string;
 };
 
 /** An Android phone paired to watch messages (M2/M3 status). */

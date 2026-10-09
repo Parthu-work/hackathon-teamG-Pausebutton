@@ -3,4 +3,5 @@
     <string name="app_name">Pause Button</string>
     <string name="connect_title">Connect this phone</string>
     <string name="watcher_label">Pause Button message watcher</string>
+    <string name="share_label">Pause Button</string>
 </resources>

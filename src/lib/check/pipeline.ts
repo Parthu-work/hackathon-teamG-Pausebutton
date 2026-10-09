@@ -12,6 +12,8 @@ export type CheckOptions = {
   ai?: "auto" | "off";
   aiModel?: AiModelKey;
   aiTimeoutMs?: number;
+  /** Domains families reported and a reviewer blocked (F9); they count like the file blocklist. */
+  blockedDomains?: string[];
 };
 
 /**
@@ -25,7 +27,7 @@ export type CheckOptions = {
 export async function checkMessage(input: string, opts: CheckOptions = {}): Promise<CheckResult> {
   const text = input.slice(0, MAX_MESSAGE_CHARS);
   const rules = runRules(text);
-  const link = worstLink(findLinks(text));
+  const link = worstLink(findLinks(text, opts.blockedDomains));
   const gate = scoreGate(text);
   const modelScore = gate ? Math.round(gate.probability * 100) : null;
 
@@ -37,6 +39,10 @@ export async function checkMessage(input: string, opts: CheckOptions = {}): Prom
   let decidedBy: CheckResult["decidedBy"] = hardRule ? "hard_rule" : "score";
   let ai: CheckResult["ai"] = { status: "not_needed" };
   let degraded = false;
+  // F8: nothing we know matched (no phrase, no link, no code request) and
+  // only the model's hunch brought it here. If Claude then convicts it with
+  // quoted words, that is a new trick, and we say so.
+  const nothingMatched = signals.length === 0 && !link && rules.credential.length === 0;
 
   if (verdict === "SUSPICIOUS") {
     if (opts.ai === "off") {
@@ -75,6 +81,7 @@ export async function checkMessage(input: string, opts: CheckOptions = {}): Prom
     modelTerms: rulesScore === 0 && gate ? explainTerms(gate.topTerms.map((t) => t.term)) : [],
     ai,
     degraded,
+    novel: decidedBy === "ai" && nothingMatched,
   };
 }
 

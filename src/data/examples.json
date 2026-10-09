@@ -7,7 +7,7 @@
   {
     "id": "kyc",
     "label": "Bank KYC link",
-    "text": "Dear SBI customer, your account will be blocked today. Update your KYC now at sbi-kyc-update.com to avoid suspension."
+    "text": "Dear SBI customer, your account will be blocked today. Update your KYC now at sbi-kyc-verify.in to avoid suspension."
   },
   {
     "id": "courier",
@@ -23,5 +23,10 @@
     "id": "bank",
     "label": "Real bank alert",
     "text": "HDFC Bank: Rs 2,450.00 debited from a/c **4321 on 09-10-26 to VPA swiggy@icici. If this was not you, call the number on the back of your card."
+  },
+  {
+    "id": "hindi",
+    "label": "लॉटरी (Hindi)",
+    "text": "बधाई हो! आपने 10 लाख रुपये की लॉटरी जीती है। इनाम पाने के लिए 5,000 रुपये रजिस्ट्रेशन फीस तुरंत जमा करें और किसी को न बताएं।"
   }
 ]

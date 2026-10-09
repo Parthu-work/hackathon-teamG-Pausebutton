@@ -13,6 +13,9 @@ const OFFICIAL = [
   "licindia.in", "airtel.in", "jio.com", "myvi.in", "tsspdcl.in", "apspdcl.in", "bescom.co.in",
 ];
 
+/** How many official sites the permanent allowlist holds (shown on /reports). */
+export const OFFICIAL_COUNT = OFFICIAL.length;
+
 // Words that, inside an unofficial domain, mean it is pretending to be a brand.
 const BRANDS = [
   "sbi", "yono", "hdfc", "icici", "axis", "axisbank", "kotak", "pnb", "baroda", "canara", "paytm", "phonepe",
@@ -58,16 +61,32 @@ const LINK_RE = new RegExp(
 
 const RANK: Record<LinkStatus, number> = { known: 0, unknown: 1, risky: 2, lookalike: 3, blocked: 4 };
 
-export function findLinks(original: string): LinkInfo[] {
+/**
+ * Every link in the message, classified. `liveBlocked` is the list of domains
+ * families reported and a reviewer blocked (F9): it joins the file blocklist
+ * with no redeploy.
+ */
+export function findLinks(original: string, liveBlocked: string[] = []): LinkInfo[] {
   const links: LinkInfo[] = [];
   for (const m of original.matchAll(LINK_RE)) {
     const url = m[0].replace(/[.,;:!?)\]]+$/, "");
     const domain = (m[1] ?? m[2] ?? "").toLowerCase().replace(/^www\./, "");
     if (!domain) continue;
-    const { status, reason } = classify(domain, !!m[2]);
+    const { status, reason } = classify(domain, !!m[2], liveBlocked);
     links.push({ url, domain, status, reason, start: m.index!, end: m.index! + url.length });
   }
   return links;
+}
+
+/** What the checker already thinks of a bare domain (used when a family member reports it, F9). */
+export function classifyDomain(domain: string): { status: LinkStatus; reason: string } {
+  const clean = domain.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[/?#:]/)[0];
+  return classify(clean, /^(?:\d{1,3}\.){3}\d{1,3}$/.test(clean));
+}
+
+/** Official sites can never be blocked, whoever reports them. */
+export function isOfficialDomain(domain: string) {
+  return isOfficial(domain.toLowerCase().replace(/^www\./, ""));
 }
 
 /** The most dangerous link in the message, if any. */
@@ -75,11 +94,14 @@ export function worstLink(links: LinkInfo[]): LinkInfo | null {
   return links.reduce<LinkInfo | null>((worst, l) => (!worst || RANK[l.status] > RANK[worst.status] ? l : worst), null);
 }
 
-function classify(domain: string, isIp: boolean): { status: LinkStatus; reason: string } {
+function classify(domain: string, isIp: boolean, liveBlocked: string[] = []): { status: LinkStatus; reason: string } {
   if (isIp) return { status: "risky", reason: "It is a bare number address, which real firms do not use." };
+  // Official sites first: a report against one is refused, so it can never end up blocked.
+  if (isOfficial(domain)) return { status: "known", reason: "This is an official site." };
   if ((blocklist as string[]).some((b) => domain === b || domain.endsWith("." + b)))
     return { status: "blocked", reason: "This site is on our list of known scam sites." };
-  if (isOfficial(domain)) return { status: "known", reason: "This is an official site." };
+  if (liveBlocked.some((b) => domain === b || domain.endsWith("." + b)))
+    return { status: "blocked", reason: "Other families reported this site as fake and we checked it." };
   if (SHORTENERS.includes(domain))
     return { status: "risky", reason: "A short link hides the real site it opens." };
 

@@ -24,6 +24,9 @@ export type TestResult = {
   outcome: TestOutcome;
   note: string;
   aiStatus: string;
+  /** F7: the family our rules picked (drives the story shown) and the trick as Claude named it. */
+  ourFamily?: string | null;
+  aiScamType?: string | null;
 };
 
 export type TestSummary = {
@@ -72,6 +75,8 @@ export async function runTestSet(mode: TestMode): Promise<{ summary: TestSummary
           outcome,
           note: `${why} · rules ${r.rulesScore}% · model ${r.modelScore ?? "–"}%`,
           aiStatus: r.ai.status,
+          ourFamily: r.family,
+          aiScamType: r.ai.family ?? null,
         } satisfies TestResult;
       }),
     );

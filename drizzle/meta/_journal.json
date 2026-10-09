@@ -43,6 +43,13 @@
       "when": 1791554639427,
       "tag": "0005_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791558585447,
+      "tag": "0006_phase2",
+      "breakpoints": true
     }
   ]
 }

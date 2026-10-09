@@ -1,8 +1,8 @@
-# Pause Button: phase 1 simulator
+# Pause Button: simulator and Android app
 
 A calm second opinion before the money moves. An older person (Mr Rao) checks a worrying message. If it is a scam, the app stops him, pauses the payment and alerts his family (Arjun, Meera). Arjun then blocks or approves the payment from his own phone.
 
-Phase 1 is a **simulator**: a web app that runs on any phone or laptop. It has no real SMS, no real money and no real calls; every message is made up. The screens follow the design file (screens A–L, P, Q and parts of N/O).
+The **simulator** is a web app that runs on any phone or laptop. It has no real SMS, no real money and no real calls; every message is made up. The screens follow the design file: phase 1 (screens A–L, P, Q and parts of N/O), the Android watcher (M), and the phase 2 feature proposals F1–F14 (see "Phase 2" below).
 
 ## Run it
 
@@ -21,8 +21,10 @@ Nothing else is needed to run the app. Without `DATABASE_URL` the app runs an em
 |---|---|
 | `/` | Mr Rao's phone (redirects to `/welcome` until signed in) |
 | `/family` | Arjun's phone |
-| `/demo` | Operator panel: both phones side by side, live event log, reset, scam sample, Wi-Fi drop |
-| `/tests` | Operator page: the 40-message test set, with misses listed verbatim |
+| `/demo` | Operator panel: both phones side by side, live event log, reset, scam sample, Wi-Fi drop, lock-screen toggle per family phone |
+| `/tests` | Operator page: the 40-message test set, with misses listed verbatim; tabs **Disagreements** (F4) and **Families** (F7) |
+| `/campaigns` | Operator page: campaign radar, messages grouped by fingerprint (F3) |
+| `/reports` | Operator page: family-reported domains waiting for review (F9) |
 
 **Sign-in is mock.** Use "Continue as Mr Rao / Mrs Rao / Arjun / Meera (demo)", or any 10-digit number with code `1234`. A new number goes through "Who is this phone for?" and the setup and invite screens. The demo household: Mr Rao ("Papa") and Mrs Rao ("Mummy") are both protected by Arjun and Meera, so each family phone shows a **"Who you protect"** list with one card per parent; Mr Rao's friend Dinesh is invited but waiting. Invite codes: Mr Rao's `PB-4K7Q` (Arjun), `PB-9M2X` (Meera), `PB-7H3D` (Dinesh); Mrs Rao's `PB-2M8R` (Arjun), `PB-5T6W` (Meera). A family member links another person from Settings → "Link another person".
 
@@ -38,13 +40,37 @@ Nothing else is needed to run the app. Without `DATABASE_URL` the app runs an em
 `/demo` shows three phones: the left one switches between **Mr Rao (Papa)** and **Mrs Rao (Mummy)**, then **Arjun** (son) and **Meera** (daughter). Tap Arjun's and Meera's phones once so they may play sound.
 
 1. Press **Reset demo data**.
-2. On Mr Rao's phone, tap **CBI parcel call** → **Check this message**. He sees **STOP**, then the SCAM verdict. Rs 80,000 is paused for 10 minutes.
-3. Both family phones buzz, flash and sound (I1). On Arjun's phone: **Open**: he reads **the exact message Papa got**, with the warning signs highlighted → choose advice → **Send advice and call Papa** (opens the dialer) → **Block this payment**.
-4. One Block settles it: Mr Rao's phone jumps to **Payment cancelled**, and Meera's alert closes.
+2. On Mr Rao's phone, tap **CBI parcel call** → **Check this message**. He sees **STOP**, then the SCAM verdict with "47 other families got this today" (F3). Rs 80,000 is above the two-key line (F13), so it is paused for an hour and release needs both Arjun and Meera.
+3. Both family phones buzz, flash and sound (I1). On Arjun's phone: **Open**: he reads **the exact message Papa got**, with the warning signs highlighted → write a sentence in his own words (F11) → **Send and call Papa** (opens the dialer) → **Block this payment**.
+4. One Block settles it: Mr Rao's phone jumps to **Payment cancelled**, Meera's alert closes, and Arjun's home now shows the ledger: "1 payment paused · Rs 80,000 held" (F12).
 5. **Courier fee** gives SUSPICIOUS → **Ask Arjun** → Arjun answers **This is not a scam**. Mr Rao still sees SUSPICIOUS, with "Arjun: not a scam · Waiting for Meera…". When Meera also answers **This is not a scam**, he sees "Arjun and Meera checked it. It is not a scam." If Meera says **It's a scam** instead, it becomes a SCAM.
-6. **Run a scam sample** (or "Receive a test scam message" in the simulated inbox). The message arrives by WhatsApp, a banner appears, and both get a quiet heads-up.
+6. **Run a scam sample** (or "Receive a test scam message" in the simulated inbox). The message arrives by WhatsApp, a banner appears, and both get a quiet heads-up. In the inbox, **Share → Send to Pause Button** forwards it with no copy and no paste (F1).
+7. **Lock screen** on Arjun's phone (chip above his frame) after step 2: the notification carries **Block payment**; it works without unlocking (F2).
+8. **Someone is calling me** on Mr Rao's home: three questions, then **HANG UP**, and Arjun's phone says "Papa is on a scam call" (F6).
+9. Settings → **Language** → हिन्दी, then check **लॉटरी (Hindi)**: every screen and the verdict speak Hindi (F5).
 
 On real phones, sign the third phone in with **Continue as Meera (demo)**.
+
+## Phase 2 (design screens F1–F14)
+
+All fourteen proposals are built in the simulator; the Android app carries the native piece of F1. Every number on the operator pages comes from columns the app already writes; the "other households" in the demo are synthetic sightings (`src/data/campaigns.json`), labelled as such.
+
+| # | Feature | Where it lives |
+|---|---|---|
+| F1 | **Forward to Pause**: no copy, no paste. "Pause Button" in the phone's Share sheet (Android `ShareActivity`, PWA `share_target`) lands on `/share`, which checks the text and opens the verdict with "FORWARDED FROM WHATSAPP" and "What they asked for". The simulated inbox has the same Share sheet. | `src/screens/rao/share.tsx`, `android/…/ShareActivity.java` |
+| F2 | **Lock-screen alerts with Block built in**: the Web Push notification for a paused payment carries **Block payment** and **It's fine**; Block works in the service worker without opening the app and answers "You blocked it". "It's fine" opens the approve step (approving always needs the second confirm). The simulator's `/family/lock` is the same notification on a locked phone. | `public/sw.js`, `src/screens/family/phase2.tsx` |
+| F3 | **Campaign radar**: every scam or suspicious check records a sighting (fingerprint + household key, never text). The verdict says "N other families got this today"; `/campaigns` lists campaigns by fingerprint. | `src/lib/server/sightings.ts` |
+| F4 | **Disagreement report**: `/tests → Disagreements` groups every check with a family answer by the stage that decided it (hard rule, score band, Claude) and lists the scams a family approved, signals only. | `src/lib/server/ops.ts` |
+| F5 | **Hindi and Telugu, for real**: Settings → Language. Every Mr Rao screen and warning reads from one dictionary per language (`src/lib/i18n`); verdict copy comes back from the server in his language; family screens stay English. Native-speaker sign-off is still required before shipping. | `src/lib/i18n/*.ts`, `src/screens/rao/language.tsx` |
+| F6 | **Live-call guard**: "Someone is calling me" on the home screen. Three yes/no questions; any yes convicts the call (hard rule `live_call`), the family gets an urgent "Papa is on a scam call" alert, and the answers become a short account the rules highlight. | `src/lib/server/calls.ts`, `src/screens/rao/call.tsx` |
+| F7 | **Measure the scam family**: Claude's `scam_type` is now stored (`checks.ai_scam_type`); `/tests → Families` compares our regex family with Claude's name for the trick on the last Claude run. | `src/lib/server/ops.ts` |
+| F8 | **Novel-scam escape hatch**: when no rule and no link matched and Claude's quoted words convict it, the check is marked `novel`; the verdict shows **NEW TRICK**, "The words that gave it away" (verified letter by letter) and "None of our usual rules matched". | `src/lib/check/pipeline.ts` |
+| F9 | **Family-reported domains**: an alerted member reports the link in two taps; `/reports` is the review queue; **Block** adds the domain to the live blocklist the checker reads on every check (no redeploy). Official sites are refused on sight. | `src/lib/server/reports.ts`, `src/lib/check/links.ts` |
+| F10 | **Speak and listen**: "Read it aloud" on every verdict (speech synthesis, in his language); "Speak instead of typing" on the home screen (speech recognition, Chrome). | `src/lib/client/speech.ts`, `src/screens/rao/speak.tsx` |
+| F11 | **Advice in his own words**: the chips fill a textarea (200 characters); **Send and block this payment** / **Send and call Papa**. The same box sits under "It's a scam" on the heads-up screen. | `src/screens/family/screens.tsx` |
+| F12 | **The household ledger**: "This month: N payments paused · Rs X held" and "What we stopped" on the family home; `/family/month` is the monthly note with the fastest answer and the scams going around, with **Share this with the family**. | `src/lib/server/ledger.ts` |
+| F13 | **Two keys for large amounts**: above Rs 50,000 the hold lasts an hour (`TWO_KEY_HOLD_MINUTES`), both phones say "This one needs two of you", and "Who has decided" is always shown. One Block still stops it; release needs everyone. | `src/lib/server/holds.ts` |
+| F14 | **States that keep trust**: the payment and hold screens say "We cannot reach the app · The money is still held" instead of a spinner; a failed history load says so instead of "No checks yet"; the history search and All/Scams/Safe filters work. | `src/screens/rao/evidence.tsx`, `hold.tsx`, `history.tsx` |
 
 ## How a message is checked
 
@@ -54,7 +80,7 @@ On real phones, sign the third phone in with **Continue as Meera (demo)**.
 2. **Hard rules → SCAM straight away.** `rules.ts` and `links.ts`:
    - secrecy **and** payment together (the design's "floor");
    - a request for an OTP, PIN or CVV, or for a screen-sharing app;
-   - a link that copies a bank or brand (`sbi-kyc-update.com`), or a site on the blocklist.
+   - a link that copies a bank or brand (`sbi-kyc-verify.in`), or a site on the blocklist (`src/data/blocklist.json`, plus domains families reported and a reviewer blocked).
 3. **Soft rules → spam percentage.**
    - Signal points: Secrecy 25, Payment 25, Authority 15, Fear 15, plus a risky link (20) or an unknown link (10).
    - The fast-gate model (TF-IDF + logistic regression, `gate.ts`, under 1 ms) gives a probability.
@@ -114,13 +140,15 @@ Holds:
 src/app/(auth)/        welcome, sign-in, role (A0–A2)
 src/app/(rao)/         Mr Rao's phone: home, check/[id]/…, hold/[id], history, settings, setup, inbox
 src/app/family/        Arjun's phone: home, join, alerts-setup, alert/[id], hold/[id], check/[id], activity, settings
-src/app/tests, demo    operator pages (L1, L2)
-src/app/api/           route handlers (37)
-src/screens/           the screens, one file per area
+src/app/tests, demo, campaigns, reports   operator pages (L1, L2, F3b, F9b)
+src/app/api/           route handlers
+src/screens/           the screens, one file per area (phase2.tsx and operator-phase2.tsx hold the F screens)
 src/lib/check/         normalise, rules, links, fast gate, Claude reader, pipeline, wording
-src/lib/server/        sessions, checks, holds, people/invites, simulated inbox, state, demo reset, test runs
+src/lib/i18n/          English, Hindi and Telugu dictionaries for Mr Rao's screens (F5)
+src/lib/server/        sessions, checks, holds, people/invites, simulated inbox, state, demo reset, test runs,
+                       sightings (F3), reports (F9), calls (F6), ledger (F12), ops (F4, F7)
 src/lib/db/            Drizzle schema and client
-src/data/              examples, 40-message test set, simulated inbox messages, blocklist, gate model
+src/data/              examples, 40-message test set, simulated inbox messages, blocklist, gate model, synthetic campaigns
 ml/                    fast-gate training (Python) and seeds
 e2e/                   three-phone Playwright test
 ```
@@ -128,7 +156,7 @@ e2e/                   three-phone Playwright test
 ## Tests
 
 ```bash
-pnpm test        # 64 tests: rules, pipeline, model parity, server flow, quality gate
+pnpm test        # unit tests: rules, pipeline, model parity, server flow, phase 2 flows, devices, push, quality gate
 pnpm eval        # prints every example and test message with its verdict and scores
 pnpm build && pnpm e2e   # two browser "phones" against a fresh in-memory database
 pnpm e2e:headed          # same, in visible windows side by side, slowed down to watch
@@ -190,11 +218,8 @@ Build: `cd android && ./gradlew assembleDebug -PPB_HOST=https://your-deployment`
 ## Deliberate choices and limits in phase 1
 
 - **Calls go through the phone's dialer.** The app never places a call itself: the person confirms in the dialer. Set the demo numbers before a live demo (see "Calls" above).
-- **Phase 2 or later:**
-  - the Android notification reader (screens M1–M4);
-  - lock-screen notifications (N2), Web Push, quiet hours and escalation calls (O3), and the weekly summary (O4);
-  - Hindi and Telugu screens (K3). The language chips say "Phase 2". The checker already reads Hindi, Telugu and Hinglish.
-- **Operator pages need a key on a public URL.** Set `OPERATOR_KEY`: `/demo`, the `/tests` runs and "Reset demo data" then ask for it once per browser tab. Without it (on a laptop) they stay open.
+- **Still open after phase 2:** quiet hours and escalation calls (O3); FCM full-screen alerts that ring through Do Not Disturb; native call detection (the live-call guard asks questions instead of listening to the call); Play Store listing. Hindi and Telugu strings were machine-written and need a native speaker's sign-off.
+- **Operator pages need a key on a public URL.** Set `OPERATOR_KEY`: `/demo`, the `/tests` runs, "Reset demo data" and the Block/Reject review on `/reports` then ask for it once per browser tab. The read-only operator pages (`/campaigns`, the `/reports` list) stay open, and so does everything on a laptop without the key.
 - **Demo sign-in stays open.** "Continue as Mr Rao (demo)" and the code 1234 need no key, so anyone with a public URL can still run checks (and have Claude read the unsure ones, if a key is set). Put the whole site behind a password, or remove the demo sign-in, before a real launch.
 - **The rules are a starting point.** The test set is small and team-written, and the training data is synthetic. Treat the numbers as a sanity check, not real-world accuracy.
 - **Claude refusals and timeouts fall back to rules only.** No refusal fallback model is configured.
