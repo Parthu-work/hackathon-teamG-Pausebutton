@@ -11,7 +11,9 @@ async function phone(browser: Browser, persona: "Mr Rao" | "Arjun"): Promise<Pag
 }
 
 test.beforeEach(async ({ request }) => {
-  await request.post("/api/demo/reset");
+  // A server started with OPERATOR_KEY set would refuse this: fail here, not three tests later.
+  const r = await request.post("/api/demo/reset");
+  expect(r.ok(), await r.text()).toBeTruthy();
 });
 
 test("scam: STOP, payment held, Arjun blocks, Mr Rao sees it cancelled", async ({ browser }) => {
@@ -24,6 +26,7 @@ test("scam: STOP, payment held, Arjun blocks, Mr Rao sees it cancelled", async (
   await rao.getByRole("button", { name: "I will not do anything" }).click();
   await expect(rao.getByRole("heading", { name: "Do not pay. Hang up." })).toBeVisible();
   await expect(rao.getByText("Arjun and Meera were alerted")).toBeVisible();
+  const checkUrl = rao.url();
 
   // Arjun's phone polls, buzzes and opens the alert by itself.
   await expect(arjun.getByRole("heading", { name: "Papa got a scam message" })).toBeVisible({ timeout: 10_000 });
@@ -41,6 +44,10 @@ test("scam: STOP, payment held, Arjun blocks, Mr Rao sees it cancelled", async (
   await expect(rao.getByRole("heading", { name: "Payment cancelled" })).toBeVisible({ timeout: 10_000 });
   await expect(rao.getByText("Arjun blocked it.")).toBeVisible();
   await expect(rao.getByText("“Hang up. Do not pay or click anything.”")).toBeVisible();
+
+  // Opening the payment page again lands on the outcome, not on "Locking the payment…".
+  await rao.goto(`${checkUrl}/pay`);
+  await expect(rao.getByRole("heading", { name: "Payment cancelled" })).toBeVisible();
 });
 
 test("suspicious: Mr Rao asks Arjun, Arjun says it is not a scam", async ({ browser }) => {

@@ -256,6 +256,13 @@ export function PayScreen() {
     });
   }, [open, id, queryClient, router]);
 
+  // Once the hold is decided, or runs out while he waits here, its own screen (H3–H5) takes over.
+  const holdId = c?.hold?.id;
+  const holdState = c?.hold?.status;
+  useEffect(() => {
+    if (holdId && holdState && holdState !== "pending" && holdState !== "cancelled") router.replace(`/hold/${holdId}`);
+  }, [holdId, holdState, router]);
+
   const hold = c?.hold?.status === "pending" ? c.hold : null;
   const clock = useCountdown(hold?.expiresAt);
   if (!c) return <LoadingScreen />;

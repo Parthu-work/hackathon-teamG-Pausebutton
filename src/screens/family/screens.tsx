@@ -10,7 +10,7 @@ import {
 } from "@/components/ui";
 import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
-import { api, operatorApi, post } from "@/lib/client/api";
+import { api, ApiError, operatorApi, post } from "@/lib/client/api";
 import type { ActivityItem, CheckView, EventView, HoldView } from "@/lib/views";
 import { useCallName, useFamily } from "./shell";
 
@@ -54,7 +54,7 @@ export function JoinScreen() {
       </div>
       <h1 className="h1 center-text">{who ? `${who} wants you as a trusted person` : "Enter your invite code"}</h1>
       <p className="p center-text">
-        {who ? "If a message looks like a scam, or they are about to pay, you get an alert. Then you decide." : "Type the code you were sent. It looks like PB-4K7Q."}
+        {who ? "If a message looks like a scam, or they are about to pay, you get an alert. Then you decide." : "Type the code you were sent. It starts with PB-."}
       </p>
       <label>
         <div className="lbl">Invite code</div>
@@ -312,6 +312,8 @@ export function FamilyHoldScreen() {
   const [error, setError] = useState<string | null>(null);
   const hold = q.data?.hold;
   const clock = useCountdown(hold?.expiresAt, q.data?.serverNow);
+  // Advice is oldest first (Mr Rao sees the first reply), so the one just sent is last.
+  const sent = hold?.advice[hold.advice.length - 1];
 
   // Opening the hold counts as opening its alert ("status seen").
   const opened = useRef(false);
@@ -432,7 +434,7 @@ export function FamilyHoldScreen() {
             <span style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.3 }}>{a}</span>
           </button>
         ))}
-        {hold.advice[0] && <p className="sm">Sent: “{hold.advice[0].text}” ({hold.advice[0].fromName}, {clockTime(hold.advice[0].createdAt)})</p>}
+        {sent && <p className="sm">Sent: “{sent.text}” ({sent.fromName}, {clockTime(sent.createdAt)})</p>}
       </div>
       <p className="sm">
         {fam?.alerts.find((a) => a.holdId === id)?.otherRecipients.length
@@ -487,17 +489,21 @@ export function FamilyCheckScreen() {
       toast({ title: v.verdict === "scam" ? "Marked as a scam" : "Marked as not a scam", sub: `${callName} can see your answer`, icon: "check" });
       router.push("/family");
     },
-    // Someone else answered first: their answer stands and shows on this screen.
     onError: async (e) => {
-      toast({ title: "Already answered", sub: e.message, icon: "warn", tone: "red" });
-      await queryClient.invalidateQueries({ queryKey: ["family-check", id] });
+      // 409: someone else answered first, and their answer now shows on this screen.
+      const already = e instanceof ApiError && e.status === 409;
+      toast({ title: already ? "Already answered" : "Your answer was not sent", sub: e.message, icon: "warn", tone: "red" });
+      if (already) await queryClient.invalidateQueries({ queryKey: ["family-check", id] });
     },
   });
 
   const c = q.data;
   if (!c) return <LoadingScreen />;
   const fromAsk = fam?.alerts.some((a) => a.checkId === id && a.kind === "ask") || (!!c.askedFamilyAt && !c.familyVerdict);
-  const urgent = !fromAsk && !!fam?.alerts.some((a) => a.checkId === id && a.kind === "urgent");
+  // Urgent alerts come only from pasted scams and pay attempts, so the title
+  // stays "Scam alert" when the screen is reopened after the alert is handled.
+  const urgent =
+    !fromAsk && (!!fam?.alerts.some((a) => a.checkId === id && a.kind === "urgent") || !!c.hold || (c.verdict === "SCAM" && c.source === "paste"));
   const pending = c.hold && c.hold.status === "pending";
 
   return (
