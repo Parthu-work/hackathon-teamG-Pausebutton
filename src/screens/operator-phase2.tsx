@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, Marks, ToastOutlet, ToastProvider, useToast } from "@/components/ui";
-import { api, post } from "@/lib/client/api";
+import { api, operatorApi } from "@/lib/client/api";
 import type { CampaignsView, DisagreementsView, FamiliesView, ReportView } from "@/lib/views";
 
 // Operator pages for phase 2: F3b campaigns, F4 disagreements, F7 families, F9b reported links.
@@ -237,7 +237,7 @@ function ReportsInner() {
   const toast = useToast();
   const q = useQuery({ queryKey: ["ops-reports"], queryFn: () => api<{ waiting: number; rows: ReportView[]; officialCount: number }>("/api/ops/reports"), refetchInterval: 5000 });
   const review = useMutation({
-    mutationFn: (v: { id: string; decision: "block" | "reject" }) => post<{ domain: string; status: string }>(`/api/ops/reports/${v.id}`, { decision: v.decision }),
+    mutationFn: (v: { id: string; decision: "block" | "reject" }) => operatorApi<{ domain: string; status: string }>(`/api/ops/reports/${v.id}`, { body: { decision: v.decision } }),
     onSuccess: async (r) => {
       await queryClient.invalidateQueries({ queryKey: ["ops-reports"] });
       toast({ title: r.status === "blocked" ? `${r.domain} is now blocked` : `${r.domain} left open`, sub: r.status === "blocked" ? "Live for every family, no redeploy" : "Reports of it are closed", icon: r.status === "blocked" ? "shield" : "x" });

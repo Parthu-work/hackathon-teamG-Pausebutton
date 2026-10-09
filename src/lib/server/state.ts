@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { APP_UTC_OFFSET_MINUTES } from "@/lib/check/config";
 import { finalVerdict } from "@/lib/check/final";
 import { keyPhrases } from "@/lib/check/phrases";
 import type { Db } from "@/lib/db";
@@ -24,6 +25,13 @@ export function toMeView(u: User): MeView {
     autoTellFamily: u.autoTellFamily,
     alertNotify: u.alertNotify,
   };
+}
+
+/** Midnight today in India, whatever time zone the server runs in (Vercel runs in UTC). */
+export function startOfToday(now = Date.now()) {
+  const offset = APP_UTC_OFFSET_MINUTES * 60_000;
+  const local = now + offset;
+  return new Date(local - (local % 86_400_000) - offset);
 }
 
 /** Polled every 2 s by Mr Rao's phone. */
@@ -112,8 +120,7 @@ export async function familyState(db: Db, me: User): Promise<FamilyState> {
     }];
   });
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const todayStart = startOfToday();
   const people: ProtectedView[] = [];
   for (const link of links) {
     const owner = owners.find((o) => o.id === link.protectedId);
@@ -138,7 +145,7 @@ export async function familyState(db: Db, me: User): Promise<FamilyState> {
         suspicious: todays.filter((c) => finalVerdict(c.verdict, c.familyVerdict) === "SUSPICIOUS").length,
         safe: todays.filter((c) => finalVerdict(c.verdict, c.familyVerdict) === "SAFE").length,
       },
-      openAlerts: alerts.filter((a) => a.owner.id === owner.id && a.kind !== "urgent").length,
+      openAlerts: alerts.filter((a) => a.owner.id === owner.id && (a.kind !== "urgent" || !a.holdId)).length,
     });
   }
   return { ...base, people, alerts };

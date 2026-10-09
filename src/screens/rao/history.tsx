@@ -269,10 +269,10 @@ export function PrivacyScreen() {
   const watching = !!data && (data.me.watchSms || data.me.watchWhatsapp);
 
   async function deleteHistory() {
-    await api("/api/me/checks", { method: "DELETE" });
+    const { kept } = await api<{ kept: number }>("/api/me/checks", { method: "DELETE" });
     setConfirm(false);
     await queryClient.invalidateQueries();
-    toast({ title: t("privacy.deleted"), sub: t("privacy.deletedSub"), icon: "trash" });
+    toast({ title: t("privacy.deleted"), sub: kept ? t("privacy.deletedKeptSub") : t("privacy.deletedSub"), icon: "trash" });
   }
 
   async function toggleWatching() {

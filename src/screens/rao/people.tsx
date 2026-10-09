@@ -40,10 +40,18 @@ function useRemove(onDone?: () => void) {
 }
 
 function RemoveSheet({ p, onCancel, onConfirm }: { p: PersonView; onCancel: () => void; onConfirm: () => void }) {
+  const { data } = useRao();
+  const lastLinked = p.status === "linked" && !data?.people.some((x) => x.id !== p.id && x.status === "linked");
   return (
     <Sheet onClose={onCancel}>
       <h2 className="h2">Remove {p.name}?</h2>
       <p className="p">They will stop getting your scam alerts. Your checked messages stay private.</p>
+      {lastLinked && (
+        <div className="card tint-red">
+          <b style={{ fontSize: 17 }}>Nobody will be told</b>
+          <p className="sm" style={{ color: "var(--text)" }}>{p.name} is the only person who gets your scam alerts. Add someone else soon.</p>
+        </div>
+      )}
       <button className="btn red" style={{ minHeight: 60 }} onClick={onConfirm}>Yes, remove {p.name}</button>
       <button className="btn line" onClick={onCancel}>Keep {p.name}</button>
     </Sheet>

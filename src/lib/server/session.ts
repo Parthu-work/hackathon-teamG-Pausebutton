@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
+import { secretFromEnv } from "./secrets";
 
 // Mock sign-in (A1 says "Demo sign-in only"). Each app keeps its own signed
 // cookie, so Mr Rao's phone (/) and a family phone (/family) can both be open
@@ -12,7 +13,7 @@ import { getDb, schema } from "@/lib/db";
 export type App = "rao" | "family" | "pending";
 const COOKIE: Record<App, string> = { rao: "pb_rao", family: "pb_family", pending: "pb_pending" };
 
-const secret = () => process.env.SESSION_SECRET ?? "pause-button-dev-secret";
+const secret = () => secretFromEnv("SESSION_SECRET", "pause-button-dev-secret");
 const sign = (v: string) => crypto.createHmac("sha256", secret()).update(v).digest("base64url").slice(0, 22);
 
 export async function setSession(app: App, userId: string) {

@@ -62,7 +62,8 @@ export async function readWithClaude(
     const response = await c.messages.parse(
       {
         model,
-        max_tokens: 800,
+        // Sonnet 5.5 thinks before it answers, and thinking counts toward max_tokens.
+        max_tokens: modelKey === "haiku" ? 1024 : 8192,
         system: SYSTEM,
         // Haiku answers fastest with thinking off; Sonnet 5.5 keeps its default.
         ...(modelKey === "haiku" ? { thinking: { type: "disabled" as const } } : {}),
@@ -71,7 +72,7 @@ export async function readWithClaude(
       },
       { timeout: timeoutMs },
     );
-    if (response.stop_reason === "refusal" || !response.parsed_output) {
+    if (response.stop_reason !== "end_turn" || !response.parsed_output) {
       return { status: "error", model, signals: [] };
     }
     const out = response.parsed_output;
@@ -84,7 +85,9 @@ export async function readWithClaude(
     };
   } catch (error) {
     if (error instanceof Anthropic.APIConnectionTimeoutError) return { status: "timeout", model, signals: [] };
-    if (error instanceof Anthropic.APIError || error instanceof Anthropic.APIConnectionError) {
+    // HTTP and network errors, and replies that do not fit the schema (cut off
+    // at max_tokens, or a refusal in plain text): fall back to rules only.
+    if (error instanceof Anthropic.AnthropicError) {
       console.warn(`[ai] ${model} failed:`, error.message);
       return { status: "error", model, signals: [] };
     }

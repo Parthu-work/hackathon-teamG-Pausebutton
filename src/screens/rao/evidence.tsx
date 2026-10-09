@@ -11,6 +11,7 @@ import type { HardRule, SignalType } from "@/lib/check/types";
 import { ApiError, post } from "@/lib/client/api";
 import { loadMessage } from "@/lib/client/messages";
 import { HELPLINE } from "@/lib/phone";
+import type { HoldStatus } from "@/lib/views";
 import { useHelper, useJoinNames, useLang, useT } from "./shell";
 import { useCheck, useRaoCall } from "./verdict";
 
@@ -120,11 +121,7 @@ export function WhyScreen() {
           <p className="sm" style={{ fontSize: 13, color: "var(--text)" }}>{c.familyStory}</p>
         </div>
       )}
-      <p className="sm">
-        {t("why.spamScore", { score: c.score, rules: c.rulesScore })}
-        {c.modelScore !== null ? t("why.patternModel", { model: c.modelScore }) : ""}
-        {c.decidedBy === "ai" ? t("why.confirmedAi") : ""}
-      </p>
+      {c.decidedBy === "ai" && <p className="sm">{t("why.confirmedAi")}</p>}
       <div className="spacer" />
       {c.verdict === "SAFE" ? (
         <button className="btn green" onClick={() => router.push("/")}>{t("common.done")}</button>
@@ -212,7 +209,7 @@ export function PayScreen() {
   const toast = useToast();
   const helper = useHelper();
   const { data: c, error, refetch } = useCheck(id);
-  const open = useMutation({ mutationFn: () => post<{ holdId: string }>(`/api/me/checks/${id}/pay`) });
+  const open = useMutation({ mutationFn: () => post<{ holdId: string; status: HoldStatus }>(`/api/me/checks/${id}/pay`) });
   const cancel = useMutation({
     mutationFn: (holdId: string) => post(`/api/me/holds/${holdId}/cancel`),
     onSuccess: async () => {
@@ -226,8 +223,21 @@ export function PayScreen() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    open.mutate(undefined, { onSuccess: () => queryClient.invalidateQueries({ queryKey: ["check", id] }) });
-  }, [open, id, queryClient]);
+    open.mutate(undefined, {
+      onSuccess: async (r) => {
+        // A hold that is already decided or out of time has its own screen (H3–H5).
+        if (r.status !== "pending") router.replace(`/hold/${r.holdId}`);
+        await queryClient.invalidateQueries({ queryKey: ["check", id] });
+      },
+    });
+  }, [open, id, queryClient, router]);
+
+  // Once the hold is decided, or runs out while he waits here, its own screen (H3–H5) takes over.
+  const holdId = c?.hold?.id;
+  const holdState = c?.hold?.status;
+  useEffect(() => {
+    if (holdId && holdState && holdState !== "pending" && holdState !== "cancelled") router.replace(`/hold/${holdId}`);
+  }, [holdId, holdState, router]);
 
   const hold = c?.hold?.status === "pending" ? c.hold : null;
   const clock = useCountdown(hold?.expiresAt, undefined, (hold?.holdMinutes ?? 10) * 60_000);
