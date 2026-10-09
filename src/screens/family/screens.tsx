@@ -394,7 +394,7 @@ export function FamilyHoldScreen() {
 
   if (status === "expired") {
     return (
-      <Screen overlay={confirm && <ApproveSheet hold={hold} callName={callName} onKeep={() => setConfirm(false)} onApprove={() => decide.mutate("approve")} />}>
+      <Screen>
         <TitleRow title={`${callName}'s payment`} back="/family" right={<span className="pill medium amber">EXPIRED</span>} />
         <div className="card tint-amber" style={{ gap: 6 }}>
           <h2 className="h2">Time is up. Nothing was paid.</h2>
@@ -407,7 +407,6 @@ export function FamilyHoldScreen() {
         <div className="spacer" />
         <button className="btn green" style={{ minHeight: 64 }} onClick={() => call(callName)}><Icon name="phone" />Call {callName}</button>
         <button className="btn red" style={{ minHeight: 64 }} onClick={() => decide.mutate("block")}>Block this payment</button>
-        <button className="btn line sm-btn" onClick={() => setConfirm(true)}>Approve (I know this payment)</button>
       </Screen>
     );
   }
@@ -479,6 +478,11 @@ export function FamilyCheckScreen() {
       await queryClient.invalidateQueries();
       toast({ title: v.verdict === "scam" ? "Marked as a scam" : "Marked as not a scam", sub: `${callName} can see your answer`, icon: "check" });
       router.push("/family");
+    },
+    // Someone else answered first: their answer stands and shows on this screen.
+    onError: async (e) => {
+      toast({ title: "Already answered", sub: e.message, icon: "warn", tone: "red" });
+      await queryClient.invalidateQueries({ queryKey: ["family-check", id] });
     },
   });
 

@@ -10,6 +10,7 @@ import { keyPhrases } from "@/lib/check/phrases";
 import type { Evidence, HardRule, LinkInfo, SignalType } from "@/lib/check/types";
 import { post } from "@/lib/client/api";
 import { loadMessage } from "@/lib/client/messages";
+import type { HoldStatus } from "@/lib/views";
 import { useHelper } from "./shell";
 import { useCheck } from "./verdict";
 
@@ -235,7 +236,7 @@ export function PayScreen() {
   const toast = useToast();
   const helper = useHelper();
   const { data: c } = useCheck(id);
-  const open = useMutation({ mutationFn: () => post<{ holdId: string }>(`/api/me/checks/${id}/pay`) });
+  const open = useMutation({ mutationFn: () => post<{ holdId: string; status: HoldStatus }>(`/api/me/checks/${id}/pay`) });
   const cancel = useMutation({
     mutationFn: (holdId: string) => post(`/api/me/holds/${holdId}/cancel`),
     onSuccess: async () => {
@@ -249,8 +250,14 @@ export function PayScreen() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    open.mutate(undefined, { onSuccess: () => queryClient.invalidateQueries({ queryKey: ["check", id] }) });
-  }, [open, id, queryClient]);
+    open.mutate(undefined, {
+      onSuccess: async (r) => {
+        // A hold that is already decided or out of time has its own screen (H3–H5).
+        if (r.status !== "pending") router.replace(`/hold/${r.holdId}`);
+        await queryClient.invalidateQueries({ queryKey: ["check", id] });
+      },
+    });
+  }, [open, id, queryClient, router]);
 
   const hold = c?.hold?.status === "pending" ? c.hold : null;
   const clock = useCountdown(hold?.expiresAt);

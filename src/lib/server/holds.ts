@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull } from "drizzle-orm";
 import { HOLD_MINUTES } from "@/lib/check/config";
 import { keyPhrases } from "@/lib/check/phrases";
 import { rupees } from "@/lib/check/copy";
@@ -32,10 +32,11 @@ export async function createHold(db: Db, check: Check, owner: User) {
   return hold;
 }
 
+/** Oldest first: Mr Rao's screens show advice[0], the first reply. */
 export async function adviceFor(db: Db, where: { checkId?: string; holdId?: string }): Promise<AdviceView[]> {
   const rows = await db.query.advice.findMany({
     where: where.holdId ? eq(schema.advice.holdId, where.holdId) : eq(schema.advice.checkId, where.checkId!),
-    orderBy: desc(schema.advice.createdAt),
+    orderBy: asc(schema.advice.createdAt),
   });
   if (!rows.length) return [];
   const names = await userNames(db, rows.map((r) => r.fromUserId));
@@ -94,13 +95,18 @@ export async function decideHold(db: Db, member: User, holdId: string, decision:
   if (decision === "approve" && !confirm) throw new HttpError(400, "Approving needs a second confirm.");
 
   const status = decision === "block" ? "blocked" : "approved";
+  const open = and(eq(schema.holds.id, holdId), eq(schema.holds.status, "pending"));
   const [updated] = await db
     .update(schema.holds)
     .set({ status, decidedById: member.id, decidedAt: new Date() })
-    .where(and(eq(schema.holds.id, holdId), eq(schema.holds.status, "pending")))
+    // Block still works after the 10 minutes. Approve does not: an expired hold never releases the money.
+    .where(decision === "approve" ? and(open, gt(schema.holds.expiresAt, new Date())) : open)
     .returning();
   if (!updated) {
     const current = (await db.query.holds.findFirst({ where: eq(schema.holds.id, holdId) })) ?? hold;
+    if (current.status === "pending") {
+      throw new HttpError(409, "Time ran out, so this payment can no longer be approved. You can still block it.");
+    }
     const names = await userNames(db, current.decidedById ? [current.decidedById] : []);
     const who = current.decidedById ? names[current.decidedById] ?? "Someone" : "Someone";
     throw new HttpError(409, `${who} already ${current.status} this payment.`);

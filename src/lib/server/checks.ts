@@ -145,26 +145,42 @@ export async function askFamily(db: Db, owner: User, checkId: string) {
 export async function openPayment(db: Db, owner: User, checkId: string) {
   const check = await ownCheck(db, owner, checkId);
   if (!check.amount) throw new HttpError(400, "This message does not ask for an amount.");
-  const existing = await db.query.holds.findFirst({
-    where: and(eq(schema.holds.checkId, check.id), eq(schema.holds.status, "pending")),
+  // Family's decision sticks: a blocked payment stays blocked, and an open or
+  // approved hold is reused. Only a hold he cancelled himself can start again.
+  const latest = await db.query.holds.findFirst({
+    where: eq(schema.holds.checkId, check.id),
+    orderBy: desc(schema.holds.createdAt),
   });
-  if (existing) return { holdId: existing.id };
+  if (latest?.status === "blocked") {
+    const names = await userNames(db, [latest.decidedById ?? ""]);
+    const who = (latest.decidedById && names[latest.decidedById]) || "Your family";
+    throw new HttpError(409, `${who} blocked this payment. It cannot be paid.`);
+  }
+  if (latest && latest.status !== "cancelled") return { holdId: latest.id, status: holdStatus(latest) };
   const hold = await createHold(db, check, owner);
   await logEvent(db, owner.id, owner.name, "pay_attempt", `${owner.name} opened the payment · ${rupees(hold.amount)} locked`, hold.id);
   const family = await linkedFamily(db, owner.id);
   await sendAlerts(db, owner, check, family.map((f) => f.familyId), "urgent", hold.id);
-  return { holdId: hold.id };
+  return { holdId: hold.id, status: holdStatus(hold) };
 }
 
-/** Family answers a heads-up or "Ask" request: "It's a scam" / "This is not a scam". */
+/** Family answers a heads-up or "Ask" request: "It's a scam" / "This is not a scam". The first answer wins. */
 export async function setFamilyVerdict(db: Db, member: User, checkId: string, verdict: "scam" | "not_scam", note?: string) {
   const check = await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) });
   if (!check) throw new HttpError(404, "That message was not found.");
   await assertLinked(db, member, check.userId);
-  await db
+  const [answered] = await db
     .update(schema.checks)
     .set({ familyVerdict: verdict, familyVerdictBy: member.id, familyVerdictAt: new Date() })
-    .where(eq(schema.checks.id, checkId));
+    .where(and(eq(schema.checks.id, checkId), isNull(schema.checks.familyVerdict)))
+    .returning();
+  if (!answered) {
+    // Like a hold decision: a later "not a scam" must never undo "it's a scam".
+    const current = (await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) })) ?? check;
+    const names = await userNames(db, [current.familyVerdictBy ?? ""]);
+    const who = (current.familyVerdictBy && names[current.familyVerdictBy]) || "Someone";
+    throw new HttpError(409, `${who} already answered: ${current.familyVerdict === "scam" ? "it is a scam" : "it is not a scam"}.`);
+  }
   if (note) await db.insert(schema.advice).values({ checkId, fromUserId: member.id, text: note });
   await db
     .update(schema.alerts)

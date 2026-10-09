@@ -141,7 +141,7 @@ export function VerdictScreen() {
         {!alerted && !asked && <button className="btn line" onClick={ask}><Icon name="bell" />Tell {helper.first}</button>}
         <div className="row" style={{ justifyContent: "center", flexWrap: "wrap", gap: 4 }}>
           <button className="ghost" onClick={() => call("1930")}>Call cyber helpline 1930</button>
-          {c.amount && c.hold?.status !== "pending" && (
+          {c.amount && (!c.hold || c.hold.status === "cancelled") && (
             <button className="ghost" onClick={() => router.push(`/check/${id}/pay`)}>Pay anyway (demo)</button>
           )}
           {detected && !dismissed && (
@@ -186,7 +186,7 @@ export function VerdictScreen() {
         )}
         <button className="btn line" onClick={() => router.push(`/check/${id}/why`)}>Why we think so</button>
         <p className="sm center-text">Do not tap the link or pay until {helper.first} replies.</p>
-        {c.amount && c.familyVerdict !== "not_scam" && c.hold?.status !== "pending" && (
+        {c.amount && c.familyVerdict !== "not_scam" && (!c.hold || c.hold.status === "cancelled") && (
           <button className="ghost" style={{ alignSelf: "center" }} onClick={() => router.push(`/check/${id}/pay`)}>Pay anyway (demo)</button>
         )}
       </Screen>

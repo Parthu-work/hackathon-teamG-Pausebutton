@@ -7,7 +7,7 @@ import { getDb, type Db } from "@/lib/db";
 import examples from "@/data/examples.json";
 import { askFamily, createCheck, getCheckView, openPayment, setFamilyVerdict } from "./checks";
 import { personaUser, resetDemo } from "./demo";
-import { decideHold, holdStatus } from "./holds";
+import { addAdvice, decideHold, holdStatus, toHoldView } from "./holds";
 import { acceptInvite } from "./people";
 import { receiveNext } from "./sim";
 import { familyState, raoState } from "./state";
@@ -118,5 +118,52 @@ describe("invites", () => {
     await expect(acceptInvite(db, ravi, "PB-XXXX")).rejects.toThrow("did not work");
     await expect(acceptInvite(db, ravi, "pb-7h3d")).resolves.toEqual({ protectedName: "Mr Rao" });
     await expect(acceptInvite(db, ravi, "PB-7H3D")).rejects.toThrow("did not work");
+  });
+});
+
+describe("family decisions stick", () => {
+  it("the first answer to a question wins", async () => {
+    await resetDemo(db);
+    const { rao, arjun, meera } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("courier"), source: "paste" });
+    await askFamily(db, rao, checkId);
+    await setFamilyVerdict(db, arjun, checkId, "scam", "It is a scam. Do not pay or reply.");
+    await expect(setFamilyVerdict(db, meera, checkId, "not_scam", "I checked. This one is fine.")).rejects.toThrow("Arjun already answered");
+    const view = await getCheckView(db, checkId, { ownerId: rao.id });
+    expect(view.familyVerdict).toBe("scam");
+    expect(view.familyVerdictByName).toBe("Arjun");
+    expect(view.advice.map((a) => a.fromName)).toEqual(["Arjun"]);
+  });
+
+  it("an expired hold can be blocked but never approved", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
+    const { holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await db.update(schema.holds).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(schema.holds.id, holdId!));
+    await expect(decideHold(db, arjun, holdId!, "approve", true)).rejects.toThrow("Time ran out");
+    expect((await decideHold(db, arjun, holdId!, "block", false)).status).toBe("blocked");
+  });
+
+  it("after a block, paying anyway is refused and nobody is alerted again", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
+    const { checkId, holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await decideHold(db, arjun, holdId!, "block", false);
+    const alertCount = async () => (await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) })).length;
+    const before = await alertCount();
+    await expect(openPayment(db, rao, checkId)).rejects.toThrow("Arjun blocked this payment");
+    expect(await alertCount()).toBe(before);
+    expect((await getCheckView(db, checkId, { ownerId: rao.id })).hold?.status).toBe("blocked");
+  });
+
+  it("Mr Rao sees the first advice, not the latest", async () => {
+    await resetDemo(db);
+    const { rao, arjun, meera } = await users();
+    const { holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await addAdvice(db, arjun, { holdId: holdId! }, "Papa, hang up.");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await addAdvice(db, meera, { holdId: holdId! }, "Stay on the phone with me.");
+    const hold = (await db.query.holds.findFirst({ where: eq(schema.holds.id, holdId!) }))!;
+    expect((await toHoldView(db, hold)).advice[0]).toMatchObject({ fromName: "Arjun", text: "Papa, hang up." });
   });
 });
