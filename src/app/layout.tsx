@@ -1,13 +1,20 @@
 import type { Metadata, Viewport } from "next";
-import { Atkinson_Hyperlegible, Bricolage_Grotesque, Noto_Sans_Devanagari, Noto_Sans_Telugu } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { Providers } from "./providers";
 
-const body = Atkinson_Hyperlegible({ variable: "--font-atkinson", subsets: ["latin"], weight: ["400", "700"] });
-const display = Bricolage_Grotesque({ variable: "--font-bricolage", subsets: ["latin"], weight: ["600", "700", "800"] });
+// Self-hosted (src/app/fonts): the build never fetches fonts, so it works offline.
+const body = localFont({
+  variable: "--font-atkinson",
+  src: [
+    { path: "./fonts/atkinson-hyperlegible-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/atkinson-hyperlegible-700.woff2", weight: "700", style: "normal" },
+  ],
+});
+const display = localFont({ variable: "--font-bricolage", src: "./fonts/bricolage-grotesque-600-800.woff2", weight: "600 800" });
 // F5: Hindi and Telugu screens read in proper Devanagari and Telugu faces, not a fallback.
-const devanagari = Noto_Sans_Devanagari({ variable: "--font-devanagari", subsets: ["devanagari"], weight: ["400", "700", "800"] });
-const telugu = Noto_Sans_Telugu({ variable: "--font-telugu", subsets: ["telugu"], weight: ["400", "700", "800"] });
+const devanagari = localFont({ variable: "--font-devanagari", src: "./fonts/noto-sans-devanagari-400-800.woff2", weight: "400 800" });
+const telugu = localFont({ variable: "--font-telugu", src: "./fonts/noto-sans-telugu-400-800.woff2", weight: "400 800" });
 
 export const metadata: Metadata = {
   title: "Pause Button",
