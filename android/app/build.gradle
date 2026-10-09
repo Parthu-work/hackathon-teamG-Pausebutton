@@ -2,7 +2,7 @@ plugins {
     id "com.android.application"
 }
 
-def host = (project.findProperty("PB_HOST") ?: "https://pause-button.vercel.app").toString().replaceAll('/+$', '')
+def host = (project.findProperty("PB_HOST") ?: "https://hackathon-teamg-pausebutton-production.up.railway.app").toString().replaceAll('/+$', '')
 def assetStatements = '[{"relation": ["delegate_permission/common.handle_all_urls"], "target": {"namespace": "web", "site": "' + host + '"}}]'
 
 android {

@@ -77,7 +77,7 @@ jobs:
           packages: platform-tools platforms;android-37.2 build-tools;36.0.0
       - name: Build the debug APK
         # PB_HOST: where the web app is deployed (set a repository variable); the person can change it in the app.
-        run: cd android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug -PPB_HOST="${{ vars.PB_HOST || 'https://pause-button.vercel.app' }}"
+        run: cd android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug -PPB_HOST="${{ vars.PB_HOST || 'https://hackathon-teamg-pausebutton-production.up.railway.app' }}"
       - uses: actions/upload-artifact@v4
         with:
           name: pause-button-debug-apk

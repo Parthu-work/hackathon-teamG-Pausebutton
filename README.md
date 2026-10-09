@@ -171,10 +171,10 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
 
 - **Every PR:** lint → type check → `pnpm test` (including the quality gate) → build → Playwright three-phone e2e.
 - **On `main`, or a PR labelled `ai-eval`:** `pnpm eval --ai haiku`, run when the `ANTHROPIC_API_KEY` secret is set.
-- **Deploy:** connect the repo to Vercel. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm db:migrate && pnpm build` in the Singapore region.
+- **Deploy:** see [`docs/deploy.md`](docs/deploy.md) for the free-tier options (Vercel + Neon recommended, Railway configured in `railway.json`). On Vercel: connect the repo. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm db:migrate && pnpm build` in the Singapore region.
 - **Environment variables** for every Vercel environment:
   - `DATABASE_URL` (Neon, same region; the Neon–Vercel integration can create a branch per preview);
-  - `SESSION_SECRET`, `FINGERPRINT_SECRET` (on Vercel the app refuses to run without them; other hosts fall back to the dev values, so set them there too);
+  - `SESSION_SECRET`, `FINGERPRINT_SECRET` (on Vercel, Railway, Render, Fly.io and Cloud Run the app refuses to run without them; on any other host set `DEPLOYED=1` to get the same check);
   - `OPERATOR_KEY` (needed for any public URL; a long random value);
   - `DEMO_SIGNIN` only if this deployment should offer demo sign-in (`on`); unset, Vercel keeps it off;
   - optionally `ANTHROPIC_API_KEY`.
@@ -196,7 +196,7 @@ Everyone (Mr Rao, Mrs Rao, Arjun, Meera, or your own teammates with their own nu
 
 1. **Same Wi‑Fi (no setup):** `pnpm dev`, open the "Network" URL (`http://192.168.x.x:3000`) on each phone. Alerts work while the app is open; push needs HTTPS, so it is off here.
 2. **Any network, in a minute (demo):** in a second terminal run `pnpm share`. It prints a public `https://….trycloudflare.com` link (Cloudflare quick tunnel, no account) that forwards to your laptop. Everyone opens it, installs the app from the browser menu, and push notifications work because the link is HTTPS. The link changes each time you run it, and dies when you close it.
-3. **A lasting URL (recommended before the demo day):** connect the GitHub repo to Vercel and create a Neon Postgres database. Set these environment variables in Vercel: `DATABASE_URL`, `SESSION_SECRET`, `FINGERPRINT_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (from `pnpm push:keys`), the `DEMO_*_PHONE` numbers and optionally `ANTHROPIC_API_KEY`. Every push to `main` deploys; every PR gets a preview link.
+3. **A lasting URL (recommended before the demo day; options and costs in [`docs/deploy.md`](docs/deploy.md)):** connect the GitHub repo to Vercel and create a Neon Postgres database. Set these environment variables in Vercel: `DATABASE_URL`, `SESSION_SECRET`, `FINGERPRINT_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (from `pnpm push:keys`), the `DEMO_*_PHONE` numbers and optionally `ANTHROPIC_API_KEY`. Every push to `main` deploys; every PR gets a preview link.
 
 **Each user on their own phone:**
 - Mr Rao's phone: sign in (any 10-digit number, code `1234`), choose "I want protection", add trusted people with their real numbers, share the codes.
