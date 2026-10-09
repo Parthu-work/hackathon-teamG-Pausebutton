@@ -57,6 +57,13 @@
       "when": 1791566739193,
       "tag": "0007_push_deliveries",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791579298041,
+      "tag": "0008_push_receipts",
+      "breakpoints": true
     }
   ]
 }

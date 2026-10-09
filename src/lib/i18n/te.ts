@@ -271,6 +271,8 @@ export const te: Dict = {
     toldAnyway: "{names}కి అయినా చెప్పేశాం",
     unreachableTitle: "{names} దీన్ని వెంటనే చూడకపోవచ్చు",
     unreachableBody: "{names} ఫోన్‌కి హెచ్చరిక చేరలేదు. ఎదురుచూడకండి, ఇప్పుడే ఫోన్ చేయండి.",
+    nobodyTitle: "ఇంకా ఎవరూ దీన్ని చూడలేదు",
+    nobodyBody: "హెచ్చరిక {names}కి చేరలేదు. ఇప్పుడే {first}కి లేదా సైబర్ హెల్ప్‌లైన్ 1930కి ఫోన్ చేయండి. ఎదురుచూస్తూ డబ్బు పంపకండి.",
     whatAsked: "వాళ్ళు ఏం అడిగారు",
     readAloud: "చదివి వినిపించండి",
     stopReading: "చదవడం ఆపండి",

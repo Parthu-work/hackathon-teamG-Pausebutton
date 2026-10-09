@@ -10,6 +10,9 @@
 // notification is about (/open/<alertId> for a family alert, which resolves to
 // the paused payment or the message; /check/<id> or /hold/<id> on Mr Rao's
 // phone), in the window that already shows the app when there is one.
+//
+// Receipts: once a notification is on screen (or could not be shown), the
+// worker tells the server, so a push that never reaches anyone is noticed.
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
@@ -59,8 +62,24 @@ async function showAlert(data) {
   return self.registration.showNotification(data.title || "Pause Button", options);
 }
 
+/** Tells the server this phone got the push, and whether it could show it. Never fails the push. */
+function receipt(data, shown, error) {
+  if (!data.receipt) return Promise.resolve();
+  return fetch("/api/push/receipt", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: data.receipt, shown, error: error ? String(error.name || error).slice(0, 80) : null }),
+  }).catch(() => {});
+}
+
 self.addEventListener("push", (event) => {
-  event.waitUntil(showAlert(parse(event)));
+  const data = parse(event);
+  event.waitUntil(
+    showAlert(data).then(
+      () => receipt(data, true),
+      (error) => receipt(data, false, error),
+    ),
+  );
 });
 
 /**

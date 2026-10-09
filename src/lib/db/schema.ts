@@ -190,6 +190,8 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
  * gone when the phone had unsubscribed). The idempotency `key` ("alert:<id>")
  * stops the same alert being pushed twice to one phone; rows cascade away
  * with their alert or check, so "Reset demo data" clears them too.
+ * The phone's service worker reports back (receivedAt, and shownAt or the
+ * displayError): a "sent" row with no receipt is a push the phone never confirmed.
  */
 export const pushDeliveries = pgTable(
   "push_deliveries",
@@ -206,6 +208,12 @@ export const pushDeliveries = pgTable(
     statusCode: integer("status_code"),
     error: text("error"),
     attempts: integer("attempts").notNull().default(1),
+    /** The phone's service worker got the push. */
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    /** ...and the notification is on screen. */
+    shownAt: timestamp("shown_at", { withTimezone: true }),
+    /** ...or why it could not be shown (e.g. notifications blocked on the phone). */
+    displayError: text("display_error"),
     createdAt: createdAt(),
   },
   (t) => [index("push_deliveries_key_endpoint").on(t.key, t.endpoint), index("push_deliveries_user").on(t.userId)],

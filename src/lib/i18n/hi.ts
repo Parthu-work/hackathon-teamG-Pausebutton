@@ -271,6 +271,8 @@ export const hi: Dict = {
     toldAnyway: "{names} को फिर भी बता दिया",
     unreachableTitle: "{names} शायद इसे जल्दी न देख पाएँ",
     unreachableBody: "{names} के फ़ोन तक अलर्ट नहीं पहुँचा। इंतज़ार मत कीजिए, अभी फ़ोन कीजिए।",
+    nobodyTitle: "अभी तक किसी ने यह नहीं देखा",
+    nobodyBody: "अलर्ट {names} तक नहीं पहुँचा। अभी {first} को फ़ोन कीजिए, या साइबर हेल्पलाइन 1930 पर। इंतज़ार में पैसे मत भेजिए।",
     whatAsked: "उन्होंने क्या माँगा",
     readAloud: "पढ़कर सुनाएँ",
     stopReading: "पढ़ना रोकें",
