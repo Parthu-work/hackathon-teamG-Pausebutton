@@ -25,6 +25,9 @@ export const SUSPICIOUS_AT = 30;
 export const HOLD_MINUTES = 10;
 export const INVITE_HOURS = 24;
 
+// Text of scam/suspicious messages is kept this long so alerted family can read it.
+export const SHARE_TEXT_HOURS = 24;
+
 // The AI reader is only asked about messages the fast path is unsure of.
 export const AI_TIMEOUT_MS = 2500;
 export const AI_MODELS = {

@@ -79,7 +79,7 @@ export function HomeScreen() {
         </p>
         <div className="spacer" />
         <button className="btn amber" onClick={check}>Try again</button>
-        <button className="btn line" onClick={() => call(helper.first)}><Icon name="phone" />Call {helper.first}</button>
+        <button className="btn line" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />Call {helper.first}</button>
       </Screen>
     );
   }

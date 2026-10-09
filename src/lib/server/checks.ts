@@ -1,16 +1,20 @@
 import crypto from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
 import { familyCopy, rupees, verdictCopy } from "@/lib/check/copy";
 import { normalizeForMatch } from "@/lib/check/normalize";
 import { keyPhrases } from "@/lib/check/phrases";
-import { checkMessage } from "@/lib/check/pipeline";
+import { finalVerdict } from "@/lib/check/final";
+import { checkMessage, MAX_MESSAGE_CHARS } from "@/lib/check/pipeline";
+import { SHARE_TEXT_HOURS } from "@/lib/check/config";
 import type { CheckResult, ScamFamily } from "@/lib/check/types";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import type { CheckView } from "@/lib/views";
+import type { CheckView, SharedMessage } from "@/lib/views";
+import { answerSummary, giveAnswer } from "./answers";
 import { logEvent } from "./events";
 import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, userNames } from "./holds";
-import { joinNames, linkedFamily } from "./people";
+import { callNameOf, joinNames, linkedFamily, ownerView } from "./people";
+import { pushToUsers } from "./push";
 import { HttpError } from "./session";
 
 type User = typeof schema.users.$inferSelect;
@@ -63,7 +67,9 @@ export type NewCheck = {
  *    "Tell Arjun automatically"; the hold starts if he then tries to pay.
  */
 export async function createCheck(db: Db, owner: User, input: NewCheck) {
-  const result = await checkMessage(input.text);
+  await purgeSharedText(db);
+  const text = input.text.slice(0, MAX_MESSAGE_CHARS);
+  const result = await checkMessage(text);
   const normalized = normalizeForMatch(input.text).text;
   const [check] = await db
     .insert(schema.checks)
@@ -91,6 +97,8 @@ export async function createCheck(db: Db, owner: User, input: NewCheck) {
       aiModel: result.ai.model ?? null,
       degraded: result.degraded,
       safeHint: result.verdict === "SAFE" && /debited|credited|a\/c|avl bal|account ending/.test(normalized) ? "bank" : null,
+      // Family members who are alerted read the exact message (24 h). Safe messages are not kept.
+      messageText: result.verdict === "SAFE" ? null : text,
     })
     .returning();
 
@@ -125,19 +133,46 @@ async function sendAlerts(
   holdId: string | null,
 ) {
   if (!recipientIds.length) return;
-  await db.insert(schema.alerts).values(recipientIds.map((recipientId) => ({ checkId: check.id, holdId, recipientId, kind })));
+  const rows = await db.insert(schema.alerts).values(recipientIds.map((recipientId) => ({ checkId: check.id, holdId, recipientId, kind }))).returning();
   const names = Object.values(await userNames(db, recipientIds));
   const what = kind === "urgent" ? "Urgent alert" : kind === "headsup" ? "Quiet heads-up" : "“Ask” request";
   await logEvent(db, owner.id, "Check service", "alert", `${what} sent to ${joinNames(names)}`, holdId);
+
+  // Push notifications reach the family phones even when the app is closed.
+  const family = await linkedFamily(db, owner.id);
+  const phrases = keyPhrases(check.signals, check.link, check.hardPhrases, 2).map((p) => `“${p}”`).join(" ");
+  const sent = await Promise.all(
+    rows.map((a) => {
+      const who = callNameOf(owner, family.find((f) => f.familyId === a.recipientId)?.relation);
+      const text =
+        kind === "urgent"
+          ? { title: `${who} needs you now`, body: `${who} got a scam message${check.amount ? ` asking for ${rupees(check.amount)}` : ""}. Nothing is paid. Tell ${who} what to do.`, urgent: true }
+          : kind === "headsup"
+            ? { title: `Heads-up: ${who} got a ${check.verdict === "SCAM" ? "scam" : "suspicious"} message`, body: `${phrases || check.title}. ${who} has not tried to pay.`, urgent: false }
+            : { title: `${who} is asking: is this message safe?`, body: phrases || check.title, urgent: false };
+      return pushToUsers(db, [a.recipientId], { ...text, url: `/family/alert/${a.id}`, tag: `alert-${a.id}` });
+    }),
+  );
+  const pushed = sent.reduce((n, r) => n + r.sent, 0);
+  if (pushed) await logEvent(db, owner.id, "Check service", "push", `Push notification sent to ${pushed} phone${pushed === 1 ? "" : "s"}`, holdId);
 }
 
 /** E2 "Ask Arjun": a suspicious (or safe) message goes to family for a decision. */
-export async function askFamily(db: Db, owner: User, checkId: string) {
+export async function askFamily(db: Db, owner: User, checkId: string, text?: string) {
   const check = await ownCheck(db, owner, checkId);
   if (check.askedFamilyAt) return;
   const family = await linkedFamily(db, owner.id);
   if (!family.length) throw new HttpError(400, "Add a trusted person first.");
-  await db.update(schema.checks).set({ askedFamilyAt: new Date() }).where(eq(schema.checks.id, check.id));
+  // A SAFE message's text was not kept; the phone sends it along so family can
+  // read it too. It must be the same message that was checked.
+  const shareText =
+    !check.messageText && text && fingerprint(normalizeForMatch(text.slice(0, MAX_MESSAGE_CHARS)).text) === check.fingerprint
+      ? text.slice(0, MAX_MESSAGE_CHARS)
+      : undefined;
+  await db
+    .update(schema.checks)
+    .set({ askedFamilyAt: new Date(), ...(shareText ? { messageText: shareText } : {}) })
+    .where(eq(schema.checks.id, check.id));
   await sendAlerts(db, owner, check, family.map((f) => f.familyId), "ask", null);
 }
 
@@ -161,16 +196,40 @@ export async function setFamilyVerdict(db: Db, member: User, checkId: string, ve
   const check = await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) });
   if (!check) throw new HttpError(404, "That message was not found.");
   await assertLinked(db, member, check.userId);
+  const paused = await db.query.holds.findFirst({ where: and(eq(schema.holds.checkId, checkId), eq(schema.holds.status, "pending")) });
+  if (paused) throw new HttpError(409, "A payment is paused for this message. Block or approve it on the payment screen.");
+  const summary = await giveAnswer(db, member, check, verdict);
+  if (note) await db.insert(schema.advice).values({ checkId, fromUserId: member.id, text: note });
+  return { final: summary.final, waitingFor: summary.waitingFor };
+}
+
+/** The message text family may read: only within 24 hours of the check. */
+export function sharedText(check: Check): string | null {
+  if (!check.messageText) return null;
+  return Date.now() - check.createdAt.getTime() < SHARE_TEXT_HOURS * 3600_000 ? check.messageText : null;
+}
+
+/** Deletes message text older than 24 hours. */
+export async function purgeSharedText(db: Db) {
   await db
     .update(schema.checks)
-    .set({ familyVerdict: verdict, familyVerdictBy: member.id, familyVerdictAt: new Date() })
-    .where(eq(schema.checks.id, checkId));
-  if (note) await db.insert(schema.advice).values({ checkId, fromUserId: member.id, text: note });
-  await db
-    .update(schema.alerts)
-    .set({ handledAt: new Date() })
-    .where(and(eq(schema.alerts.checkId, checkId), isNull(schema.alerts.handledAt), isNull(schema.alerts.holdId)));
-  await logEvent(db, check.userId, member.name, "family_verdict", `${member.name} marked it ${verdict === "scam" ? "a scam" : "not a scam"}`);
+    .set({ messageText: null })
+    .where(and(isNotNull(schema.checks.messageText), lt(schema.checks.createdAt, new Date(Date.now() - SHARE_TEXT_HOURS * 3600_000))));
+}
+
+/**
+ * The exact message for a family member, once they open an alert about it.
+ * Only people who were alerted or asked about this check can read it.
+ */
+export async function sharedMessageFor(db: Db, member: User, checkId: string): Promise<SharedMessage | null> {
+  const check = await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) });
+  if (!check) return null;
+  const alerted = await db.query.alerts.findFirst({
+    where: and(eq(schema.alerts.checkId, checkId), eq(schema.alerts.recipientId, member.id)),
+  });
+  const text = alerted ? sharedText(check) : null;
+  if (!text) return null;
+  return { text, signals: check.signals, link: check.link ?? null, source: check.source, senderLabel: check.senderLabel };
 }
 
 async function ownCheck(db: Db, owner: User, checkId: string) {
@@ -186,12 +245,16 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
   if (opts.member) await assertLinked(db, opts.member, check.userId);
 
   const family = await linkedFamily(db, check.userId);
+  const owner = (await db.query.users.findFirst({ where: eq(schema.users.id, check.userId) }))!;
   const helperFirst = family[0]?.name ?? "your family";
   const alertRows = await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, check.id) });
   const names = await userNames(db, [...alertRows.map((a) => a.recipientId), check.familyVerdictBy ?? ""]);
   const hold = await db.query.holds.findFirst({ where: eq(schema.holds.checkId, check.id), orderBy: desc(schema.holds.createdAt) });
   const sim = check.source === "paste" ? null : await db.query.simMessages.findFirst({ where: eq(schema.simMessages.checkId, check.id) });
   const copy = verdictCopy(check, helperFirst, check.safeHint === "bank" ? "debited" : "");
+  const said = await answerSummary(db, check.id);
+  // Family members read the exact message only if they were alerted or asked about it.
+  const memberNotAlerted = !!opts.member && !alertRows.some((a) => a.recipientId === opts.member!.id);
   const fc = check.verdict === "SAFE" ? null : familyCopy(check.family);
 
   return {
@@ -200,6 +263,7 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
     senderLabel: check.senderLabel,
     title: check.title,
     verdict: check.verdict,
+    finalVerdict: finalVerdict(check.verdict, check.familyVerdict),
     score: check.score,
     rulesScore: check.rulesScore,
     modelScore: check.modelScore,
@@ -224,8 +288,13 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
     alertedNames: family.filter((f) => alertRows.some((a) => a.kind !== "ask" && a.recipientId === f.familyId)).map((f) => names[f.familyId] ?? f.name),
     askedFamilyAt: check.askedFamilyAt?.toISOString() ?? null,
     familyVerdict: check.familyVerdict,
-    familyVerdictByName: check.familyVerdictBy ? names[check.familyVerdictBy] ?? null : null,
-    simText: sim?.text ?? null,
+    familyVerdictByName: said.final ? joinNames(said.decidedBy) : null,
+    answers: said.answers,
+    waitingFor: said.waitingFor,
+    canAnswer: !!opts.member && !said.final && said.recipients.includes(opts.member.id) && !said.answers.some((a) => a.memberId === opts.member!.id),
+    simText: memberNotAlerted ? null : sim?.text ?? null,
+    messageText: memberNotAlerted ? null : sharedText(check),
+    owner: ownerView(owner, opts.member ? family.find((f) => f.familyId === opts.member!.id)?.relation : null),
     hold: hold ? await toHoldView(db, hold, check) : null,
     advice: await adviceFor(db, { checkId: check.id }),
   };
@@ -240,12 +309,15 @@ export async function listChecks(db: Db, userId: string) {
   const holds = rows.length
     ? await db.query.holds.findMany({ where: inArray(schema.holds.checkId, rows.map((r) => r.id)) })
     : [];
+  const decided = new Map<string, string>();
+  for (const r of rows.filter((x) => x.familyVerdict)) decided.set(r.id, joinNames((await answerSummary(db, r.id)).decidedBy));
   return rows.map((c) => {
     const hold = holds.find((h) => h.checkId === c.id);
     return {
       id: c.id,
       title: c.title,
-      verdict: c.verdict,
+      verdict: finalVerdict(c.verdict, c.familyVerdict),
+      checkedBy: decided.get(c.id) || null,
       source: c.source,
       createdAt: c.createdAt.toISOString(),
       phrases: keyPhrases(c.signals, c.link, c.hardPhrases, 2),

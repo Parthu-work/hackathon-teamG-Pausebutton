@@ -4,8 +4,9 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
-import { PhoneFrame, useToast } from "@/components/ui";
+import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
+import { registerServiceWorker, resyncPush } from "@/lib/client/push";
 import { api, ApiError, post } from "@/lib/client/api";
 import type { FamilyState } from "@/lib/views";
 
@@ -17,12 +18,10 @@ export function useFamily() {
   return q;
 }
 
-/** What the family member calls the protected person: "Papa" for a son or daughter. */
-export function useCallName() {
-  const { data } = useFamily();
-  const p = data?.protectedUser;
-  if (!p) return "Papa";
-  return p.relation === "Son" || p.relation === "Daughter" ? "Papa" : p.name;
+/** The first tab's label: the person's call name when there is one person, "People" when there are several. */
+export function useTabLabel() {
+  const people = useFamily().data?.people ?? [];
+  return people.length === 1 ? people[0].callName : "People";
 }
 
 const PLAYED_KEY = "pb-played-alerts";
@@ -44,6 +43,14 @@ function remember(id: string) {
 }
 
 export function FamilyShell({ children }: { children: React.ReactNode }) {
+  return (
+    <ToastProvider>
+      <FamilyShellInner>{children}</FamilyShellInner>
+    </ToastProvider>
+  );
+}
+
+function FamilyShellInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const toast = useToast();
@@ -51,15 +58,25 @@ export function FamilyShell({ children }: { children: React.ReactNode }) {
   const offline = q.error instanceof ApiError && q.error.status === 0;
   const wasOffline = useRef(false);
 
+  // Alerts while the app is closed: install the service worker now, and re-register
+  // this phone if it already has permission (push endpoints can change).
   useEffect(() => {
-    const unlock = () => unlockAudio();
-    window.addEventListener("pointerdown", unlock, { once: true });
-    return () => window.removeEventListener("pointerdown", unlock);
+    void registerServiceWorker().then(() => resyncPush());
   }, []);
 
   useEffect(() => {
-    if (q.error instanceof ApiError && q.error.status === 401) router.replace("/welcome");
-  }, [q.error, router]);
+    const unlock = () => unlockAudio();
+    window.addEventListener("pointerdown", unlock, { once: true, capture: true });
+    window.addEventListener("keydown", unlock, { once: true, capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock, { capture: true });
+      window.removeEventListener("keydown", unlock, { capture: true });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (q.error instanceof ApiError && q.error.status === 401 && q.fetchStatus === "idle") router.replace("/welcome");
+  }, [q.error, q.fetchStatus, router]);
 
   useEffect(() => {
     if (offline) wasOffline.current = true;
@@ -69,8 +86,8 @@ export function FamilyShell({ children }: { children: React.ReactNode }) {
     }
   }, [offline, q.data, toast]);
 
-  // Not linked yet: the invite code screen.
-  const linked = !!q.data?.protectedUser;
+  // Not linked to anyone yet: the invite code screen.
+  const linked = (q.data?.people.length ?? 0) > 0;
   useEffect(() => {
     if (q.data && !linked && !pathname.startsWith("/family/join") && !pathname.startsWith("/family/alerts-setup")) {
       router.replace("/family/join");

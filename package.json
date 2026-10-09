@@ -17,7 +17,10 @@
     "e2e": "playwright test",
     "eval": "tsx scripts/eval.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx scripts/migrate.ts"
+    "db:migrate": "tsx scripts/migrate.ts",
+    "e2e:headed": "next build && HEADED=1 playwright test",
+    "push:keys": "tsx scripts/push-keys.ts",
+    "share": "cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
@@ -28,6 +31,7 @@
     "pg": "^8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "web-push": "^3.6.7",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -36,6 +40,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/web-push": "^3.6.4",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",

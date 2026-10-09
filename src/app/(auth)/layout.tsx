@@ -1,5 +1,9 @@
-import { PhoneFrame } from "@/components/ui";
+import { PhoneFrame, ToastProvider } from "@/components/ui";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  return <PhoneFrame>{children}</PhoneFrame>;
+  return (
+    <ToastProvider>
+      <PhoneFrame>{children}</PhoneFrame>
+    </ToastProvider>
+  );
 }

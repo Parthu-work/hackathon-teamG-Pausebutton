@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray } from "drizzle-orm";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import type { EventView } from "@/lib/views";
@@ -15,16 +15,16 @@ export async function logEvent(
   await db.insert(schema.events).values({ householdId, actor, type, message, holdId });
 }
 
-export async function listEvents(db: Db, householdId: string, sinceId = 0): Promise<EventView[]> {
+export async function listEvents(db: Db, householdIds: string[], sinceId = 0): Promise<EventView[]> {
   const rows = sinceId
     ? await db.query.events.findMany({
-        where: and(eq(schema.events.householdId, householdId), gt(schema.events.id, sinceId)),
+        where: and(inArray(schema.events.householdId, householdIds), gt(schema.events.id, sinceId)),
         orderBy: asc(schema.events.id),
         limit: 200,
       })
     : (
         await db.query.events.findMany({
-          where: eq(schema.events.householdId, householdId),
+          where: inArray(schema.events.householdId, householdIds),
           orderBy: desc(schema.events.id),
           limit: 60,
         })

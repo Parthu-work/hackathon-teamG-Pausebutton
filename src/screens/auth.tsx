@@ -51,7 +51,7 @@ export function SignInScreen() {
     }
   }
 
-  async function demo(persona: "rao" | "arjun") {
+  async function demo(persona: "rao" | "mom" | "arjun" | "meera") {
     setBusy(true);
     const r = await post<{ redirect: string }>("/api/auth/demo", { persona }).catch((e: Error) => {
       setError(e.message);
@@ -109,7 +109,9 @@ export function SignInScreen() {
         <div className="grow" style={{ height: 1, background: "var(--border-strong)" }} />
       </div>
       <button className="btn line" disabled={busy} onClick={() => demo("rao")}>Continue as Mr Rao (demo)</button>
+      <button className="btn line" disabled={busy} onClick={() => demo("mom")}>Continue as Mrs Rao (demo)</button>
       <button className="btn line" disabled={busy} onClick={() => demo("arjun")}>Continue as Arjun (demo)</button>
+      <button className="btn line" disabled={busy} onClick={() => demo("meera")}>Continue as Meera (demo)</button>
       <p className="sm">Demo sign-in only. No real code is sent and no real money is involved.</p>
     </Screen>
   );

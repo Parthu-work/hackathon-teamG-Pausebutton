@@ -33,7 +33,7 @@ function OpHeader({ title, sub }: { title: string; sub: string }) {
         <Link className="ghost" href="/tests">Test set</Link>
         <Link className="ghost" href="/demo">Demo panel</Link>
         <Link className="ghost" href="/">Mr Rao&apos;s phone</Link>
-        <Link className="ghost" href="/family">Arjun&apos;s phone</Link>
+        <Link className="ghost" href="/family">Family phone</Link>
       </nav>
     </div>
   );
@@ -163,16 +163,18 @@ export function DemoPage() {
 
 function DemoPanel() {
   const toast = useToast();
-  const [ready, setReady] = useState(false);
+  const [tokens, setTokens] = useState<{ rao: string; mom: string; arjun: string; meera: string } | null>(null);
+  const [left, setLeft] = useState<"rao" | "mom">("rao");
+  const ready = !!tokens;
   const [events, setEvents] = useState<EventView[]>([]);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [frameKey, setFrameKey] = useState(0);
   const since = useRef(0);
-  const logEnd = useRef<HTMLDivElement>(null);
+  const logBox = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void post("/api/demo/personas").then(() => setReady(true));
+    void post<{ tokens: { rao: string; mom: string; arjun: string; meera: string } }>("/api/demo/personas").then((r) => setTokens(r.tokens));
   }, []);
 
   useEffect(() => {
@@ -201,8 +203,10 @@ function DemoPanel() {
     };
   }, [ready]);
 
+  // Keep the newest line in view inside the log only (never scroll the page away from the phones).
   useEffect(() => {
-    logEnd.current?.scrollIntoView({ block: "nearest" });
+    const box = logBox.current;
+    if (box) box.scrollTop = box.scrollHeight;
   }, [events.length]);
 
   async function reset() {
@@ -210,11 +214,11 @@ function DemoPanel() {
     since.current = 0;
     setEvents([]);
     setFrameKey((k) => k + 1);
-    toast({ title: "Demo data reset", sub: "Holds and checks cleared · Arjun still linked" });
+    toast({ title: "Demo data reset", sub: "Holds and checks cleared · Arjun and Meera still linked" });
   }
   async function sample() {
-    await post("/api/demo/sample");
-    toast({ title: "Scam sample sent", sub: "It arrives on Mr Rao's phone", icon: "msg" });
+    const r = await post<{ name: string }>("/api/demo/sample", { persona: left });
+    toast({ title: "Scam sample sent", sub: `It arrives on ${r.name}'s phone`, icon: "msg" });
   }
   function wifi() {
     broadcastWifiDrop(8000);
@@ -225,49 +229,61 @@ function DemoPanel() {
   return (
     <div className="op" style={{ background: "var(--bg2)" }}>
       <div className="syn">SYNTHETIC DEMO DATA</div>
-      <main className="op-main" style={{ maxWidth: 1320 }}>
+      <main className="op-main" style={{ maxWidth: 1290 }}>
         <OpHeader
-          title="Demo panel: two phones, one service"
-          sub="Route /demo. Use it when the second physical phone does not buzz. Both screens poll the same service every 2 seconds."
+          title="Demo panel: one household, one service"
+          sub="Route /demo. Mr Rao (Papa) and Mrs Rao (Mummy) are both protected by Arjun and Meera. Every phone polls the same service every 2 seconds."
         />
         <p className="sm" style={{ fontWeight: 700 }}>
           <span className="dot" style={{ display: "inline-block", background: lastSync && now - lastSync < 5000 ? "#2E7D5B" : "#C6372B", marginRight: 8 }} />
           {lastSync && now - lastSync < 5000 ? "Online" : "Offline"} · polling every 2 s · last sync {ago} s ago
         </p>
-        {ready && (
-          <div className="demo-grid">
-            <div className="col">
-              <div className="lbl">Mr Rao · route /</div>
-              <iframe key={`rao-${frameKey}`} title="Mr Rao's phone" src="/" />
+        {ready && tokens && (
+          <>
+            <div className="card row wrap" style={{ gap: 10, flexDirection: "row", alignItems: "center" }}>
+              <div className="lbl" style={{ marginRight: 4 }}>Controls</div>
+              <button className="btn red" onClick={reset}>Reset demo data</button>
+              <button className="btn amber" onClick={sample}>Run a scam sample</button>
+              <button className="btn line" onClick={wifi}><Icon name="wifi" />Simulate Wi-Fi drop</button>
+              <p className="sm grow" style={{ minWidth: 260 }}>
+                Reset keeps Arjun and Meera linked to both parents. Tap each family phone once so it may play sound. One “scam”
+                (or Block) from either of them settles it; “not a scam” (or Approve) needs both. Switch the left phone between Papa and Mummy.
+              </p>
             </div>
-            <div className="col" style={{ gap: 16 }}>
-              <div className="card" style={{ gap: 10 }}>
-                <div className="lbl">Controls</div>
-                <button className="btn red" onClick={reset}>Reset demo data</button>
-                <button className="btn amber" onClick={sample}>Run a scam sample</button>
-                <button className="btn line" onClick={wifi}><Icon name="wifi" />Simulate Wi-Fi drop</button>
-                <p className="sm">Reset clears holds and checks and keeps Arjun linked. The sample is the CBI call, arriving by WhatsApp. For the full story, paste the CBI example on Mr Rao&apos;s phone. Tap Arjun&apos;s phone once first so it is allowed to play sound.</p>
+            <div className="demo-grid">
+              <div className="col">
+                <div className="row" style={{ gap: 8 }}>
+                  <div className="lbl grow">{left === "rao" ? "Mr Rao (Papa)" : "Mrs Rao (Mummy)"} · route /</div>
+                  <button className={`chip ${left === "rao" ? "on" : ""}`} style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => setLeft("rao")}>Papa</button>
+                  <button className={`chip ${left === "mom" ? "on" : ""}`} style={{ padding: "5px 10px", fontSize: 13 }} onClick={() => setLeft("mom")}>Mummy</button>
+                </div>
+                {/* The frame's name carries the persona's token, so Papa's and Mummy's phones can share one browser. */}
+                <iframe key={`${left}-${frameKey}`} name={`pb-rao:${tokens[left]}`} title={left === "rao" ? "Mr Rao's phone" : "Mrs Rao's phone"} src="/" />
               </div>
-              <div className="card" style={{ gap: 10, maxHeight: 560, overflowY: "auto" }}>
-                <div className="lbl">Event log (live)</div>
-                {events.length === 0 ? (
-                  <p className="sm">Nothing yet. Check a message on Mr Rao&apos;s phone.</p>
-                ) : (
-                  <div className="log">
-                    {events.flatMap((e) => [
-                      <span key={`t${e.id}`}>{new Date(e.createdAt).toLocaleTimeString("en-GB")}</span>,
-                      <span key={`m${e.id}`}>{e.message}</span>,
-                    ])}
-                  </div>
-                )}
-                <div ref={logEnd} />
+              <div className="col">
+                <div className="lbl">Arjun (son) · route /family</div>
+                {/* The frame's name carries Arjun's token, so both family phones can share one browser. */}
+                <iframe key={`arjun-${frameKey}`} name={`pb-family:${tokens.arjun}`} title="Arjun's phone" src="/family" allow="autoplay" />
+              </div>
+              <div className="col">
+                <div className="lbl">Meera (daughter) · route /family</div>
+                <iframe key={`meera-${frameKey}`} name={`pb-family:${tokens.meera}`} title="Meera's phone" src="/family" allow="autoplay" />
               </div>
             </div>
-            <div className="col">
-              <div className="lbl">Arjun · route /family</div>
-              <iframe key={`arjun-${frameKey}`} title="Arjun's phone" src="/family" allow="autoplay" />
+            <div ref={logBox} className="card" style={{ gap: 10, maxHeight: 420, overflowY: "auto" }}>
+              <div className="lbl">Event log (live)</div>
+              {events.length === 0 ? (
+                <p className="sm">Nothing yet. Check a message on Mr Rao&apos;s phone.</p>
+              ) : (
+                <div className="log">
+                  {events.flatMap((e) => [
+                    <span key={`t${e.id}`}>{new Date(e.createdAt).toLocaleTimeString("en-GB")}</span>,
+                    <span key={`m${e.id}`}>{e.message}</span>,
+                  ])}
+                </div>
+              )}
             </div>
-          </div>
+          </>
         )}
       </main>
     </div>

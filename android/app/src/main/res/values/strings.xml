@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pause Button</string>
+    <string name="connect_title">Connect this phone</string>
+    <string name="watcher_label">Pause Button message watcher</string>
+</resources>

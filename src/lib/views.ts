@@ -5,6 +5,12 @@ export type HoldStatus = "pending" | "blocked" | "approved" | "cancelled" | "exp
 
 export type AdviceView = { id: string; fromName: string; text: string; createdAt: string };
 
+/** A protected person as their family member sees them. */
+export type OwnerView = { id: string; name: string; callName: string; phone: string };
+
+/** One family member's answer about a message. */
+export type AnswerView = { memberId: string; name: string; verdict: "scam" | "not_scam"; at: string };
+
 export type HoldView = {
   id: string;
   checkId: string;
@@ -13,14 +19,23 @@ export type HoldView = {
   status: HoldStatus;
   expiresAt: string;
   createdAt: string;
+  /** Blocked: who blocked it. Approved: everyone who approved (all alerted people must). */
   decidedByName: string | null;
   decidedAt: string | null;
   outcomeSeen: boolean;
+  /** People who approved so far, and who still has to (approval needs everyone alerted). */
+  approvedBy: string[];
+  waitingFor: string[];
   phrases: string[];
   checkTitle: string;
   verdict: Verdict;
   advice: AdviceView[];
+  /** Whose payment this is. */
+  owner: OwnerView;
 };
+
+/** What the family member reads after opening an alert: the exact message, with its warning phrases. */
+export type SharedMessage = { text: string; signals: Evidence[]; link: LinkInfo | null; source: "paste" | "sms" | "whatsapp"; senderLabel: string | null };
 
 export type CheckView = {
   id: string;
@@ -28,6 +43,8 @@ export type CheckView = {
   senderLabel: string | null;
   title: string;
   verdict: Verdict;
+  /** The verdict after family answered (their answer decides); same as verdict until then. */
+  finalVerdict: Verdict;
   score: number;
   rulesScore: number;
   modelScore: number | null;
@@ -52,9 +69,19 @@ export type CheckView = {
   alertedNames: string[];
   askedFamilyAt: string | null;
   familyVerdict: "scam" | "not_scam" | null;
+  /** Who settled it: whoever said scam, or everyone who said it is fine ("Arjun and Meera"). */
   familyVerdictByName: string | null;
+  /** Every family answer so far, and who has not answered yet (until it is settled). */
+  answers: AnswerView[];
+  waitingFor: string[];
+  /** For a family member: may they still answer? (alerted, not answered, not settled) */
+  canAnswer: boolean;
   /** Only for messages from the simulated inbox (the phone's own copy). */
   simText: string | null;
+  /** The exact message (24 h): for the owner, and for family members who were alerted or asked. */
+  messageText: string | null;
+  /** Whose message this is. */
+  owner: OwnerView;
   hold: HoldView | null;
   advice: AdviceView[];
 };
@@ -121,15 +148,27 @@ export type AlertView = {
   source: "paste" | "sms" | "whatsapp";
   senderLabel: string | null;
   otherRecipients: string[];
+  /** Whose message this alert is about (Papa, Mummy, …). */
+  owner: OwnerView;
+};
+
+/** One person a family member protects, with everything their card and home screen show. */
+export type ProtectedView = OwnerView & {
+  online: boolean;
+  relation: string;
+  linkId: string;
+  activeHold: HoldView | null;
+  lastCheck: { id: string; verdict: Verdict; title: string; createdAt: string; phrases: string[] } | null;
+  today: { total: number; scam: number; suspicious: number; safe: number };
+  /** Open questions and heads-ups from this person. */
+  openAlerts: number;
 };
 
 export type FamilyState = {
   me: { id: string; name: string; alertNotify: boolean; alertSound: boolean; alertVibrate: boolean; alertsReady: boolean };
-  protectedUser: { id: string; name: string; phone: string; online: boolean; relation: string; linkId: string } | null;
+  /** Everyone this family member protects (Arjun: Papa and Mummy). Empty until an invite is accepted. */
+  people: ProtectedView[];
   alerts: AlertView[];
-  activeHold: HoldView | null;
-  lastCheck: { id: string; verdict: Verdict; title: string; createdAt: string; phrases: string[] } | null;
-  today: { total: number; scam: number; suspicious: number; safe: number };
   serverNow: string;
 };
 
@@ -141,6 +180,22 @@ export type ActivityItem = {
   phrases: string[];
   createdAt: string;
   checkId: string;
+  owner: OwnerView;
+};
+
+/** An Android phone paired to watch messages (M2/M3 status). */
+export type DeviceView = {
+  id: string;
+  name: string;
+  paired: boolean;
+  pairingCode: string | null;
+  pairingExpiresAt: string | null;
+  pairedAt: string | null;
+  online: boolean;
+  lastSeenAt: string | null;
+  lastMessageAt: string | null;
+  listenerOn: boolean;
+  messagesSeen: number;
 };
 
 export type EventView = { id: number; actor: string; type: string; message: string; createdAt: string };

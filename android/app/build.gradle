@@ -1,0 +1,70 @@
+plugins {
+    id "com.android.application"
+}
+
+def host = (project.findProperty("PB_HOST") ?: "https://pause-button.vercel.app").toString().replaceAll('/+$', '')
+def assetStatements = '[{"relation": ["delegate_permission/common.handle_all_urls"], "target": {"namespace": "web", "site": "' + host + '"}}]'
+
+android {
+    namespace "ai.apty.pausebutton"
+    compileSdk 37
+    compileSdkMinor 2
+
+    defaultConfig {
+        applicationId "ai.apty.pausebutton"
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName "0.1.0"
+        buildConfigField "String", "DEFAULT_HOST", '"' + host + '"'
+        resValue "string", "default_host", host
+        // Digital Asset Links: lets Android open the site full screen once the
+        // site serves /.well-known/assetlinks.json with this app's signing key.
+        resValue "string", "asset_statements", assetStatements.replace('"', '\\"')
+    }
+
+    signingConfigs {
+        // A real release key when PB_KEYSTORE is set; otherwise the debug key, so
+        // "assembleRelease" always produces an installable APK for the demo.
+        release {
+            def ks = project.findProperty("PB_KEYSTORE")
+            if (ks) {
+                storeFile file(ks)
+                storePassword project.findProperty("PB_KEYSTORE_PASSWORD")
+                keyAlias project.findProperty("PB_KEY_ALIAS")
+                keyPassword project.findProperty("PB_KEY_PASSWORD")
+            } else {
+                initWith signingConfigs.debug
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Lets a debug build talk to http://10.0.2.2:3000 (emulator) or a LAN address.
+            manifestPlaceholders = [cleartext: "true"]
+        }
+        release {
+            minifyEnabled false
+            manifestPlaceholders = [cleartext: "false"]
+            signingConfig signingConfigs.release
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+        resValues true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Trusted Web Activity launcher (opens the web app in Chrome, full screen).
+    implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.7.4"
+    implementation "androidx.browser:browser:1.10.0"
+    implementation "androidx.core:core:1.19.1"
+}

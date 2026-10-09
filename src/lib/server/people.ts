@@ -3,7 +3,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { INVITE_HOURS } from "@/lib/check/config";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
-import type { PersonView } from "@/lib/views";
+import type { OwnerView, PersonView } from "@/lib/views";
 import { logEvent } from "./events";
 import { HttpError } from "./session";
 
@@ -45,6 +45,15 @@ export async function linkedFamily(db: Db, protectedId: string) {
     orderBy: asc(schema.links.createdAt),
   });
   return rows.filter((l): l is Link & { familyId: string } => !!l.familyId);
+}
+
+/** What a family member calls this person: children say "Papa"/"Mummy" (the nickname), others use the name. */
+export function callNameOf(owner: { name: string; nickname: string | null }, relation?: string | null) {
+  return !relation || relation === "Son" || relation === "Daughter" ? owner.nickname ?? owner.name : owner.name;
+}
+
+export function ownerView(owner: User, relation?: string | null): OwnerView {
+  return { id: owner.id, name: owner.name, callName: callNameOf(owner, relation), phone: owner.phone };
 }
 
 export function joinNames(names: string[]) {

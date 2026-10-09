@@ -4,12 +4,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
-import { LoadingScreen, Marks, Screen, TitleRow, useCall, useCountdown, useToast, VerdictPill } from "@/components/ui";
+import { HighlightedText, LoadingScreen, Marks, Screen, TitleRow, useCall, useCountdown, useToast, VerdictPill } from "@/components/ui";
 import { DO_LIST, DONT_LIST, rupees, SIGNAL_LABEL, SIGNAL_WHY } from "@/lib/check/copy";
 import { keyPhrases } from "@/lib/check/phrases";
-import type { Evidence, HardRule, LinkInfo, SignalType } from "@/lib/check/types";
+import type { HardRule, SignalType } from "@/lib/check/types";
 import { post } from "@/lib/client/api";
 import { loadMessage } from "@/lib/client/messages";
+import { HELPLINE } from "@/lib/phone";
 import { useHelper } from "./shell";
 import { useCheck } from "./verdict";
 
@@ -19,47 +20,6 @@ const FLOOR: Record<HardRule, string> = {
   bad_link: "A link that copies a bank or brand, or a known scam site, is always a SCAM.",
 };
 
-/** The message with each warning phrase marked and numbered (F1). */
-function Highlighted({ text, signals, numbers, link, onLink }: {
-  text: string;
-  signals: Evidence[];
-  numbers: Map<SignalType, number>;
-  link: LinkInfo | null;
-  onLink: () => void;
-}) {
-  type Span = { start: number; end: number; n?: number; link?: boolean };
-  const spans: Span[] = [];
-  const add = (s: Span) => {
-    if (s.start < 0 || s.end > text.length || s.end <= s.start) return;
-    if (!spans.some((x) => x.start < s.end && s.start < x.end)) spans.push(s);
-  };
-  signals.forEach((s) => add({ start: s.start, end: s.end, n: numbers.get(s.type) }));
-  if (link && link.status !== "known") add({ start: link.start, end: link.end, link: true });
-  spans.sort((a, b) => a.start - b.start);
-
-  const out: React.ReactNode[] = [];
-  let at = 0;
-  spans.forEach((s, i) => {
-    if (s.start > at) out.push(text.slice(at, s.start));
-    const piece = text.slice(s.start, s.end);
-    out.push(
-      s.link ? (
-        <button key={i} onClick={onLink} style={{ background: "none", padding: 0, textDecoration: "underline", color: "inherit", font: "inherit" }}>
-          <mark>{piece}</mark>
-        </button>
-      ) : (
-        <span key={i}>
-          <mark>{piece}</mark>
-          {s.n && <sup>{s.n}</sup>}
-        </span>
-      ),
-    );
-    at = s.end;
-  });
-  out.push(text.slice(at));
-  return <p className="p" style={{ fontSize: 16, lineHeight: 1.55, wordBreak: "break-word" }}>{out}</p>;
-}
-
 /** F1 · Why it is a scam · F3 · rules only */
 export function WhyScreen() {
   const { id } = useParams<{ id: string }>();
@@ -67,7 +27,7 @@ export function WhyScreen() {
   const { data: c } = useCheck(id);
   if (!c) return <LoadingScreen />;
 
-  const text = c.simText ?? loadMessage(id);
+  const text = c.simText ?? c.messageText ?? loadMessage(id);
   const order: SignalType[] = [];
   [...c.signals].sort((a, b) => a.start - b.start).forEach((s) => !order.includes(s.type) && order.push(s.type));
   (["authority", "fear", "secrecy", "payment"] as SignalType[]).forEach((t) => !order.includes(t) && order.push(t));
@@ -78,11 +38,23 @@ export function WhyScreen() {
 
   return (
     <Screen note={noAi ? <div className="note" style={{ margin: "12px 20px 0" }}><Icon name="info" />Checked by rules only — AI unavailable</div> : undefined}>
-      <TitleRow title="Why we think so" back={`/check/${id}`} right={<VerdictPill verdict={c.verdict} size="medium" icon={false} />} />
+      <TitleRow
+        title={c.familyVerdict === "not_scam" ? "Why we flagged it" : "Why we think so"}
+        back={`/check/${id}`}
+        right={<VerdictPill verdict={c.finalVerdict} size="medium" icon={false} />}
+      />
+      {c.familyVerdict && (
+        <div className={`card ${c.familyVerdict === "not_scam" ? "tint-green" : "tint-red"}`} style={{ padding: "10px 14px" }}>
+          <b style={{ fontSize: 16 }}>
+            {c.familyVerdictByName} checked it: {c.familyVerdict === "not_scam" ? "not a scam" : "a scam"}.
+          </b>
+          {c.familyVerdict === "not_scam" && <p className="sm" style={{ color: "var(--text)" }}>Below is what Pause Button had flagged before they looked at it.</p>}
+        </div>
+      )}
       <div className="card" style={{ padding: "12px 14px" }}>
         <div className="lbl">Your message</div>
         {text ? (
-          <Highlighted text={text} signals={c.signals} numbers={numbers} link={c.link} onLink={() => router.push(`/check/${id}/link`)} />
+          <HighlightedText text={text} signals={c.signals} numbers={numbers} link={c.link} onLink={() => router.push(`/check/${id}/link`)} />
         ) : (
           <>
             <p className="sm">We do not keep your messages. These are the warning phrases we found:</p>
@@ -185,8 +157,8 @@ export function TodoScreen() {
         ))}
       </div>
       <div className="spacer" />
-      <button className="btn green" onClick={() => call(helper.first)}><Icon name="phone" />Call {helper.first}</button>
-      <button className="btn line" onClick={() => call("1930")}>Call cyber helpline 1930</button>
+      <button className="btn green" onClick={() => call(helper.first, helper.phone)}><Icon name="phone" />Call {helper.first}</button>
+      <button className="btn line" onClick={() => call("cyber helpline 1930", HELPLINE)}>Call cyber helpline 1930</button>
       <p className="sm center-text">You can also report it at cybercrime.gov.in or on Sanchar Saathi (Chakshu).</p>
     </Screen>
   );
@@ -291,7 +263,7 @@ export function PayScreen() {
         Cancel this payment
       </button>
       <button className="btn off md-btn" disabled><Icon name="lock" />Pay is locked</button>
-      <button className="ghost" style={{ alignSelf: "center" }} onClick={() => call(helper.first)}>Call {helper.first}</button>
+      <button className="ghost" style={{ alignSelf: "center" }} onClick={() => call(helper.first, helper.phone)}>Call {helper.first}</button>
     </Screen>
   );
 }

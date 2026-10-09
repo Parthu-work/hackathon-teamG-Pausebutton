@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   check:
-    name: Lint, types, tests, build, two-phone e2e
+    name: Lint, types, tests, build, three-phone e2e
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -31,7 +31,7 @@ jobs:
         run: pnpm test
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
-      - name: Two-phone end-to-end test
+      - name: Three-phone end-to-end test (Mr Rao, Arjun, Meera)
         run: pnpm e2e
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -61,3 +61,26 @@ jobs:
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then echo "No ANTHROPIC_API_KEY secret: skipping."; exit 0; fi
           pnpm eval --ai haiku
+
+  android-apk:
+    name: Android APK (debug)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37.2 build-tools;36.0.0
+      - name: Build the debug APK
+        # PB_HOST: where the web app is deployed (set a repository variable); the person can change it in the app.
+        run: cd android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug -PPB_HOST="${{ vars.PB_HOST || 'https://pause-button.vercel.app' }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pause-button-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+

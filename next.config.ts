@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
     "/api/**/*": ["./src/data/gate-model.json", "./drizzle/**/*"],
   },
   // Lets you open the dev server from a phone on the same Wi-Fi.
-  allowedDevOrigins: ["*.local", "192.168.*.*", "10.*.*.*"],
+  allowedDevOrigins: ["*.local", "192.168.*.*", "10.*.*.*", "*.trycloudflare.com"],
 };
 
 export default nextConfig;

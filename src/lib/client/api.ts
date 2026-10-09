@@ -23,11 +23,22 @@ if (typeof window !== "undefined" && "BroadcastChannel" in window) {
 /** Called by the demo panel; reaches every tab and iframe of this site. */
 export function broadcastWifiDrop(ms = 8000) {
   offlineUntil = Date.now() + ms;
-  new BroadcastChannel(CHANNEL).postMessage({ type: "wifi-drop", ms });
+  if ("BroadcastChannel" in window) new BroadcastChannel(CHANNEL).postMessage({ type: "wifi-drop", ms });
 }
 
 export function isSimulatedOffline() {
   return Date.now() < offlineUntil;
+}
+
+/**
+ * In the demo panel each phone is a frame named "pb-rao:<token>" or
+ * "pb-family:<token>": the token says whose phone it is (Mr Rao, Mrs Rao,
+ * Arjun or Meera), so all of them can run in one browser.
+ */
+function frameIdentity(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const m = window.name.match(/^pb-(rao|family):(.+)$/);
+  return m ? { [`x-pb-${m[1]}`]: m[2] } : {};
 }
 
 export async function api<T = unknown>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -36,7 +47,7 @@ export async function api<T = unknown>(path: string, init?: { method?: string; b
   try {
     res = await fetch(path, {
       method: init?.method ?? (init?.body !== undefined ? "POST" : "GET"),
-      headers: init?.body !== undefined ? { "content-type": "application/json" } : undefined,
+      headers: { ...(init?.body !== undefined ? { "content-type": "application/json" } : {}), ...frameIdentity() },
       body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
       cache: "no-store",
     });
