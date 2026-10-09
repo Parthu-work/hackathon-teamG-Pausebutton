@@ -269,6 +269,8 @@ export const en = {
     noRules: "None of our usual rules matched",
     noRulesBody: "This wording is new. Older checkers would have called it “unsure” and left you to decide alone.",
     toldAnyway: "{names} told anyway",
+    unreachableTitle: "{names} may not see it quickly",
+    unreachableBody: "The alert could not reach {names}'s phone. Call now instead of waiting.",
     whatAsked: "What they asked for",
     readAloud: "Read it aloud",
     stopReading: "Stop reading",

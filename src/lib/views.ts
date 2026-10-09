@@ -102,6 +102,13 @@ export type CheckView = {
   reportable: ReportableLink | null;
   createdAt: string;
   alertedNames: string[];
+  /**
+   * Family members told about this message whose phones the push could not
+   * reach (every delivery failed or the phone was gone) and who have not opened
+   * it yet. Mr Rao's screen names them so he calls instead of waiting.
+   * Empty on family members' screens.
+   */
+  unreachableNames: string[];
   askedFamilyAt: string | null;
   familyVerdict: "scam" | "not_scam" | null;
   /** Who settled it: whoever said scam, or everyone who said it is fine ("Arjun and Meera"). */
