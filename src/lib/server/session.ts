@@ -66,8 +66,25 @@ export async function requireAnyUser() {
   return { db, user };
 }
 
+/**
+ * Demo sign-in: the "Continue as …" buttons and the fixed 1234 code. Anyone
+ * can use them to become Mr Rao, so a public deploy keeps them off.
+ * DEMO_SIGNIN=on or off decides; unset, it is on for a laptop or CI and off on Vercel.
+ */
+export function demoSignInOpen() {
+  const flag = process.env.DEMO_SIGNIN;
+  if (flag === "on") return true;
+  if (flag === "off") return false;
+  return !process.env.VERCEL;
+}
+
+export function requireDemoSignIn() {
+  if (!demoSignInOpen()) throw new HttpError(403, "Sign-in is not open on this site yet.");
+}
+
 export class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  /** retryAfter: seconds, sent as a Retry-After header (429s). */
+  constructor(public status: number, message: string, public retryAfter?: number) {
     super(message);
   }
 }

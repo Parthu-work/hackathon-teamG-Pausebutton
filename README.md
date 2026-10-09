@@ -176,7 +176,9 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
   - `DATABASE_URL` (Neon, same region; the Neon–Vercel integration can create a branch per preview);
   - `SESSION_SECRET`, `FINGERPRINT_SECRET` (on Vercel the app refuses to run without them; other hosts fall back to the dev values, so set them there too);
   - `OPERATOR_KEY` (needed for any public URL; a long random value);
+  - `DEMO_SIGNIN` only if this deployment should offer demo sign-in (`on`); unset, Vercel keeps it off;
   - optionally `ANTHROPIC_API_KEY`.
+- **Database migrations** for this change: `drizzle/0008_rate_limits.sql` (the Vercel build runs `pnpm db:migrate`).
 
 ## On a phone
 
@@ -266,7 +268,9 @@ Build: `cd android && ./gradlew assembleDebug -PPB_HOST=https://your-deployment`
 
 - **Calls go through the phone's dialer.** The app never places a call itself: the person confirms in the dialer. Set the demo numbers before a live demo (see "Calls" above).
 - **Still open after phase 2:** quiet hours and escalation calls (O3); FCM full-screen alerts that ring through Do Not Disturb; native call detection (the live-call guard asks questions instead of listening to the call); Play Store listing. Hindi and Telugu strings were machine-written and need a native speaker's sign-off.
-- **Operator pages need a key on a public URL.** Set `OPERATOR_KEY`: `/demo`, the `/tests` runs, "Reset demo data" and the Block/Reject review on `/reports` then ask for it once per browser tab. The read-only operator pages (`/campaigns`, the `/reports` list) stay open, and so does everything on a laptop without the key.
-- **Demo sign-in stays open.** "Continue as Mr Rao (demo)" and the code 1234 need no key, so anyone with a public URL can still run checks (and have Claude read the unsure ones, if a key is set). Put the whole site behind a password, or remove the demo sign-in, before a real launch.
+- **Operator pages need a key on a public URL.** Set `OPERATOR_KEY`: every operator page and route (`/demo`, `/tests`, `/campaigns`, `/reports`, their `/api/ops/*` and `/api/tests/*` data, "Reset demo data", Block / Reject / Unblock on `/reports`) then asks for it once per browser tab. Without the key (on a laptop) they stay open.
+- **Demo sign-in is off on Vercel.** "Continue as Mr Rao (demo)" and the code 1234 let anyone become a demo persona, and no real SMS code exists yet, so on Vercel both answer "Sign-in is not open on this site yet" unless `DEMO_SIGNIN=on`. Turn it on only for a deployment that is itself protected (Vercel deployment protection or a password). A laptop or CI keeps it on.
+- **Rate limits.** Checks and calls (which can reach the Anthropic API), the phone watcher's inbox, demo sign-in and code sign-in are limited per caller IP and per person, phone or number tried (`src/lib/server/ratelimit.ts`). Over the limit the API answers 429 with "Too many tries in a short time. Please wait a minute and try again." and a `Retry-After` header, before any AI call. Counters live in the `rate_limits` table (only a hash of the IP is kept); "Reset demo data" clears them. The IP comes from `x-real-ip` / `x-forwarded-for`, which Vercel sets; on another host put a proxy in front that overwrites them.
+- **A wrongly blocked domain can be un-blocked** from `/reports` (Unblock, operator key). Its reports end as rejected and it leaves the live blocklist within 15 seconds on every server. Official bank domains still can never be blocked.
 - **The rules are a starting point.** The test set is small and team-written, and the training data is synthetic. Treat the numbers as a sanity check, not real-world accuracy.
 - **Claude refusals and timeouts fall back to rules only.** No refusal fallback model is configured.

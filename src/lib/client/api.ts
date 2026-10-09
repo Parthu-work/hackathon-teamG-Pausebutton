@@ -92,3 +92,19 @@ export async function operatorApi<T = unknown>(path: string, init: { method?: st
     return withKey(key);
   }
 }
+
+let readKeyDeclined = false;
+
+/**
+ * Reads an operator page's data (they poll). Asks for the key like
+ * operatorApi, but once someone cancels that prompt the background polls stop
+ * asking; the page shows the error instead, and a button press asks again.
+ */
+export async function operatorRead<T = unknown>(path: string): Promise<T> {
+  try {
+    return await operatorApi<T>(path, {}, !readKeyDeclined);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) readKeyDeclined = true;
+    throw error;
+  }
+}
