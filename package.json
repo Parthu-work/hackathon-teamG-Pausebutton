@@ -18,6 +18,7 @@
     "eval": "tsx scripts/eval.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
+    "env:check": "tsx scripts/check-env.ts",
     "e2e:headed": "next build && HEADED=1 playwright test",
     "push:keys": "tsx scripts/push-keys.ts",
     "share": "cloudflared tunnel --url http://localhost:3000"

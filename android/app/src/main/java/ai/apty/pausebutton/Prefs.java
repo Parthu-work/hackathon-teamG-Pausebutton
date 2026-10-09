@@ -3,6 +3,14 @@ package ai.apty.pausebutton;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.security.SecureRandom;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
 /** What the app remembers: where the web app lives, and this phone's connection to it. */
 public final class Prefs {
     private static final String FILE = "pause_button";
@@ -69,6 +77,85 @@ public final class Prefs {
 
     public static void setListenerConnected(Context c, boolean on) {
         get(c).edit().putBoolean("listenerConnected", on).apply();
+    }
+
+    // ---------------------------------------------------------------- consent (W4)
+
+    /** When the person agreed to the disclosure before notification access; 0 = not yet. */
+    public static long consentAt(Context c) {
+        return get(c).getLong("consentAt", 0);
+    }
+
+    public static boolean consented(Context c) {
+        return consentAt(c) > 0;
+    }
+
+    public static void setConsent(Context c, long at) {
+        get(c).edit().putLong("consentAt", at).apply();
+    }
+
+    // ---------------------------------------------------------------- what to watch
+
+    /** The person's choices from the web app (SMS, WhatsApp, only unknown senders). */
+    public static WatchRules watchRules(Context c) {
+        String s = get(c).getString("watchRules", null);
+        try {
+            return s == null ? WatchRules.DEFAULT : WatchRules.fromJson(new JSONObject(s));
+        } catch (JSONException e) {
+            return WatchRules.DEFAULT;
+        }
+    }
+
+    public static long watchRulesAt(Context c) {
+        return get(c).getLong("watchRulesAt", 0);
+    }
+
+    /** From a server answer that carries {@code settings}; anything else is ignored. */
+    public static void saveWatchRules(Context c, String responseBody) {
+        try {
+            JSONObject settings = new JSONObject(responseBody).optJSONObject("settings");
+            if (settings == null) return;
+            get(c).edit()
+                    .putString("watchRules", WatchRules.fromJson(settings).toJson().toString())
+                    .putLong("watchRulesAt", System.currentTimeMillis())
+                    .apply();
+        } catch (JSONException e) {
+            // Keep the last known rules.
+        }
+    }
+
+    // ---------------------------------------------------------------- dedup salt, today's counts
+
+    /** This install's own salt for the message fingerprints in SeenStore. */
+    public static synchronized String seenSalt(Context c) {
+        String salt = get(c).getString("seenSalt", null);
+        if (salt == null) {
+            byte[] b = new byte[16];
+            new SecureRandom().nextBytes(b);
+            StringBuilder hex = new StringBuilder();
+            for (byte x : b) hex.append(String.format("%02x", x));
+            salt = hex.toString();
+            get(c).edit().putString("seenSalt", salt).apply();
+        }
+        return salt;
+    }
+
+    public static DayCounts today(Context c) {
+        return DayCounts.load(get(c).getString("dayCounts", null), new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date()));
+    }
+
+    public static void count(Context c, String what, int n) {
+        get(c).edit().putString("dayCounts", today(c).add(what, n).save()).apply();
+    }
+
+    // ---------------------------------------------------------------- a disconnect the server has not heard yet
+
+    public static String pendingRevoke(Context c) {
+        return get(c).getString("pendingRevoke", null);
+    }
+
+    public static void setPendingRevoke(Context c, String token) {
+        get(c).edit().putString("pendingRevoke", token).apply();
     }
 
     static String trimSlash(String s) {

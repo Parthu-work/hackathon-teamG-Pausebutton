@@ -2,8 +2,7 @@
  * True on a hosted deployment (Vercel, Railway, Render, Fly.io, Cloud Run, or
  * DEPLOYED=1 anywhere else). A laptop, CI and the e2e server are not deployments.
  */
-export function isDeployment() {
-  const env = process.env;
+export function isDeployment(env: Record<string, string | undefined> = process.env) {
   return !!(env.VERCEL || env.RAILWAY_ENVIRONMENT_NAME || env.RENDER || env.FLY_APP_NAME || env.K_SERVICE || env.DEPLOYED);
 }
 

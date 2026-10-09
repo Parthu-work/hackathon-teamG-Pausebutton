@@ -108,6 +108,34 @@ describe("service worker: push", () => {
   });
 });
 
+describe("service worker: receipts", () => {
+  const receipts = (w: ReturnType<typeof loadWorker>) =>
+    w.fetchMock.mock.calls.filter(([url]) => url === "/api/push/receipt").map(([, init]) => JSON.parse(init!.body as string));
+
+  it("confirms a push once its notification is on screen", async () => {
+    const w = loadWorker();
+    await w.push({ title: "Papa needs you now", url: "/open/a2", tag: "alert-a2", urgent: true, receipt: "d-1" });
+    expect(w.shown).toHaveLength(1);
+    expect(receipts(w)).toEqual([{ id: "d-1", shown: true, error: null }]);
+  });
+
+  it("says so when the phone would not show it (notifications blocked), and why", async () => {
+    const w = loadWorker();
+    w.self.registration.showNotification.mockRejectedValueOnce(Object.assign(new TypeError("No notification permission has been granted for this origin."), { name: "TypeError" }));
+    await w.push({ title: "Papa needs you now", url: "/open/a2", tag: "alert-a2", urgent: true, receipt: "d-2" });
+    expect(receipts(w)).toEqual([{ id: "d-2", shown: false, error: "TypeError" }]);
+  });
+
+  it("sends nothing for a push without a delivery id, and a failed receipt never fails the push", async () => {
+    const w = loadWorker();
+    await w.push({ title: "Test", url: "/family", tag: "t" });
+    expect(receipts(w)).toEqual([]);
+    w.fetchMock.mockRejectedValueOnce(new TypeError("offline"));
+    await expect(w.push({ title: "Test", url: "/family", tag: "t", receipt: "d-3" })).resolves.toBeUndefined();
+    expect(w.shown).toHaveLength(2);
+  });
+});
+
 describe("service worker: tap", () => {
   it("opens the alert in the family window when one is open, never in an operator page", async () => {
     const w = loadWorker();

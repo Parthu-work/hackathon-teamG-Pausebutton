@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MAX_MESSAGE_CHARS } from "@/lib/check/pipeline";
 import { createCheck, deleteHistory, listChecks } from "@/lib/server/checks";
 import { readBody, route } from "@/lib/server/http";
+import { rateLimit } from "@/lib/server/ratelimit";
 import { requireUser } from "@/lib/server/session";
 
 export const GET = route(async () => {
@@ -16,6 +17,7 @@ export const GET = route(async () => {
  */
 export const POST = route(async (req) => {
   const { db, user } = await requireUser("rao");
+  await rateLimit(db, req, "check", user.id); // before the checker can reach the Anthropic API
   const body = await readBody(
     req,
     z.object({

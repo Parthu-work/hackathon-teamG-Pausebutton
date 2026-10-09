@@ -138,7 +138,7 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
                   {t("banner.possible", { verdict: t(`verdictLabel.${banner.verdict as "SCAM" | "SUSPICIOUS" | "SAFE"}`), sender: banner.sender })}
                 </b>
                 <span style={{ fontSize: 15, lineHeight: 1.35, color: "#ECE8E0" }}>
-                  {banner.phrases.length ? `“${banner.phrases.join("”, “")}”` : banner.text.slice(0, 60) + "…"} {t("banner.doNotReply")}
+                  {banner.phrases.length ? `“${banner.phrases.join("”, “")}”` : banner.text ? banner.text.slice(0, 60) + "…" : ""} {t("banner.doNotReply")}
                 </span>
                 <div className="row" style={{ gap: 10, marginTop: 2 }}>
                   <button className="btn amber" style={{ minHeight: 44, fontSize: 15, borderRadius: 12 }} onClick={() => onBanner("see")}>

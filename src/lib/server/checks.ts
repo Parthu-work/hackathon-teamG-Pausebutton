@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, lt, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, notInArray, or } from "drizzle-orm";
 import { familyCopy, rupees, verdictCopy } from "@/lib/check/copy";
 import { normalizeForMatch } from "@/lib/check/normalize";
 import { keyPhrases } from "@/lib/check/phrases";
@@ -14,13 +14,14 @@ import type { CheckView, SharedMessage } from "@/lib/views";
 import { answerSummary, giveAnswer } from "./answers";
 import { logEvent } from "./events";
 import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, userNames } from "./holds";
+import { log } from "./log";
 import { logPush, notifyOwnerOfMessage } from "./notify";
 import { callNameOf, joinNames, linkedFamily, ownerView } from "./people";
-import { pushToUsers, type PushPayload, type PushResult } from "./push";
+import { pushEnabled, pushToUsers, type PushPayload, type PushResult } from "./push";
 import { liveBlockedDomains, reportableFor } from "./reports";
 import { secretFromEnv } from "./secrets";
 import { HttpError } from "./session";
-import { campaignFor, recordSighting } from "./sightings";
+import { campaignFor, forgetSightings, recordSighting } from "./sightings";
 
 type User = typeof schema.users.$inferSelect;
 type Check = typeof schema.checks.$inferSelect;
@@ -70,7 +71,8 @@ export type NewCheck = {
 };
 
 /**
- * Runs the check, stores the result (never the message text) and does what
+ * Runs the check, stores the result (the text only for a scam or suspicious
+ * message, for 24 hours: see sharedText) and does what
  * the verdict calls for:
  *  - a message the person brought us (pasted, forwarded, spoken) that is a
  *    SCAM: urgent alert to every linked family member, plus a payment hold
@@ -207,6 +209,17 @@ async function sendAlerts(
   );
   const total = sent.reduce<PushResult>((acc, r) => ({ sent: acc.sent + r.sent, failed: acc.failed + r.failed, gone: acc.gone + r.gone, skipped: acc.skipped + r.skipped }), { sent: 0, failed: 0, gone: 0, skipped: 0 });
   await logPush(db, owner.id, total, holdId);
+
+  // An urgent alert to someone with no phone set up for push reaches them only
+  // while their app is open. Say so now; Mr Rao's screen says so after REACH_GRACE_MS.
+  if (kind === "urgent" && pushEnabled()) {
+    const phones = await db.query.pushSubscriptions.findMany({ where: inArray(schema.pushSubscriptions.userId, recipientIds) });
+    const none = Object.entries(await userNames(db, recipientIds)).filter(([id]) => !phones.some((p) => p.userId === id)).map(([, name]) => name);
+    if (none.length) {
+      log.warn("push_no_phone", { checkId: check.id, recipients: none.length });
+      await logEvent(db, owner.id, "Check service", "push_none", `No phone set up for alerts: ${joinNames(none)} will see it only while the app is open`, holdId);
+    }
+  }
 }
 
 /** E2 "Ask Arjun": a suspicious (or safe) message goes to family for a decision. */
@@ -272,12 +285,23 @@ export function sharedText(check: Check): string | null {
   return Date.now() - check.createdAt.getTime() < SHARE_TEXT_HOURS * 3600_000 ? check.messageText : null;
 }
 
-/** Deletes message text older than 24 hours. */
-export async function purgeSharedText(db: Db) {
-  await db
+/**
+ * Deletes message text older than 24 hours. Runs before every check and from
+ * the hourly purge (retention.ts); the read gate in sharedText covers the gap
+ * between runs. Real inbox rows never keep text: any left from before is cleared.
+ */
+export async function purgeSharedText(db: Db, now = new Date()) {
+  const checks = await db
     .update(schema.checks)
     .set({ messageText: null })
-    .where(and(isNotNull(schema.checks.messageText), lt(schema.checks.createdAt, new Date(Date.now() - SHARE_TEXT_HOURS * 3600_000))));
+    .where(and(isNotNull(schema.checks.messageText), lt(schema.checks.createdAt, new Date(now.getTime() - SHARE_TEXT_HOURS * 3600_000))))
+    .returning({ id: schema.checks.id });
+  const inbox = await db
+    .update(schema.simMessages)
+    .set({ text: null })
+    .where(and(isNotNull(schema.simMessages.text), eq(schema.simMessages.synthetic, false)))
+    .returning({ id: schema.simMessages.id });
+  return { checkText: checks.length, inboxText: inbox.length };
 }
 
 /**
@@ -303,25 +327,49 @@ async function ownCheck(db: Db, owner: User, checkId: string) {
 
 type Alert = typeof schema.alerts.$inferSelect;
 
+/** How long an urgent alert may wait for a phone that has no push before Mr Rao is told. */
+export const REACH_GRACE_MS = 30_000;
+
+export type FamilyReach = { unreachableNames: string[]; nobodyReached: boolean };
+
 /**
- * Who was told about a message but whose phones the push never reached: the
- * delivery log has attempts for their alert and none of them was sent. Someone
- * who already opened or handled the alert is fine, and someone with no phone
- * registered at all (no attempt) is not flagged: their alert still rings while
- * the app is open, and in a demo without push nobody would be.
+ * Who was told about a message but has not been reached, so Mr Rao calls
+ * instead of waiting. Someone who opened or handled the alert, or whose open
+ * app already picked it up (deliveredAt), is reached. Otherwise they are not:
+ *  - when every push for the alert failed or the phone was gone, at once;
+ *  - for an urgent alert, when no push got through at all (no phone set up,
+ *    Notifications off, push not configured) and REACH_GRACE_MS has passed;
+ *  - a push the phone reported it could not show (blocked) does not count.
+ * nobodyReached: everyone alerted is unreachable.
  */
-async function unreachableFamily(db: Db, alertRows: Alert[], family: { familyId: string; name: string }[], names: Record<string, string>) {
-  const waiting = alertRows.filter((a) => !a.openedAt && !a.handledAt && family.some((f) => f.familyId === a.recipientId));
-  if (!waiting.length) return [];
+async function familyReach(db: Db, alertRows: Alert[], family: { familyId: string; name: string }[], names: Record<string, string>, now = Date.now()): Promise<FamilyReach> {
+  const told = alertRows.filter((a) => family.some((f) => f.familyId === a.recipientId));
+  const waiting = told.filter((a) => !a.openedAt && !a.handledAt && !a.deliveredAt);
+  if (!waiting.length) return { unreachableNames: [], nobodyReached: false };
   const deliveries = await db.query.pushDeliveries.findMany({
     where: inArray(schema.pushDeliveries.key, waiting.map((a) => `alert:${a.id}`)),
   });
   const unreachable = new Set<string>();
   for (const a of waiting) {
     const mine = deliveries.filter((d) => d.key === `alert:${a.id}` && d.userId === a.recipientId);
-    if (mine.length && mine.every((d) => d.status !== "sent")) unreachable.add(a.recipientId);
+    const through = mine.some((d) => d.status === "sent" && !(d.receivedAt && !d.shownAt));
+    if (through) continue;
+    if (mine.length || (a.kind === "urgent" && now - a.createdAt.getTime() >= REACH_GRACE_MS)) unreachable.add(a.recipientId);
   }
-  return family.filter((f) => unreachable.has(f.familyId)).map((f) => names[f.familyId] ?? f.name);
+  const recipients = new Set(told.map((a) => a.recipientId));
+  return {
+    unreachableNames: family.filter((f) => unreachable.has(f.familyId)).map((f) => names[f.familyId] ?? f.name),
+    nobodyReached: unreachable.size > 0 && unreachable.size === recipients.size,
+  };
+}
+
+/** The reach of a check's alerts, for Mr Rao's hold screen. */
+export async function reachForCheck(db: Db, checkId: string): Promise<FamilyReach> {
+  const check = await db.query.checks.findFirst({ where: eq(schema.checks.id, checkId) });
+  if (!check) return { unreachableNames: [], nobodyReached: false };
+  const family = await linkedFamily(db, check.userId);
+  const alertRows = await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) });
+  return familyReach(db, alertRows, family, await userNames(db, alertRows.map((a) => a.recipientId)));
 }
 
 export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: string; member?: User }): Promise<CheckView> {
@@ -379,14 +427,16 @@ export async function getCheckView(db: Db, checkId: string, opts: { ownerId?: st
     reportable: opts.member && !memberNotAlerted ? await reportableFor(db, check, opts.member) : null,
     createdAt: check.createdAt.toISOString(),
     alertedNames: family.filter((f) => alertRows.some((a) => a.kind !== "ask" && a.recipientId === f.familyId)).map((f) => names[f.familyId] ?? f.name),
-    unreachableNames: opts.member ? [] : await unreachableFamily(db, alertRows, family, names),
+    ...(opts.member ? { unreachableNames: [], nobodyReached: false } : await familyReach(db, alertRows, family, names)),
     askedFamilyAt: check.askedFamilyAt?.toISOString() ?? null,
     familyVerdict: check.familyVerdict,
     familyVerdictByName: said.final ? joinNames(said.decidedBy) : null,
     answers: said.answers,
-    waitingFor: said.waitingFor,
-    canAnswer: !!opts.member && !said.final && said.recipients.includes(opts.member.id) && !said.answers.some((a) => a.memberId === opts.member!.id),
-    simText: memberNotAlerted ? null : sim?.text ?? null,
+    // A stored family verdict is final even when the answers behind it are gone (the member deleted their account).
+    waitingFor: check.familyVerdict ? [] : said.waitingFor,
+    canAnswer: !!opts.member && !said.final && !check.familyVerdict && said.recipients.includes(opts.member.id) && !said.answers.some((a) => a.memberId === opts.member!.id),
+    // Only a made-up demo message keeps its text in the inbox; a real one's is messageText (24 h).
+    simText: memberNotAlerted || !sim?.synthetic ? null : sim.text,
     messageText: memberNotAlerted ? null : sharedText(check),
     owner: ownerView(owner, opts.member ? family.find((f) => f.familyId === opts.member!.id)?.relation : null),
     hold: hold ? await toHoldView(db, hold, check) : null,
@@ -423,15 +473,36 @@ export async function listChecks(db: Db, userId: string) {
 
 export type CheckRow = Awaited<ReturnType<typeof listChecks>>[number];
 
-/** P3 "Delete my history". A payment still on hold stays until family decides, so their Block still reaches it. */
+/**
+ * P3 "Delete my history": his checks, his inbox, his household's activity log,
+ * and the link between him and his campaign sightings. A payment still on hold
+ * stays, with its message and timeline, until family decides, so their Block
+ * still reaches it.
+ */
 export async function deleteHistory(db: Db, owner: User) {
   const open = await db.query.holds.findMany({
     where: and(eq(schema.holds.userId, owner.id), eq(schema.holds.status, "pending")),
   });
   const keep = [...new Set(open.map((h) => h.checkId))];
+  const keepHolds = open.map((h) => h.id);
+  await db
+    .delete(schema.simMessages)
+    .where(
+      keep.length
+        ? and(eq(schema.simMessages.userId, owner.id), or(isNull(schema.simMessages.checkId), notInArray(schema.simMessages.checkId, keep)))
+        : eq(schema.simMessages.userId, owner.id),
+    );
   await db
     .delete(schema.checks)
     .where(keep.length ? and(eq(schema.checks.userId, owner.id), notInArray(schema.checks.id, keep)) : eq(schema.checks.userId, owner.id));
+  await db
+    .delete(schema.events)
+    .where(
+      keepHolds.length
+        ? and(eq(schema.events.householdId, owner.id), or(isNull(schema.events.holdId), notInArray(schema.events.holdId, keepHolds)))
+        : eq(schema.events.householdId, owner.id),
+    );
+  await forgetSightings(db, owner.id);
   await logEvent(db, owner.id, owner.name, "history_deleted", `${owner.name} deleted their check history`);
   return { kept: keep.length };
 }

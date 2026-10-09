@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import type { SimMessageView } from "@/lib/views";
 import simData from "@/data/sim-messages.json";
-import { createCheck } from "./checks";
+import { createCheck, sharedText } from "./checks";
 import { logEvent } from "./events";
 import { HttpError } from "./session";
 
@@ -15,17 +15,40 @@ export type SimInput = { channel: "sms" | "whatsapp"; sender: string; fromContac
 
 // The simulated inbox stands in for the phone's own SMS and WhatsApp apps.
 // A message that "arrives" here goes through the same check as a pasted one.
+// The Android watcher's real messages come through here too (devices.ts), but
+// keep no text in this table: a scam or suspicious message's text lives on its
+// check for 24 hours (sharedText), a safe one's is never stored, and one that
+// is not checked (not watched, or from a saved contact) is not stored at all.
 
-export async function deliverMessage(db: Db, owner: User, msg: SimInput) {
-  const [row] = await db.insert(schema.simMessages).values({ userId: owner.id, ...msg }).returning();
-  await logEvent(db, owner.id, "Simulator", "sim_arrived", `${msg.channel === "sms" ? "SMS" : "WhatsApp"} arrived on ${owner.name}'s phone from ${msg.sender}`);
-
+/** synthetic: a made-up message from the demo library, whose text is kept so the demo inbox reads like a phone. */
+export async function deliverMessage(db: Db, owner: User, msg: SimInput, opts: { synthetic?: boolean } = {}) {
+  const synthetic = opts.synthetic ?? false;
+  const channel = msg.channel === "sms" ? "SMS" : "WhatsApp";
   const watched = msg.channel === "sms" ? owner.watchSms : owner.watchWhatsapp;
-  if (!watched || (msg.fromContact && owner.unknownOnly)) return row; // not checked (SKIPPED)
+  const skipped = !watched || (msg.fromContact && owner.unknownOnly);
+
+  if (!synthetic) {
+    if (skipped) {
+      // Not checked, so nothing is kept: not even the sender, who may be a saved contact.
+      await logEvent(db, owner.id, "Watcher", "sim_arrived", `${channel} arrived on ${owner.name}'s phone · not checked`);
+      return { id: null, checkId: null };
+    }
+    await logEvent(db, owner.id, "Watcher", "sim_arrived", `${channel} arrived on ${owner.name}'s phone from ${msg.sender}`);
+    const { checkId } = await createCheck(db, owner, { text: msg.text, source: msg.channel, senderLabel: msg.sender });
+    const [row] = await db
+      .insert(schema.simMessages)
+      .values({ userId: owner.id, channel: msg.channel, sender: msg.sender, fromContact: msg.fromContact, text: null, checkId })
+      .returning();
+    return { id: row.id, checkId };
+  }
+
+  const [row] = await db.insert(schema.simMessages).values({ userId: owner.id, ...msg, synthetic: true }).returning();
+  await logEvent(db, owner.id, "Simulator", "sim_arrived", `${channel} arrived on ${owner.name}'s phone from ${msg.sender}`);
+  if (skipped) return { id: row.id, checkId: null }; // not checked (SKIPPED)
 
   const { checkId } = await createCheck(db, owner, { text: msg.text, source: msg.channel, senderLabel: msg.sender });
   await db.update(schema.simMessages).set({ checkId }).where(eq(schema.simMessages.id, row.id));
-  return { ...row, checkId };
+  return { id: row.id, checkId };
 }
 
 /** P1 "Receive a test scam message": the next message from the demo library. */
@@ -33,13 +56,13 @@ export async function receiveNext(db: Db, owner: User) {
   const have = await db.query.simMessages.findMany({ where: eq(schema.simMessages.userId, owner.id) });
   const library = simData.library as SimInput[];
   const next = library.find((m) => !have.some((h) => h.text === m.text)) ?? library[have.length % library.length];
-  return deliverMessage(db, owner, next);
+  return deliverMessage(db, owner, next, { synthetic: true });
 }
 
 export async function seedInbox(db: Db, owner: User) {
   for (const m of simData.seed as SimInput[]) {
-    const row = await deliverMessage(db, owner, m);
-    await db.update(schema.simMessages).set({ bannerSeenAt: new Date() }).where(eq(schema.simMessages.id, row.id));
+    const row = await deliverMessage(db, owner, m, { synthetic: true });
+    await db.update(schema.simMessages).set({ bannerSeenAt: new Date() }).where(eq(schema.simMessages.id, row.id!));
   }
 }
 
@@ -77,7 +100,8 @@ async function toViews(db: Db, rows: SimRow[]): Promise<SimMessageView[]> {
       channel: r.channel,
       sender: r.sender,
       fromContact: r.fromContact,
-      text: r.text,
+      // A real message shows its check's text while that is kept (24 h, scam or suspicious only).
+      text: r.synthetic ? r.text : c ? sharedText(c) : null,
       createdAt: r.createdAt.toISOString(),
       checkId: r.checkId,
       verdict: c ? finalVerdict(c.verdict, c.familyVerdict) : r.fromContact ? "SKIPPED" : null,

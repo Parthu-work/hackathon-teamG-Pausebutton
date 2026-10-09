@@ -4,10 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, ToastOutlet, ToastProvider, useToast, VerdictPill } from "@/components/ui";
-import { api, ApiError, broadcastWifiDrop, operatorApi } from "@/lib/client/api";
+import { ApiError, broadcastWifiDrop, operatorApi, operatorRead } from "@/lib/client/api";
 import type { TestResult, TestSummary } from "@/lib/server/testset";
 import type { EventView } from "@/lib/views";
-import { DisagreementsPanel, FamiliesPanel, OpNav } from "./operator-phase2";
+import { DisagreementsPanel, FamiliesPanel, OpLoading, OpNav } from "./operator-phase2";
 
 type Latest = {
   run: { id: string; createdAt: string; summary: TestSummary; results: TestResult[] } | null;
@@ -38,7 +38,7 @@ function OpHeader({ title, sub }: { title: string; sub: string }) {
 export function TestsPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"tests" | "disagreements" | "families">("tests");
-  const q = useQuery({ queryKey: ["tests-latest"], queryFn: () => api<Latest>("/api/tests/latest") });
+  const q = useQuery({ queryKey: ["tests-latest"], queryFn: () => operatorRead<Latest>("/api/tests/latest") });
   const run = useMutation({
     mutationFn: (mode: "rules" | "haiku" | "sonnet") => operatorApi("/api/tests/run", { body: { mode } }),
     onSuccess: () => {
@@ -97,7 +97,9 @@ export function TestsPage() {
         )}
         {run.isError && <p className="sm" style={{ color: "var(--red-text)", fontWeight: 700 }}>{run.error.message}</p>}
 
-        {!s ? (
+        {q.error ? (
+          <OpLoading error={q.error} />
+        ) : !s ? (
           <div className="card"><p className="p">No run yet. Start with “Run rules + model”.</p></div>
         ) : (
           <>

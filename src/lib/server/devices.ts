@@ -93,6 +93,21 @@ export async function deviceInbox(db: Db, device: Device, user: User, msg: SimIn
   return row;
 }
 
+/**
+ * What the person chose to have watched (Settings › Watch my messages). The
+ * phone applies it itself, so a message from an app that is not watched, or
+ * from a saved contact with "only unknown senders" on, never leaves the phone.
+ */
+export function watchSettings(user: User) {
+  return { watchSms: user.watchSms, watchWhatsapp: user.watchWhatsapp, unknownOnly: user.unknownOnly };
+}
+
+/** "Disconnect this phone" on the phone itself: its token stops working, and the web app no longer lists it. */
+export async function disconnectDevice(db: Db, device: Device, owner: User) {
+  await db.delete(schema.devices).where(eq(schema.devices.id, device.id));
+  await logEvent(db, owner.id, owner.name, "device_removed", `${owner.name}'s Android phone (${device.name}) disconnected itself`);
+}
+
 export async function setDeviceStatus(db: Db, device: Device, status: { listenerOn: boolean }) {
   await db.update(schema.devices).set({ listenerOn: status.listenerOn }).where(eq(schema.devices.id, device.id));
 }

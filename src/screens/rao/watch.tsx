@@ -47,7 +47,14 @@ export function WatchScreen() {
       </div>
       <div className="card">
         <div className="lbl">What we never do</div>
-        <p className="p" style={{ fontSize: 16 }}>Read old chats, send messages for you, or keep safe messages. We keep a short fingerprint and the warning phrases.</p>
+        <p className="p" style={{ fontSize: 16 }}>Read old chats, send messages for you, or keep the text of a safe message or of one we do not check.</p>
+      </div>
+      <div className="card">
+        <div className="lbl">What we keep</div>
+        <p className="p" style={{ fontSize: 16 }}>
+          For each message we check: a fingerprint, who sent it, the verdict and the warning phrases. The text of a scam or suspicious message is kept
+          for 24 hours so {helper.first} can read it. Messages that need a closer look are also read by Claude (Anthropic).
+        </p>
       </div>
       <div className="card" style={{ gap: 14 }}>
         <div className="lbl">What should we watch?</div>
