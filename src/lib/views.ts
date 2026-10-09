@@ -103,12 +103,14 @@ export type CheckView = {
   createdAt: string;
   alertedNames: string[];
   /**
-   * Family members told about this message whose phones the push could not
-   * reach (every delivery failed or the phone was gone) and who have not opened
-   * it yet. Mr Rao's screen names them so he calls instead of waiting.
-   * Empty on family members' screens.
+   * Family members told about this message who have not been reached: every
+   * push failed or the phone was gone, or (urgent alerts) no push got through
+   * and their app has not picked it up within 30 s. Mr Rao's screen names them
+   * so he calls instead of waiting. Empty on family members' screens.
    */
   unreachableNames: string[];
+  /** Everyone alerted is unreachable: "Nobody has seen this yet". */
+  nobodyReached: boolean;
   askedFamilyAt: string | null;
   familyVerdict: "scam" | "not_scam" | null;
   /** Who settled it: whoever said scam, or everyone who said it is fine ("Arjun and Meera"). */

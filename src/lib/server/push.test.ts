@@ -30,10 +30,10 @@ import { getDb, type Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import examples from "@/data/examples.json";
 import { markAlertOpened, openAlertFromNotification } from "./alerts";
-import { createCheck, getCheckView, openPayment } from "./checks";
+import { askFamily, createCheck, getCheckView, openPayment, reachForCheck, REACH_GRACE_MS } from "./checks";
 import { personaUser, resetDemo } from "./demo";
 import { decideHold } from "./holds";
-import { pushEnabled, pushToUsers, removeSubscription, saveSubscription, type PushPayload } from "./push";
+import { pushEnabled, pushHealth, pushToUsers, recordReceipt, removeSubscription, saveSubscription, SILENT_AFTER_MS, type PushPayload } from "./push";
 import { HttpError } from "./session";
 import { deliverMessage } from "./sim";
 
@@ -83,7 +83,7 @@ describe("web push", () => {
     expect(sendNotification).toHaveBeenCalledTimes(2);
     expect(sendNotification).toHaveBeenCalledWith(
       { endpoint: "https://push.example.test/2", keys: { p256dh: "p2", auth: "a2" } },
-      JSON.stringify(payload),
+      expect.any(String),
       { TTL: 300, urgency: "high" },
     );
     const log = await deliveriesWith("demo:one");
@@ -91,6 +91,11 @@ describe("web push", () => {
       ["https://push.example.test/1", "sent", 201, 1, "alert-1"],
       ["https://push.example.test/2", "sent", 201, 1, "alert-1"],
     ]);
+    // Each phone's copy is the payload plus its own delivery id, for the receipt.
+    for (const [s, body] of sendNotification.mock.calls) {
+      const row = log.find((d) => d.endpoint === (s as { endpoint: string }).endpoint)!;
+      expect(JSON.parse(body as string)).toEqual({ ...payload, receipt: row.id });
+    }
   });
 
   it("never sends the same alert twice to one phone", async () => {
@@ -293,3 +298,147 @@ describe("web push", () => {
     expect((await getCheckView(db, quiet.checkId, { ownerId: mom.id })).unreachableNames).toEqual([]);
   });
 });
+
+describe("receipts, silent phones and delivery health", () => {
+  beforeAll(async () => {
+    await resetDemo(db);
+    await db.delete(schema.pushSubscriptions);
+    await db.delete(schema.pushDeliveries);
+    sendNotification.mockImplementation(async () => ({ statusCode: 201 }));
+  });
+
+  it("records the phone's receipt once: shown, or not shown and why; an unknown id changes nothing", async () => {
+    const { arjun } = await users();
+    await saveSubscription(db, arjun.id, sub(31), "test");
+    await saveSubscription(db, arjun.id, sub(32), "test");
+    await pushToUsers(db, [arjun.id], note("r"), { key: "demo:receipt" });
+    const [a, b] = (await deliveriesWith("demo:receipt")).sort((x, y) => x.endpoint.localeCompare(y.endpoint));
+    await recordReceipt(db, a.id, true);
+    await recordReceipt(db, b.id, false, "TypeError");
+    await recordReceipt(db, a.id, false, "late duplicate");
+    await recordReceipt(db, crypto.randomUUID(), true);
+    const [ra, rb] = (await deliveriesWith("demo:receipt")).sort((x, y) => x.endpoint.localeCompare(y.endpoint));
+    expect(ra).toMatchObject({ displayError: null });
+    expect(ra.receivedAt).toBeInstanceOf(Date);
+    expect(ra.shownAt).toBeInstanceOf(Date);
+    expect(rb).toMatchObject({ shownAt: null, displayError: "TypeError" });
+    expect(rb.receivedAt).toBeInstanceOf(Date);
+  });
+
+  it("logs a phone whose last pushes were accepted but never confirmed", async () => {
+    const { arjun } = await users();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ago = (minutes: number) => new Date(Date.now() - SILENT_AFTER_MS - minutes * 60_000);
+    await pushToUsers(db, [arjun.id], note("s1"), { key: "demo:silent1" });
+    await pushToUsers(db, [arjun.id], note("s2"), { key: "demo:silent2" });
+    // All older than the silent window, in this order; phone 31 confirmed the latest, phone 32 neither of the last two.
+    for (const [key, minutes] of [["demo:receipt", 3], ["demo:silent1", 2], ["demo:silent2", 1]] as const) {
+      await db.update(schema.pushDeliveries).set({ createdAt: ago(minutes) }).where(eq(schema.pushDeliveries.key, key));
+    }
+    const confirmed = (await deliveriesWith("demo:silent2")).find((d) => d.endpoint.endsWith("/31"))!;
+    await recordReceipt(db, confirmed.id, true);
+    warn.mockClear();
+    await pushToUsers(db, [arjun.id], note("s3"), { key: "demo:silent3" });
+    const lines = warn.mock.calls.map((c) => JSON.parse(String(c[0]))).filter((l) => l.event === "push_silent_phone");
+    expect(lines).toEqual([expect.objectContaining({ level: "warn", userId: arjun.id, unconfirmed: 2, pushService: "push.example.test" })]);
+    warn.mockRestore();
+  });
+
+  it("delivery health counts each day's sent, failed, gone, confirmed, not shown and silent pushes", async () => {
+    const { meera } = await users();
+    await saveSubscription(db, meera.id, sub(41), "test");
+    sendNotification.mockImplementationOnce(async () => {
+      throw new WebPushError("gone", 410, {}, "", "");
+    });
+    await pushToUsers(db, [meera.id], note("h"), { key: "demo:health-gone" });
+    await saveSubscription(db, meera.id, sub(42), "test");
+    sendNotification.mockImplementationOnce(async () => {
+      throw new WebPushError("bad", 400, {}, "", "");
+    });
+    await pushToUsers(db, [meera.id], note("h"), { key: "demo:health-failed" });
+    const health = await pushHealth(db);
+    const total = await db.query.pushDeliveries.findMany();
+    expect(health.total).toEqual({
+      sent: total.filter((d) => d.status === "sent").length,
+      failed: 1,
+      gone: 1,
+      received: total.filter((d) => d.receivedAt).length,
+      shown: total.filter((d) => d.shownAt).length,
+      notShown: 1,
+      // Arjun's two phones × demo:receipt, demo:silent1, demo:silent2 are old; three of those six never confirmed.
+      silent: total.filter((d) => d.status === "sent" && !d.receivedAt && d.createdAt.getTime() < Date.now() - SILENT_AFTER_MS).length,
+    });
+    expect(health.total.silent).toBe(3);
+    expect(health.days.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.day))).toBe(true);
+    expect(health.days.reduce((n, d) => n + d.sent, 0)).toBe(health.total.sent);
+    expect(health.silentAfterMinutes).toBe(2);
+  });
+});
+
+describe("who Mr Rao's alert reached", () => {
+  const age = (checkId: string, ms: number) =>
+    db.update(schema.alerts).set({ createdAt: new Date(Date.now() - ms) }).where(eq(schema.alerts.checkId, checkId));
+  const alertOf = async (checkId: string, userId: string) =>
+    (await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) })).find((a) => a.recipientId === userId)!;
+
+  beforeEach(async () => {
+    await resetDemo(db);
+    await db.delete(schema.pushSubscriptions);
+    sendNotification.mockImplementation(async () => ({ statusCode: 201 }));
+  });
+
+  it("nobody with a phone set up: after the grace period Papa is told nobody has seen it, on the verdict and the hold", async () => {
+    const { rao } = await users();
+    const { checkId, holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    expect(holdId).toBeTruthy();
+    // Right away, their open apps may still pick it up: nothing to say yet.
+    expect(await reachForCheck(db, checkId)).toEqual({ unreachableNames: [], nobodyReached: false });
+    await age(checkId, REACH_GRACE_MS + 1_000);
+    expect(await reachForCheck(db, checkId)).toEqual({ unreachableNames: ["Arjun", "Meera"], nobodyReached: true });
+    const view = await getCheckView(db, checkId, { ownerId: rao.id });
+    expect([view.unreachableNames, view.nobodyReached]).toEqual([["Arjun", "Meera"], true]);
+    // The demo log said so when it was sent.
+    const events = await db.query.events.findMany({ where: eq(schema.events.householdId, rao.id) });
+    expect(events.find((e) => e.type === "push_none")?.message).toBe("No phone set up for alerts: Arjun and Meera will see it only while the app is open");
+  });
+
+  it("an open app that picked the alert up counts as reached; then only the other one is named", async () => {
+    const { rao, arjun } = await users();
+    const { checkId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await age(checkId, REACH_GRACE_MS + 1_000);
+    await db.update(schema.alerts).set({ deliveredAt: new Date() }).where(eq(schema.alerts.id, (await alertOf(checkId, arjun.id)).id));
+    expect(await reachForCheck(db, checkId)).toEqual({ unreachableNames: ["Meera"], nobodyReached: false });
+  });
+
+  it("a push the phone accepted counts as reached, unless the phone reported it could not show it", async () => {
+    const { rao, arjun, meera } = await users();
+    await saveSubscription(db, arjun.id, sub(51), "test");
+    await saveSubscription(db, meera.id, sub(52), "test");
+    const { checkId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    await age(checkId, REACH_GRACE_MS + 1_000);
+    expect(await reachForCheck(db, checkId)).toEqual({ unreachableNames: [], nobodyReached: false });
+    const meeraAlert = await alertOf(checkId, meera.id);
+    const [d] = await deliveriesWith(`alert:${meeraAlert.id}`);
+    await recordReceipt(db, d.id, false, "TypeError");
+    expect(await reachForCheck(db, checkId)).toEqual({ unreachableNames: ["Meera"], nobodyReached: false });
+  });
+
+  it("an “Ask” is not urgent: no phone set up is not reported, only a push that failed", async () => {
+    const { rao, meera } = await users();
+    const bank = text("bank");
+    const { checkId, verdict } = await createCheck(db, rao, { text: bank, source: "paste" });
+    expect(verdict).toBe("SAFE");
+    await askFamily(db, rao, checkId, bank);
+    const alerts = await db.query.alerts.findMany({ where: eq(schema.alerts.checkId, checkId) });
+    expect(alerts.map((a) => a.kind)).toEqual(["ask", "ask"]);
+    await age(checkId, REACH_GRACE_MS + 1_000);
+    expect(await reachForCheck(db, checkId)).toEqual({ unreachableNames: [], nobodyReached: false });
+    // A push that was tried and failed is reported for any kind of alert.
+    await db.insert(schema.pushDeliveries).values({
+      userId: meera.id, alertId: (await alertOf(checkId, meera.id)).id, checkId, key: `alert:${(await alertOf(checkId, meera.id)).id}`,
+      tag: "t", endpoint: "https://push.example.test/99", status: "failed", statusCode: 400,
+    });
+    expect(await reachForCheck(db, checkId)).toEqual({ unreachableNames: ["Meera"], nobodyReached: false });
+  });
+});
+

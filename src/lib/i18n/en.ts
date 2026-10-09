@@ -275,6 +275,8 @@ export const en = {
     toldAnyway: "{names} told anyway",
     unreachableTitle: "{names} may not see it quickly",
     unreachableBody: "The alert could not reach {names}'s phone. Call now instead of waiting.",
+    nobodyTitle: "Nobody has seen this yet",
+    nobodyBody: "The alert has not reached {names}. Call {first} now, or the cyber helpline 1930. Do not pay while you wait.",
     whatAsked: "What they asked for",
     readAloud: "Read it aloud",
     stopReading: "Stop reading",

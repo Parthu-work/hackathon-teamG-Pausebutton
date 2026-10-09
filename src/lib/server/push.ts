@@ -1,8 +1,9 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import webpush, { WebPushError } from "web-push";
 import { z } from "zod";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
+import { APP_UTC_OFFSET_MINUTES } from "@/lib/check/config";
 import { errorFields, log } from "./log";
 
 // Web Push: phones get a system notification (with vibration) even when the
@@ -13,6 +14,12 @@ import { errorFields, log } from "./log";
 // gone), so a missing notification can be traced. A temporary failure from the
 // push service (429, 5xx, network) is retried once; a phone that unsubscribed
 // (404, 410) is forgotten; a person who turned Notifications off is skipped.
+//
+// Receipts: each phone's copy carries its delivery row's id, and the service
+// worker reports back once the notification is on screen (or why it could
+// not be shown). A push the service accepted that no phone ever confirms is
+// "silent": it is logged when that phone is next sent one, and counted in the
+// operators' delivery health (/api/ops/push-health).
 
 export type PushKind = "urgent" | "headsup" | "ask" | "message" | "outcome" | "test";
 
@@ -36,6 +43,8 @@ export type PushPayload = {
   who?: string;
   /** When it happened (ISO), so the tray shows the right time. */
   at?: string;
+  /** This phone's delivery id: the service worker sends it back once the notification shows. */
+  receipt?: string;
 };
 
 export type PushOptions = {
@@ -179,14 +188,25 @@ export async function pushToUsers(db: Db, userIds: string[], payload: PushPayloa
       if (!rows.length) return { ...NONE, skipped };
     }
 
-    const body = JSON.stringify(payload);
+    await warnAboutSilentPhones(db, rows.map((r) => r.endpoint));
+
+    // Each phone's copy carries its own delivery id, for the receipt.
+    const ids = rows.map(() => crypto.randomUUID());
     const options = { TTL: payload.urgent ? 300 : 3600, urgency: payload.urgent ? ("high" as const) : ("normal" as const) };
     const outcomes = await Promise.all(
-      rows.map((r) => deliver({ endpoint: r.endpoint, keys: { p256dh: r.p256dh, auth: r.auth } }, body, options, opts.retryDelayMs ?? RETRY_DELAY_MS)),
+      rows.map((r, i) =>
+        deliver(
+          { endpoint: r.endpoint, keys: { p256dh: r.p256dh, auth: r.auth } },
+          JSON.stringify({ ...payload, receipt: ids[i] }),
+          options,
+          opts.retryDelayMs ?? RETRY_DELAY_MS,
+        ),
+      ),
     );
 
     await db.insert(schema.pushDeliveries).values(
       rows.map((r, i) => ({
+        id: ids[i],
         userId: r.userId,
         alertId: opts.alertId ?? null,
         checkId: opts.checkId ?? null,
@@ -211,6 +231,83 @@ export async function pushToUsers(db: Db, userIds: string[], payload: PushPayloa
     log.warn("push_error", errorFields(error));
     return NONE;
   }
+}
+
+/** A push still unconfirmed this long after the service accepted it counts as silent. */
+export const SILENT_AFTER_MS = 2 * 60_000;
+/** This many silent pushes in a row (last 24 hours) and the phone is reported. */
+const SILENT_STREAK = 2;
+
+/**
+ * The service worker's report: the push arrived, and the notification is on
+ * screen (or could not be shown, and why). The delivery id is the only
+ * credential: it is random and only that phone was sent it. Only the first
+ * receipt counts, and an unknown id changes nothing.
+ */
+export async function recordReceipt(db: Db, deliveryId: string, shown: boolean, displayError?: string | null) {
+  const now = new Date();
+  await db
+    .update(schema.pushDeliveries)
+    .set({ receivedAt: now, shownAt: shown ? now : null, displayError: shown ? null : (displayError ?? "not shown") })
+    .where(and(eq(schema.pushDeliveries.id, deliveryId), eq(schema.pushDeliveries.status, "sent"), isNull(schema.pushDeliveries.receivedAt)));
+}
+
+/**
+ * Phones whose last pushes were accepted by the push service but never
+ * confirmed: the subscription looks valid, yet nothing shows (battery saver
+ * killed the browser, the phone has been off, the OS blocks it). Logged, not
+ * dropped: the next push may still get through.
+ */
+async function warnAboutSilentPhones(db: Db, endpoints: string[], now = Date.now()) {
+  const recent = await db.query.pushDeliveries.findMany({
+    where: and(
+      inArray(schema.pushDeliveries.endpoint, endpoints),
+      eq(schema.pushDeliveries.status, "sent"),
+      gte(schema.pushDeliveries.createdAt, new Date(now - 24 * 60 * 60_000)),
+      lt(schema.pushDeliveries.createdAt, new Date(now - SILENT_AFTER_MS)),
+    ),
+    orderBy: (d, { desc }) => desc(d.createdAt),
+  });
+  for (const endpoint of endpoints) {
+    const latest = recent.filter((d) => d.endpoint === endpoint).slice(0, SILENT_STREAK);
+    if (latest.length === SILENT_STREAK && latest.every((d) => !d.receivedAt)) {
+      log.warn("push_silent_phone", { userId: latest[0].userId, unconfirmed: SILENT_STREAK, pushService: new URL(endpoint).host });
+    }
+  }
+}
+
+export type PushHealthDay = { day: string; sent: number; failed: number; gone: number; received: number; shown: number; notShown: number; silent: number };
+
+/**
+ * Delivery health for operators: per day (India time), how many pushes the
+ * push services accepted, refused or reported gone, and of the accepted ones
+ * how many phones confirmed, showed, could not show, or never answered.
+ */
+export async function pushHealth(db: Db, days = 14, now = new Date()) {
+  const since = new Date(now.getTime() - days * 24 * 60 * 60_000);
+  const silentBefore = new Date(now.getTime() - SILENT_AFTER_MS);
+  const d = schema.pushDeliveries;
+  const day = sql<string>`to_char((${d.createdAt} at time zone 'UTC') + make_interval(mins => ${APP_UTC_OFFSET_MINUTES}), 'YYYY-MM-DD')`;
+  const rows = await db
+    .select({
+      day,
+      sent: sql<number>`count(*) filter (where ${d.status} = 'sent')`.mapWith(Number),
+      failed: sql<number>`count(*) filter (where ${d.status} = 'failed')`.mapWith(Number),
+      gone: sql<number>`count(*) filter (where ${d.status} = 'gone')`.mapWith(Number),
+      received: sql<number>`count(${d.receivedAt})`.mapWith(Number),
+      shown: sql<number>`count(${d.shownAt})`.mapWith(Number),
+      notShown: sql<number>`count(*) filter (where ${d.receivedAt} is not null and ${d.shownAt} is null)`.mapWith(Number),
+      silent: sql<number>`count(*) filter (where ${d.status} = 'sent' and ${d.receivedAt} is null and ${d.createdAt} < ${silentBefore.toISOString()}::timestamptz)`.mapWith(Number),
+    })
+    .from(d)
+    .where(gte(d.createdAt, since))
+    .groupBy(sql`1`) // by position: the day expression carries its own parameter
+    .orderBy(sql`1 desc`);
+  const total = rows.reduce<Omit<PushHealthDay, "day">>(
+    (t, r) => ({ sent: t.sent + r.sent, failed: t.failed + r.failed, gone: t.gone + r.gone, received: t.received + r.received, shown: t.shown + r.shown, notShown: t.notShown + r.notShown, silent: t.silent + r.silent }),
+    { sent: 0, failed: 0, gone: 0, received: 0, shown: 0, notShown: 0, silent: 0 },
+  );
+  return { days: rows as PushHealthDay[], total, silentAfterMinutes: SILENT_AFTER_MS / 60_000, enabled: pushEnabled() };
 }
 
 /** "3 phones · last alert reached this phone at …": what the settings screens can show. */

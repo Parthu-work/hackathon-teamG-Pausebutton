@@ -236,10 +236,12 @@ Safe messages are never pushed. A newer notification about the same message repl
 
 **Setup and deployment**
 - Environment variables, on every Vercel environment: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (print a pair with `pnpm push:keys`). Rotating the keys is safe: phones re-subscribe on their next app start.
-- Database: migration `drizzle/0007_push_deliveries.sql` (`pnpm db:migrate`, which the Vercel build runs; the embedded database migrates itself).
+- Database: migrations `drizzle/0007_push_deliveries.sql` and `drizzle/0008_push_receipts.sql` (`pnpm db:migrate`, which the deploy runs; the embedded database migrates itself).
 - HTTPS is required (Web Push works on `localhost` and over `pnpm share`, not on a LAN `http://` address).
 - Android: the Android app opens the site in Chrome (Trusted Web Activity), so Chrome asks for the notification permission, shows the notifications and the tap opens the app on the alert. No Firebase. With `/.well-known/assetlinks.json` verified (`ANDROID_CERT_SHA256`) it opens full screen inside the app.
 - iPhone: install to the home screen first (iOS 16.4+), then turn Notifications on; the screen says so.
+
+**Receipts and delivery health.** Each phone's copy carries its delivery id; the service worker confirms it once the notification is on screen (`POST /api/push/receipt`), or says why it could not show it. A push the service accepted but no phone confirmed within 2 minutes is "silent" and is logged. Operators read per-day sent / failed / gone / shown / silent counts at `GET /api/ops/push-health` (operator key). Mr Rao's verdict and paused-payment screens name anyone the alert has not reached, and say "Nobody has seen this yet" when it reached no one; for an urgent alert that includes someone with no phone set up for push whose app has not picked it up within 30 s. Details, and the real-phone checklist: [`docs/push.md`](docs/push.md).
 
 **Test matrix** (the scenarios in the brief)
 
@@ -255,7 +257,12 @@ Safe messages are never pushed. A newer notification about the same message repl
 | Permission is denied | Status "denied"; the home card and the settings say so; alerts still work while the app is open | `push.ts` client, `PushHint` (manual: deny in the browser) |
 | Sender and recipient on different devices | Subscriptions are per phone and per person; every phone of the person is told | `push.test.ts` "sends to every phone" |
 | The recipient logs out and another user logs in | Sign-out removes this phone; the next sign-in moves the endpoint to the new person | `push.test.ts` "a phone another person signs in on" |
-| Temporary delivery errors | One retry on 429/5xx/network; status and error logged in `push_deliveries` | `push.test.ts` "retries once" |
+| Temporary delivery errors | One retry on 429/5xx/network; status and error logged in `push_deliveries` | `push.test.ts` "retries once", `push.protocol.test.ts` (real HTTPS answers) |
+| Encryption and signing on the wire | `web-push` encrypts for that phone only (RFC 8291) and signs with VAPID (RFC 8292); urgent alerts go out with `Urgency: high`, TTL 5 min | `push.protocol.test.ts` (a push service in the test decrypts and verifies) |
+| A real browser receives it | Chromium's service worker shows the alert with Block built in and confirms it; the tap URL opens the payment | e2e "a real service worker shows the alert" |
+| Accepted but never shown | No receipt in 2 min: counted as silent, logged; "could not show" is recorded with its reason | `push.test.ts` "receipts, silent phones", `sw.test.ts` "receipts" |
+| Nobody can be reached | Every alerted person unreachable: Papa's verdict and hold screens say "Nobody has seen this yet" | `push.test.ts` "who Mr Rao's alert reached", e2e "nobody's phone can be reached" |
+| Real phones (FCM, autopush, Apple) | Manual checklist, including the iPhone install-then-enable flow | [`docs/push.md`](docs/push.md) |
 
 ## The Android app (APK)
 
