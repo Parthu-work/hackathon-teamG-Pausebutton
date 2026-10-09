@@ -85,7 +85,7 @@ from a second phone sign in as Mr Rao and paste the "CBI parcel call" sample.
 | Device and browser | Push service | Steps | Expect |
 |---|---|---|---|
 | Android, Chrome (or the Android app) | FCM | App open; app in background; phone locked; app swiped away | Urgent notification in every case, stays until handled; **Block payment** works from the lock screen; tap opens the paused payment. Health: `sent` +1, `shown` +1 |
-| Android, battery saver on, Chrome "optimised" | FCM | Lock the phone for 10 minutes, then send | Notification may arrive late or not at all. If not, health shows `silent` +1 after 2 min, and Papa's screen names the person if their app also did not pick it up within 30 s |
+| Android, battery saver on, Chrome "optimised" | FCM | Lock the phone for 10 minutes, then send | Notification may arrive late or not at all. If not, health shows `silent` +1 after 2 min. Papa's screen does not name the person: the push service accepted the push, which counts as reached (only a failed push, a push the phone reported it could not show, or no push at all is named) |
 | Android, notifications for Chrome turned off in system settings | FCM | Send | Nothing shows. Health: `received` +1. Depending on the Android and Chrome version the browser reports it as `notShown` (then Papa's screen names the person) or as `shown` (the OS hid it after the browser showed it, which no web code can see) |
 | Desktop Chrome or Edge | FCM / WNS | Browser open, tab closed | Notification shows; click opens the app on the payment |
 | Desktop Firefox | Mozilla autopush | Browser open, tab closed | As above |
