@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { familyCopy, rupees, verdictCopy } from "@/lib/check/copy";
 import { normalizeForMatch } from "@/lib/check/normalize";
 import { keyPhrases } from "@/lib/check/phrases";
@@ -270,7 +270,15 @@ export async function listChecks(db: Db, userId: string) {
   });
 }
 
+/** P3 "Delete my history". A payment still on hold stays until family decides, so their Block still reaches it. */
 export async function deleteHistory(db: Db, owner: User) {
-  await db.delete(schema.checks).where(eq(schema.checks.userId, owner.id));
+  const open = await db.query.holds.findMany({
+    where: and(eq(schema.holds.userId, owner.id), eq(schema.holds.status, "pending")),
+  });
+  const keep = open.map((h) => h.checkId);
+  await db
+    .delete(schema.checks)
+    .where(keep.length ? and(eq(schema.checks.userId, owner.id), notInArray(schema.checks.id, keep)) : eq(schema.checks.userId, owner.id));
   await logEvent(db, owner.id, owner.name, "history_deleted", `${owner.name} deleted their check history`);
+  return { kept: keep.length };
 }

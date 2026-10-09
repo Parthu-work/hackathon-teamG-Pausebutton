@@ -5,7 +5,7 @@ process.env.PGLITE_DIR = "memory";
 
 import { getDb, type Db } from "@/lib/db";
 import examples from "@/data/examples.json";
-import { askFamily, createCheck, getCheckView, openPayment, setFamilyVerdict } from "./checks";
+import { askFamily, createCheck, deleteHistory, getCheckView, openPayment, setFamilyVerdict } from "./checks";
 import { personaUser, resetDemo } from "./demo";
 import { addAdvice, decideHold, holdStatus, toHoldView } from "./holds";
 import { acceptInvite } from "./people";
@@ -165,5 +165,34 @@ describe("family decisions stick", () => {
     await addAdvice(db, meera, { holdId: holdId! }, "Stay on the phone with me.");
     const hold = (await db.query.holds.findFirst({ where: eq(schema.holds.id, holdId!) }))!;
     expect((await toHoldView(db, hold)).advice[0]).toMatchObject({ fromName: "Arjun", text: "Papa, hang up." });
+  });
+});
+
+describe("history and invites", () => {
+  it("deleting history keeps a payment that is still on hold", async () => {
+    await resetDemo(db);
+    const { rao, arjun } = await users();
+    const safe = await createCheck(db, rao, { text: text("bank"), source: "paste" });
+    const { holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
+    expect(await deleteHistory(db, rao)).toEqual({ kept: 1 });
+    expect(await db.query.checks.findFirst({ where: eq(schema.checks.id, safe.checkId) })).toBeUndefined();
+    expect((await decideHold(db, arjun, holdId!, "block", false)).status).toBe("blocked");
+  });
+
+  it("a linked family member cannot take a second code", async () => {
+    await resetDemo(db);
+    const { arjun } = await users();
+    await expect(acceptInvite(db, arjun, "PB-7H3D")).rejects.toThrow("already linked to Mr Rao");
+  });
+
+  it("two people sending one code at once: only one joins", async () => {
+    await resetDemo(db);
+    const [asha] = await db.insert(schema.users).values({ name: "Asha", phone: "+91 98400 22233" }).returning();
+    const [bala] = await db.insert(schema.users).values({ name: "Bala", phone: "+91 98400 33344" }).returning();
+    const results = await Promise.allSettled([acceptInvite(db, asha, "PB-7H3D"), acceptInvite(db, bala, "PB-7H3D")]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const winner = results[0].status === "fulfilled" ? asha : bala;
+    const link = await db.query.links.findFirst({ where: eq(schema.links.inviteCode, "PB-7H3D") });
+    expect(link?.familyId).toBe(winner.id);
   });
 });

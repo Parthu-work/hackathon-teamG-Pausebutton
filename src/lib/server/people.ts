@@ -92,18 +92,31 @@ export async function resendCode(db: Db, owner: User, id: string) {
   return toPersonView(row);
 }
 
+const CODE_FAILED = "That code did not work. Check each letter. Each code works once and ends in 24 hours.";
+
 /** C1: a family member enters the code Mr Rao shared. */
 export async function acceptInvite(db: Db, member: User, rawCode: string) {
   const code = rawCode.trim().toUpperCase().replace(/^PB-?/, "PB-");
   const link = await db.query.links.findFirst({ where: eq(schema.links.inviteCode, code) });
   if (!link || link.status !== "waiting" || link.codeExpiresAt.getTime() < Date.now()) {
-    throw new HttpError(400, "That code did not work. Check each letter. Each code works once and ends in 24 hours.");
+    throw new HttpError(400, CODE_FAILED);
   }
   if (link.protectedId === member.id) throw new HttpError(400, "You cannot be your own trusted person.");
-  await db
+  // One family account looks after one person (the family screens show one), and only once.
+  const current = await db.query.links.findFirst({
+    where: and(eq(schema.links.familyId, member.id), eq(schema.links.status, "linked")),
+  });
+  if (current) {
+    const linkedTo = await db.query.users.findFirst({ where: eq(schema.users.id, current.protectedId) });
+    throw new HttpError(409, `You are already linked to ${linkedTo?.name ?? "someone"}. Unlink in Settings first.`);
+  }
+  // Only a waiting code can be taken, so two people sending it at once cannot both join.
+  const [taken] = await db
     .update(schema.links)
     .set({ familyId: member.id, status: "linked", linkedAt: new Date() })
-    .where(eq(schema.links.id, link.id));
+    .where(and(eq(schema.links.id, link.id), eq(schema.links.status, "waiting")))
+    .returning();
+  if (!taken) throw new HttpError(400, CODE_FAILED);
   await db.update(schema.users).set({ role: "family", name: member.name === "Guest" ? link.name : member.name }).where(eq(schema.users.id, member.id));
   const owner = await db.query.users.findFirst({ where: eq(schema.users.id, link.protectedId) });
   await logEvent(db, link.protectedId, link.name, "invite_accepted", `${link.name} accepted the invite and is now linked`);

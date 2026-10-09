@@ -147,10 +147,14 @@ export function PrivacyScreen() {
   const watching = !!data && (data.me.watchSms || data.me.watchWhatsapp);
 
   async function deleteHistory() {
-    await api("/api/me/checks", { method: "DELETE" });
+    const { kept } = await api<{ kept: number }>("/api/me/checks", { method: "DELETE" });
     setConfirm(false);
     await queryClient.invalidateQueries();
-    toast({ title: "History deleted", sub: "Your checks are gone from this app", icon: "trash" });
+    toast({
+      title: "History deleted",
+      sub: kept ? "A payment on hold stays until your family decides" : "Your checks are gone from this app",
+      icon: "trash",
+    });
   }
 
   async function toggleWatching() {
@@ -167,7 +171,7 @@ export function PrivacyScreen() {
         confirm && (
           <Sheet onClose={() => setConfirm(false)}>
             <h2 className="h2">Delete your history?</h2>
-            <p className="p">All your checks and their warning phrases are removed. Payment holds go too.</p>
+            <p className="p">All your checks and their warning phrases are removed. A payment that is still on hold stays until your family decides.</p>
             <button className="btn red" onClick={deleteHistory}>Yes, delete</button>
             <button className="btn line" onClick={() => setConfirm(false)}>Keep it</button>
           </Sheet>

@@ -25,5 +25,5 @@ export const POST = route(async (req) => {
 /** P3 "Delete my history". */
 export const DELETE = route(async () => {
   const { db, user } = await requireUser("rao");
-  await deleteHistory(db, user);
+  return deleteHistory(db, user);
 });

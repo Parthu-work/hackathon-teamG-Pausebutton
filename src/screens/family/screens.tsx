@@ -29,6 +29,7 @@ export function JoinScreen() {
     enabled: clean.replace(/[^A-Z0-9]/g, "").length >= 6,
   });
   const who = preview.data?.invite?.protectedName;
+  const codeFailed = error?.startsWith("That code did not work") ?? true;
 
   async function accept() {
     setError(null);
@@ -63,8 +64,8 @@ export function JoinScreen() {
         </div>
         {error && (
           <>
-            <div className="row" style={{ gap: 8, marginTop: 8, color: "var(--red-text)", fontWeight: 700, fontSize: 15 }}><Icon name="warn" size={20} />That code did not work</div>
-            <p className="sm" style={{ marginTop: 4 }}>Check each letter. Each code works once and ends in 24 hours.</p>
+            <div className="row" style={{ gap: 8, marginTop: 8, color: "var(--red-text)", fontWeight: 700, fontSize: 15 }}><Icon name="warn" size={20} />{codeFailed ? "That code did not work" : "We could not link you"}</div>
+            <p className="sm" style={{ marginTop: 4 }}>{codeFailed ? "Check each letter. Each code works once and ends in 24 hours." : error}</p>
           </>
         )}
       </label>
