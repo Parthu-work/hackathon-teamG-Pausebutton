@@ -171,7 +171,10 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
 
 - **Every PR:** lint → type check → `pnpm test` (including the quality gate) → build → Playwright three-phone e2e.
 - **On `main`, or a PR labelled `ai-eval`:** `pnpm eval --ai haiku`, run when the `ANTHROPIC_API_KEY` secret is set.
-- **Deploy:** connect the repo to Vercel. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm db:migrate && pnpm build` in the Singapore region.
+- **Deploy:** connect the repo to Vercel. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm env:check && pnpm db:migrate && pnpm build` in the Singapore region.
+- **Configuration check:** `pnpm env:check` (first step of the Vercel build) and the server start (`src/instrumentation.ts`) run the same check (`src/lib/server/env.ts`) and name every problem at once: on Vercel, a missing `DATABASE_URL`, `SESSION_SECRET`, `FINGERPRINT_SECRET` or `OPERATOR_KEY`; anywhere, a non-Postgres `DATABASE_URL`, half a VAPID key pair, a `VAPID_SUBJECT` that is not `mailto:`/`https://`, or a `DEMO_*_PHONE` that is not a 10-digit mobile number. A misconfigured deploy fails its build, and the live version stays up. Short secrets and missing push or AI keys are warnings only.
+- **Builds offline:** the four fonts are self-hosted in `src/app/fonts` (`next/font/local`, SIL OFL licences alongside), so `pnpm build` needs no network. A lint rule refuses `next/font/google`.
+- **Logs:** server logs are one JSON object per line (`level`, `time`, `event`, fields; `src/lib/server/log.ts`), so Vercel's log search can filter on `event`. A failed API call answers with a short `ref` that is also in its `route_error` line; a page that fails shows the error screen with a reference that matches the `digest` of its `request_error` line. Logs never hold message text: errors keep their name, code, first message line and stack frames, and a failed query's parameters and a database error's detail are dropped.
 - **Environment variables** for every Vercel environment:
   - `DATABASE_URL` (Neon, same region; the Neon–Vercel integration can create a branch per preview);
   - `SESSION_SECRET`, `FINGERPRINT_SECRET` (on Vercel the app refuses to run without them; other hosts fall back to the dev values, so set them there too);

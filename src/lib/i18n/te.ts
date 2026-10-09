@@ -12,6 +12,10 @@ export const te: Dict = {
     later: "తర్వాత",
     notNow: "ఇప్పుడు కాదు",
     tryAgain: "మళ్ళీ ప్రయత్నించండి",
+    // Shown by the error page when a screen fails to load.
+    errorTitle: "ఈ స్క్రీన్ తెరుచుకోలేదు",
+    errorBody: "దయచేసి కొద్దిసేపటి తర్వాత మళ్ళీ ప్రయత్నించండి.",
+    errorRef: "సూచన",
     callName: "{name}కి ఫోన్ చేయండి",
     helpline: "సైబర్ హెల్ప్‌లైన్ 1930కి ఫోన్ చేయండి",
     helplineName: "సైబర్ హెల్ప్‌లైన్ 1930",

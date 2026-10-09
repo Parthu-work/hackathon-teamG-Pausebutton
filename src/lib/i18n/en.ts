@@ -12,6 +12,10 @@ export const en = {
     later: "Later",
     notNow: "Not now",
     tryAgain: "Try again",
+    // Shown by the error page when a screen fails to load.
+    errorTitle: "This screen did not open",
+    errorBody: "Please try again in a moment.",
+    errorRef: "Reference",
     callName: "Call {name}",
     helpline: "Call cyber helpline 1930",
     helplineName: "cyber helpline 1930",
