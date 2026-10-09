@@ -86,11 +86,20 @@ The app checks for `VERCEL`, `RAILWAY_ENVIRONMENT_NAME`, `RENDER`, `FLY_APP_NAME
 
 ## Sharing the Android app with a QR code
 
-1. Set the repository variable `PB_HOST` to the deployed URL (GitHub → Settings → Secrets and variables → Actions → Variables).
-2. Actions → **Publish APK to the website** → **Run workflow**. It builds the app for `PB_HOST` and commits it as `public/pause-button.apk`; the host redeploys.
-3. Share `https://<your-site>/download/qr` (print it, or put it on a slide). Scanning it opens `/download`, which has the download button and install steps.
+1. Optional: set the repository variable `PB_HOST` to the deployed URL (GitHub → Settings → Secrets and variables → Actions → Variables). Without it, the workflows use the Railway URL.
+2. **Publish APK to the website** builds the app for that address and commits it as `public/pause-button.apk`; the host redeploys, and the workflow waits until the site serves that exact file. It runs by itself whenever `android/` changes on `main`. Run it by hand (Actions → Publish APK to the website → Run workflow) after changing the deployment address.
+3. Share `https://<your-site>/download/qr` (print it, or put it on a slide), or the poster in `share/`. Scanning it opens `/download`, which has the download button and install steps.
 
 The QR encodes whatever address the site is opened on, so it needs no setup and stays right if the URL changes.
+
+## Keeping it live
+
+- **Every push to `main` redeploys on Railway.** The pre-deploy step migrates the database and the health check must pass; if either fails, Railway keeps the previous version serving.
+- **Uptime check, every hour** (`.github/workflows/uptime.yml`): `scripts/check-site.sh` checks `/api/health` (server and database), `/download` and `/pause-button.apk` from outside, with three tries each so a redeploy is not an outage. On failure it opens one **"The live site is down"** issue (label `site-down`), which notifies everyone watching the repo; later failures comment on it, and the first good check closes it. GitHub also emails the person who last changed the workflow's schedule. Run it any time: Actions → Uptime → Run workflow, or locally `scripts/check-site.sh https://<your-site>`.
+  - Hourly keeps it within a private repo's free Actions minutes (every run bills a minute). On a paid plan, tighten the `cron` line.
+  - GitHub pauses scheduled workflows after 60 days without repository activity; re-enable it from the Actions tab.
+- **Recommended in Railway:** service → Settings → Source → **Wait for CI**, so a commit that fails CI is never deployed.
+- **Credit:** the free Railway credit runs out; watch Usage in the Railway dashboard.
 
 ## After deploying: checklist
 
@@ -100,3 +109,4 @@ The QR encodes whatever address the site is opened on, so it needs no setup and 
 - [ ] `/demo` asks for the operator key
 - [ ] Android APK built with `PB_HOST` set to this URL
 - [ ] `/download` downloads the APK, and `/download/qr` scans to `/download`
+- [ ] Actions → Uptime → Run workflow passes

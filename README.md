@@ -170,6 +170,8 @@ Current results with rules and the model only (no AI): **20/20 scams caught, 0 f
 ## CI/CD
 
 - **Every PR:** lint → type check → `pnpm test` (including the quality gate) → build → Playwright three-phone e2e.
+- **Every hour:** an uptime check of the live site; a failure opens a "The live site is down" issue (`.github/workflows/uptime.yml`).
+- **When `android/` changes on `main`:** the APK is rebuilt for the live site and published at `/pause-button.apk` (`.github/workflows/publish-apk.yml`).
 - **On `main`, or a PR labelled `ai-eval`:** `pnpm eval --ai haiku`, run when the `ANTHROPIC_API_KEY` secret is set.
 - **Deploy:** see [`docs/deploy.md`](docs/deploy.md) for the free-tier options (Vercel + Neon recommended, Railway, where it is live; its deploy settings are listed there). On Vercel: connect the repo. Each PR gets a preview URL, and `main` deploys to production. `vercel.json` runs `pnpm db:migrate && pnpm build` in the Singapore region.
 - **Environment variables** for every Vercel environment:
