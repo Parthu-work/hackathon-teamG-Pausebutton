@@ -17,10 +17,13 @@ public final class Backend {
     public static final class Result {
         public final int status;
         public final String body;
+        /** The server's Retry-After (sent with a 429) in ms, or -1. */
+        public final long retryAfterMs;
 
-        Result(int status, String body) {
+        Result(int status, String body, long retryAfterMs) {
             this.status = status;
             this.body = body;
+            this.retryAfterMs = retryAfterMs;
         }
 
         public boolean ok() {
@@ -63,9 +66,19 @@ public final class Backend {
             }
             int status = c.getResponseCode();
             InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
-            return new Result(status, in == null ? "" : readAll(in));
+            return new Result(status, in == null ? "" : readAll(in), retryAfterMs(c.getHeaderField("Retry-After")));
         } finally {
             c.disconnect();
+        }
+    }
+
+    /** Retry-After in seconds (the server never sends the date form). */
+    static long retryAfterMs(String header) {
+        if (header == null) return -1;
+        try {
+            return Math.max(0, Long.parseLong(header.trim())) * 1000;
+        } catch (NumberFormatException e) {
+            return -1;
         }
     }
 

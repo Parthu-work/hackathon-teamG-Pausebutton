@@ -1,6 +1,10 @@
 package ai.apty.pausebutton;
 
 import android.app.Notification;
+import android.content.ComponentName;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.Bundle;
 import android.os.Parcelable;
 import android.service.notification.NotificationListenerService;
@@ -8,19 +12,15 @@ import android.service.notification.StatusBarNotification;
 
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-import org.json.JSONObject;
 
 /**
- * Screens M1–M4 in real life: once the person allows notification access, this
- * service sees every new SMS and WhatsApp notification and sends its text to
- * the server, which checks it like a pasted message and warns the family.
- * It never reads old chats and never sends anything itself.
+ * Screens M1–M4 in real life: once the person agreed (ConsentActivity) and
+ * allowed notification access, this service sees every new SMS and WhatsApp
+ * notification and hands its text to the {@link Watcher}, which decides
+ * whether it leaves the phone and gets it to the server even through a
+ * network outage or a restart. It never reads old chats and never sends
+ * anything itself.
  */
 public class MessageWatcherService extends NotificationListenerService {
     private static final Set<String> WHATSAPP = new HashSet<>(Arrays.asList("com.whatsapp", "com.whatsapp.w4b"));
@@ -29,31 +29,31 @@ public class MessageWatcherService extends NotificationListenerService {
             "com.samsung.android.messaging",     // Samsung Messages
             "com.android.mms", "com.android.messaging",
             "com.oneplus.mms", "com.miui.sms", "com.sonymobile.android.mms"));
-    private static final long DEDUPE_MS = 10 * 60 * 1000L;
 
-    private final ExecutorService io = Executors.newSingleThreadExecutor();
-    private final LinkedHashMap<String, Long> seen = new LinkedHashMap<String, Long>(64, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
-            return size() > 200;
-        }
-    };
+    private ConnectivityManager.NetworkCallback network;
 
     @Override
     public void onListenerConnected() {
         Prefs.setListenerConnected(this, true);
-        report(true);
+        watchNetwork();
+        Watcher w = Watcher.get(this);
+        w.reportStatus(true);
+        // After a reboot, an update or the system killing the app: send what waited.
+        w.kick();
     }
 
     @Override
     public void onListenerDisconnected() {
         Prefs.setListenerConnected(this, false);
+        stopWatchingNetwork();
+        // Ask Android to bind the listener again (some phones do not on their own).
+        requestRebindQuietly(this);
     }
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         String channel = channelFor(sbn.getPackageName());
-        if (channel == null) return;
+        if (channel == null || !Prefs.consented(this)) return; // other apps, or before the person agreed: not read
         Notification n = sbn.getNotification();
         if (n == null || n.extras == null) return;
         if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return; // "3 new messages", not a message
@@ -73,17 +73,7 @@ public class MessageWatcherService extends NotificationListenerService {
             if (sender.isEmpty() && !s.isEmpty()) sender = s;
         }
         if (sender.isEmpty() || text.isEmpty() || looksLikeSummary(text)) return;
-
-        String key = sbn.getPackageName() + "|" + sender + "|" + text;
-        synchronized (seen) {
-            Long at = seen.get(key);
-            long now = System.currentTimeMillis();
-            if (at != null && now - at < DEDUPE_MS) return;
-            seen.put(key, now);
-        }
-        final String ch = channel, from = sender, body = text;
-        final boolean fromContact = !looksLikeNumber(sender); // a saved contact shows a name, a stranger a number
-        io.execute(() -> deliver(ch, from, fromContact, body));
+        Watcher.get(this).onMessage(sbn.getPackageName(), channel, sender, text);
     }
 
     private String channelFor(String pkg) {
@@ -94,47 +84,47 @@ public class MessageWatcherService extends NotificationListenerService {
         return null;
     }
 
-    private void deliver(String channel, String sender, boolean fromContact, String text) {
-        String token = Prefs.token(this);
-        if (token == null) {
-            Prefs.setLastError(this, "This phone is not connected yet");
-            return;
-        }
+    /** The network came back: what waited goes now instead of after the backoff. */
+    private void watchNetwork() {
+        if (network != null) return;
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm == null) return;
+        network = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network n) {
+                Watcher.get(MessageWatcherService.this).kick();
+            }
+        };
         try {
-            JSONObject body = new JSONObject()
-                    .put("channel", channel)
-                    .put("sender", sender)
-                    .put("fromContact", fromContact)
-                    .put("text", text);
-            Backend.Result r = Backend.post(Prefs.host(this), "/api/device/inbox", token, body);
-            if (r.ok()) Prefs.recordDelivered(this);
-            else if (r.status == 401) Prefs.setLastError(this, "Disconnected: connect this phone again");
-            else Prefs.setLastError(this, r.error());
-        } catch (Exception e) {
-            Prefs.setLastError(this, "Could not reach the server: " + e.getMessage());
+            cm.registerDefaultNetworkCallback(network);
+        } catch (RuntimeException e) {
+            network = null; // the backoff and the next message still get things out
         }
     }
 
-    /** Tells the server whether notification access is on (shown on the Connect screen). */
-    private void report(boolean on) {
-        String token = Prefs.token(this);
-        if (token == null) return;
-        io.execute(() -> {
+    private void stopWatchingNetwork() {
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm != null && network != null) {
             try {
-                Backend.post(Prefs.host(this), "/api/device/status", token, new JSONObject().put("listenerOn", on));
-            } catch (Exception ignored) {
-                // Best effort: the next message will try again.
+                cm.unregisterNetworkCallback(network);
+            } catch (RuntimeException ignored) {
+                // Already gone.
             }
-        });
+        }
+        network = null;
+    }
+
+    /** Rebinds the listener; harmless when it is bound already or access is off. */
+    static void requestRebindQuietly(Context c) {
+        try {
+            requestRebind(new ComponentName(c, MessageWatcherService.class));
+        } catch (RuntimeException ignored) {
+            // Notification access is off: nothing to rebind.
+        }
     }
 
     static String str(CharSequence cs) {
         return cs == null ? "" : cs.toString().trim();
-    }
-
-    static boolean looksLikeNumber(String sender) {
-        String digits = sender.replaceAll("[\\s()+\\-.]", "");
-        return digits.matches("\\d{8,}") || sender.contains("XXXX");
     }
 
     static boolean looksLikeSummary(String text) {
