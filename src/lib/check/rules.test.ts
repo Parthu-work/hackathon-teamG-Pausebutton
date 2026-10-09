@@ -55,6 +55,30 @@ describe("signals", () => {
     expect(r.credential).toEqual([]);
   });
 
+  it("does not treat a bank's 'we never ask you to share' line as a code request", () => {
+    for (const text of [
+      "123456 is your OTP for login. SBI never asks you to share your OTP with anyone.",
+      "Bank officials will never ask you to share the OTP.",
+      "Do not ever share your OTP. HDFC Bank",
+      "Don’t share your OTP with anyone.",
+      "No one from the bank will ask you to share your PIN.",
+      "SBI will never ask you to install AnyDesk.",
+    ]) {
+      expect(runRules(text).credential, text).toEqual([]);
+    }
+  });
+
+  it("still flags a code request after an unrelated 'don't'", () => {
+    for (const text of [
+      "Don't panic, share the OTP now.",
+      "Do not disconnect. Share the OTP you received.",
+      "Don't worry just share the OTP",
+      "I will not ask you to pay, just share the OTP.",
+    ]) {
+      expect(runRules(text).credential, text).toHaveLength(1);
+    }
+  });
+
   it("flags requests for OTPs, PINs and screen-sharing apps", () => {
     expect(runRules("Please share the OTP sent to your phone").credential).toHaveLength(1);
     expect(runRules("Download the AnyDesk app now").credential).toHaveLength(1);
@@ -88,6 +112,15 @@ describe("links", () => {
     expect(status("Mail me at someone@gmail.com")).toBeUndefined();
     expect(status("Rs 2,450.00 debited")).toBeUndefined();
   });
+
+  it("does not call ordinary sites fakes", () => {
+    expect(status("Live status: https://trainman.in/pnr/4521")).toBe("unknown");
+    expect(status("Book at praxis.com")).toBe("unknown");
+    expect(status("Photos: https://s3.amazonaws.com/album.zip")).toBe("risky");
+    expect(status("Prints at kodak.com")).toBe("risky");
+    expect(status("Sale at mantra.com")).toBe("risky");
+    expect(status("Log in at hdfcnetbanking-login.com")).toBe("lookalike");
+  });
 });
 
 describe("family, amount and payee", () => {
@@ -104,5 +137,14 @@ describe("family, amount and payee", () => {
     expect(findAmount(example("lottery"), lottery.signals.filter((s) => s.type === "payment"))?.value).toBe(6500);
     expect(detectFamily(runRules(example("courier")).normalized.text)).toBe("courier_fee");
     expect(detectFamily(runRules(example("kyc")).normalized.text)).toBe("bank_kyc");
+  });
+
+  it("does not read a phone number after 'officers' or 'hrs' as rupees", () => {
+    for (const text of [
+      "Sir this is CBI Mumbai. Stay on the call and tell no one. Transfer the money now. Our officers 9876543210 will guide you.",
+      "Transfer within 24 hrs 9876543210 is my number",
+    ]) {
+      expect(findAmount(text, runRules(text).signals.filter((s) => s.type === "payment")), text).toBeNull();
+    }
   });
 });

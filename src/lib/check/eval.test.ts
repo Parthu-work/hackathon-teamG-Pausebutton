@@ -17,6 +17,23 @@ describe("demo examples match the designs", () => {
   }
 });
 
+describe("real messages that once got SCAM", () => {
+  for (const text of [
+    "123456 is your OTP for login. SBI never asks you to share your OTP with anyone.",
+    "Bank officials will never ask you to share the OTP.",
+    "Do not ever share your OTP. HDFC Bank",
+    "Your PNR 4521 is confirmed. Live status: https://trainman.in/pnr/4521",
+    "Photos from the wedding: https://s3.amazonaws.com/rao-family/album.zip",
+    "Your appointment at praxis.com is on Monday 10am.",
+    "Your prints are ready at kodak.com, pick up any time.",
+    "New kurta collection at mantra.com, see you there!",
+  ]) {
+    it(text, async () => {
+      expect((await checkMessage(text, { ai: "off" })).verdict).not.toBe("SCAM");
+    });
+  }
+});
+
 describe("40-message test set (rules + model, no AI)", () => {
   it("catches every scam and raises no false alarm", async () => {
     const results = await Promise.all(

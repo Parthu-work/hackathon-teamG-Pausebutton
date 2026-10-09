@@ -21,6 +21,17 @@ const BRANDS = [
   "jio", "trai", "bses", "tatapower",
 ];
 
+// Brand names that are also parts of everyday words ("train", "taxis"): only a
+// whole word counts for these.
+const WORD_LIKE = new Set(["trai", "axis"]);
+
+// Words that, next to a brand name, show the site is fishing for logins or codes.
+const PHISHING_WORDS = [
+  "kyc", "verify", "verif", "update", "secure", "login", "signin", "netbanking", "banking", "support",
+  "care", "reward", "refund", "cashback", "bonus", "claim", "prize", "account", "helpline", "unblock",
+  "activate", "gift", "otp", "offer",
+];
+
 const SHORTENERS = [
   "bit.ly", "tinyurl.com", "t.co", "goo.gl", "is.gd", "cutt.ly", "rb.gy", "shorturl.at", "t.ly",
   "ow.ly", "rebrand.ly", "s.id", "tiny.cc", "v.gd",
@@ -70,7 +81,7 @@ function classify(domain: string, isIp: boolean): { status: LinkStatus; reason: 
   const labels = domain.split(".");
   const tld = labels[labels.length - 1];
   const words = labels.slice(0, -1).flatMap((l) => l.split("-"));
-  const brand = BRANDS.find((b) => words.some((w) => w === b || (b.length >= 4 && w.includes(b))));
+  const brand = BRANDS.find((b) => words.includes(b));
   if (brand) {
     return {
       status: "lookalike",
@@ -78,7 +89,19 @@ function classify(domain: string, isIp: boolean): { status: LinkStatus; reason: 
     };
   }
   const near = nearOfficial(labels[0]);
-  if (near) return { status: "lookalike", reason: `It looks like ${near} but is spelled differently.` };
+  if (near?.close) return { status: "lookalike", reason: `It looks like ${near.site} but is spelled differently.` };
+  // A brand inside a longer word is proof only with a phishing word or an odd
+  // ending ("hdfcnetbanking-login.com"). Alone it can be an ordinary site
+  // ("s3.amazonaws.com"), so it is only a warning sign.
+  const inside = BRANDS.find((b) => b.length >= 4 && !WORD_LIKE.has(b) && words.some((w) => w.includes(b)));
+  if (inside) {
+    const proof = ODD_TLDS.has(tld) || words.some((w) => PHISHING_WORDS.some((p) => w.includes(p)));
+    return {
+      status: proof ? "lookalike" : "risky",
+      reason: `It uses the name “${inside.toUpperCase()}” but is not their official site.`,
+    };
+  }
+  if (near) return { status: "risky", reason: `It looks like ${near.site} but is spelled differently.` };
   if (ODD_TLDS.has(tld)) return { status: "risky", reason: "Real firms do not use web addresses like this." };
   return { status: "unknown", reason: "We do not know this site." };
 }
@@ -88,14 +111,22 @@ function isOfficial(domain: string) {
   return OFFICIAL.some((o) => domain === o || domain.endsWith("." + o));
 }
 
-/** A first label within two edits of an official one, e.g. "hdfcbnak". */
-function nearOfficial(label: string): string | null {
+/**
+ * A first label close to an official one. Up to two edits of a long name
+ * ("hdfcbnak") copies the bank. One edit of a short name can be another word
+ * ("kodak" is not kotak), so that is only a warning sign.
+ */
+function nearOfficial(label: string): { site: string; close: boolean } | null {
   if (label.length < 5) return null;
+  let weak: string | null = null;
   for (const o of OFFICIAL) {
     const first = o.split(".")[0];
-    if (first.length >= 5 && first !== label && editDistance(first, label) <= 2) return o;
+    if (first.length < 5 || first === label) continue;
+    const d = editDistance(first, label);
+    if (first.length >= 8 && d <= 2) return { site: o, close: true };
+    if (d <= 1) weak ??= o;
   }
-  return null;
+  return weak ? { site: weak, close: false } : null;
 }
 
 function editDistance(a: string, b: string) {
