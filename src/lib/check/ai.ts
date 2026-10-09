@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
+import { log } from "@/lib/server/log";
 import { AI_MODELS, AI_TIMEOUT_MS, type AiModelKey } from "./config";
 import type { AiStatus, Evidence, SignalType } from "./types";
 
@@ -88,7 +89,8 @@ export async function readWithClaude(
     // HTTP and network errors, and replies that do not fit the schema (cut off
     // at max_tokens, or a refusal in plain text): fall back to rules only.
     if (error instanceof Anthropic.AnthropicError) {
-      console.warn(`[ai] ${model} failed:`, error.message);
+      // Name and status only: a reply that failed to parse can quote the message.
+      log.warn("ai_failed", { model, errorName: error.name, status: error instanceof Anthropic.APIError ? error.status : undefined });
       return { status: "error", model, signals: [] };
     }
     throw error;

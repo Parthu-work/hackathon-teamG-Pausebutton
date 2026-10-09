@@ -12,6 +12,10 @@ export const hi: Dict = {
     later: "बाद में",
     notNow: "अभी नहीं",
     tryAgain: "फिर कोशिश करें",
+    // Shown by the error page when a screen fails to load.
+    errorTitle: "यह स्क्रीन नहीं खुली",
+    errorBody: "कृपया थोड़ी देर में फिर कोशिश करें।",
+    errorRef: "संदर्भ",
     callName: "{name} को फ़ोन करें",
     helpline: "साइबर हेल्पलाइन 1930 पर फ़ोन करें",
     helplineName: "साइबर हेल्पलाइन 1930",

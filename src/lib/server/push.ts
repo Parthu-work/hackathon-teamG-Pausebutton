@@ -3,6 +3,7 @@ import webpush, { WebPushError } from "web-push";
 import { z } from "zod";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
+import { errorFields, log } from "./log";
 
 // Web Push: phones get a system notification (with vibration) even when the
 // app is closed. Needs VAPID keys in the environment (`pnpm push:keys`);
@@ -202,12 +203,12 @@ export async function pushToUsers(db: Db, userIds: string[], payload: PushPayloa
     const gone = rows.filter((_, i) => outcomes[i].status === "gone").map((r) => r.id);
     const alive = rows.filter((_, i) => outcomes[i].status === "sent").map((r) => r.id);
     const failed = outcomes.filter((o) => o.status === "failed");
-    for (const f of failed) console.warn(`[push] could not send (${f.statusCode ?? "network"}, ${f.attempts} attempt${f.attempts === 1 ? "" : "s"}):`, f.error);
+    for (const f of failed) log.warn("push_failed", { statusCode: f.statusCode ?? "network", attempts: f.attempts, error: f.error });
     if (gone.length) await db.delete(schema.pushSubscriptions).where(inArray(schema.pushSubscriptions.id, gone));
     if (alive.length) await db.update(schema.pushSubscriptions).set({ lastUsedAt: new Date() }).where(inArray(schema.pushSubscriptions.id, alive));
     return { sent: alive.length, failed: failed.length, gone: gone.length, skipped };
   } catch (error) {
-    console.warn("[push] failed:", error instanceof Error ? error.message : error);
+    log.warn("push_error", errorFields(error));
     return NONE;
   }
 }

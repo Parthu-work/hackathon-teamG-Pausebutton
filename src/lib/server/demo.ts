@@ -11,6 +11,7 @@ import examples from "@/data/examples.json";
 import simData from "@/data/sim-messages.json";
 import { fingerprintOf, TITLES } from "./checks";
 import { logEvent } from "./events";
+import { log } from "./log";
 import { clearSyntheticReports, seedReport } from "./reports";
 import { seedInbox } from "./sim";
 import { clearSyntheticSightings, recordSighting } from "./sightings";
@@ -70,12 +71,12 @@ export async function ensureDemoHousehold(db: Db) {
         .values({ ...p, phone, demoKey: key, isDemo: true, alertsReady: p.role === "family" })
         .onConflictDoNothing()
         .returning();
-      if (!u) console.warn(`[demo] ${phone} is already used by another account; ${p.name} was not created.`);
+      if (!u) log.warn("demo_phone_in_use", { persona: key, outcome: "not created" }); // the number is another account's
       else created.add(key);
     } else if (existing.phone !== phone) {
       const clash = await db.query.users.findFirst({ where: eq(schema.users.phone, phone) });
       if (clash) {
-        console.warn(`[demo] ${phone} is already used by another account; ${p.name} keeps ${existing.phone}.`);
+        log.warn("demo_phone_in_use", { persona: key, outcome: "kept its old number" });
         continue;
       }
       await db.update(schema.users).set({ phone }).where(eq(schema.users.id, existing.id));
