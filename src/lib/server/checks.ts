@@ -14,8 +14,9 @@ import type { CheckView, SharedMessage } from "@/lib/views";
 import { answerSummary, giveAnswer } from "./answers";
 import { logEvent } from "./events";
 import { adviceFor, assertLinked, createHold, holdStatus, toHoldView, userNames } from "./holds";
+import { logPush, notifyOwnerOfMessage } from "./notify";
 import { callNameOf, joinNames, linkedFamily, ownerView } from "./people";
-import { pushToUsers, type PushPayload } from "./push";
+import { pushToUsers, type PushPayload, type PushResult } from "./push";
 import { liveBlockedDomains, reportableFor } from "./reports";
 import { HttpError } from "./session";
 import { campaignFor, recordSighting } from "./sightings";
@@ -158,6 +159,9 @@ export async function storeCheck(
       await sendAlerts(db, owner, check, recipients, "headsup", null);
     }
   }
+  // A message that arrived on his phone (Android watcher, simulated inbox) while
+  // the app may be closed: his own phone gets "Possible scam from …" (SAFE: nothing).
+  if (input.source === "sms" || input.source === "whatsapp") await notifyOwnerOfMessage(db, owner, check);
   return { checkId: check.id, holdId, verdict: check.verdict };
 }
 
@@ -175,7 +179,8 @@ async function sendAlerts(
   const what = kind === "urgent" ? "Urgent alert" : kind === "headsup" ? "Quiet heads-up" : "“Ask” request";
   await logEvent(db, owner.id, "Check service", "alert", `${what} sent to ${joinNames(names)}`, holdId);
 
-  // Push notifications reach the family phones even when the app is closed.
+  // Push notifications reach the family phones even when the app is closed. A
+  // tap lands on /open/<alertId>, which opens the paused payment or the message.
   const family = await linkedFamily(db, owner.id);
   const phrases = keyPhrases(check.signals, check.link, check.hardPhrases, 2).map((p) => `“${p}”`).join(" ");
   const sent = await Promise.all(
@@ -191,11 +196,16 @@ async function sendAlerts(
             : { title: `${who} is asking: is this message safe?`, body: phrases || check.title, urgent: false };
       // F2: a paused payment can be blocked from the lock screen, without unlocking the phone.
       const actions: PushPayload["actions"] = holdId ? [{ action: "block", title: "Block payment" }, { action: "fine", title: "It's fine" }] : undefined;
-      return pushToUsers(db, [a.recipientId], { ...text, url: `/family/alert/${a.id}`, tag: `alert-${a.id}`, holdId, actions, who });
+      return pushToUsers(
+        db,
+        [a.recipientId],
+        { ...text, url: `/open/${a.id}`, tag: `alert-${a.id}`, kind, alertId: a.id, checkId: check.id, holdId, actions, who, at: a.createdAt.toISOString() },
+        { key: `alert:${a.id}`, alertId: a.id, checkId: check.id },
+      );
     }),
   );
-  const pushed = sent.reduce((n, r) => n + r.sent, 0);
-  if (pushed) await logEvent(db, owner.id, "Check service", "push", `Push notification sent to ${pushed} phone${pushed === 1 ? "" : "s"}`, holdId);
+  const total = sent.reduce<PushResult>((acc, r) => ({ sent: acc.sent + r.sent, failed: acc.failed + r.failed, gone: acc.gone + r.gone, skipped: acc.skipped + r.skipped }), { sent: 0, failed: 0, gone: 0, skipped: 0 });
+  await logPush(db, owner.id, total, holdId);
 }
 
 /** E2 "Ask Arjun": a suspicious (or safe) message goes to family for a decision. */

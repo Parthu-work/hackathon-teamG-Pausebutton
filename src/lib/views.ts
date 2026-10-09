@@ -143,6 +143,8 @@ export type MeView = {
   watchWhatsapp: boolean;
   unknownOnly: boolean;
   autoTellFamily: boolean;
+  /** Push notifications on his own phone (detected messages, the family's decision). */
+  alertNotify: boolean;
 };
 
 export type SimMessageView = {

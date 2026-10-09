@@ -3,13 +3,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Icon } from "@/components/icons";
-import { Avatar, clockTime, Marks, RaoTabs, Screen, Sheet, TitleRow, useToast, VerdictPill } from "@/components/ui";
+import { Avatar, clockTime, Marks, RaoTabs, Screen, Sheet, TitleRow, Toggle, useToast, VerdictPill } from "@/components/ui";
 import { LANGUAGES } from "@/lib/i18n";
 import type { CheckRow } from "@/lib/server/checks";
-import { api, ApiError, post } from "@/lib/client/api";
+import { api, ApiError } from "@/lib/client/api";
+import { pushPermission, subscribeToPush, unsubscribeFromPush } from "@/lib/client/push";
+import { signOut } from "@/lib/client/sign-out";
 import { useRao, useT } from "./shell";
+
+const noSubscribe = () => () => {};
+const pushPermissionNow = () => pushPermission();
+const pushPermissionServer = () => "" as const;
 
 function useRaoTabs(active: "check" | "checks" | "settings") {
   const t = useT();
@@ -144,8 +150,12 @@ export function SettingsScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const t = useT();
+  const toast = useToast();
   const tabs = useRaoTabs("settings");
   const { data } = useRao();
+  // Reads Notification.permission on every render; "" while rendering on the server.
+  const permission = useSyncExternalStore(noSubscribe, pushPermissionNow, pushPermissionServer);
+  const [, bump] = useState(0);
   const save = useMutation({
     mutationFn: (body: Record<string, unknown>) => api("/api/me/settings", { method: "PATCH", body }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["rao-state"] }),
@@ -156,8 +166,39 @@ export function SettingsScreen() {
   const relation = (r: string) => (r === "Son" ? t("settings.son") : r === "Daughter" ? t("settings.daughter") : r === "Spouse" ? t("settings.spouse") : t("settings.friend"));
   const lang = LANGUAGES.find((l) => l.code === data.me.language) ?? LANGUAGES[0];
 
-  async function signOut() {
-    await post("/api/auth/sign-out", { app: "rao" });
+  // K2 · Notifications on his own phone: a message the watcher caught, the family's decision.
+  const notifyText =
+    !permission || !data.me.alertNotify
+      ? t("settings.notifySub")
+      : permission === "granted"
+        ? t("settings.notifyOn")
+        : permission === "denied"
+          ? t("settings.notifyBlocked")
+          : permission === "needs-install"
+            ? t("settings.notifyInstall")
+            : permission === "unsupported"
+              ? t("settings.notifyUnsupported")
+              : t("settings.notifyAsk");
+  async function onNotify(on: boolean) {
+    if (on) {
+      const result = await subscribeToPush("rao"); // asks the phone's permission: must follow the tap
+      const key =
+        result === "subscribed" ? "settings.notifyOn"
+        : result === "denied" ? "settings.notifyBlocked"
+        : result === "needs-install" ? "settings.notifyInstall"
+        : result === "unsupported" ? "settings.notifyUnsupported"
+        : result === "off" ? "settings.notifyOff"
+        : "settings.notifyError";
+      toast({ title: t("settings.notify"), sub: t(key), icon: result === "subscribed" ? "bell" : "warn", tone: result === "subscribed" ? undefined : "red" });
+      bump((n) => n + 1); // re-read the permission
+    } else {
+      await unsubscribeFromPush("rao");
+    }
+    save.mutate({ alertNotify: on });
+  }
+
+  async function leave() {
+    await signOut("rao");
     queryClient.clear();
     router.push("/welcome");
   }
@@ -199,12 +240,20 @@ export function SettingsScreen() {
         <span className={`tag ${watching ? "g" : ""}`}>{watching ? t("settings.on") : t("settings.off")}</span>
         <Icon name="chev" />
       </Link>
+      <div className="card row-card" data-testid="notify-row">
+        <span className="circle" style={{ width: 44, height: 44, background: "var(--chip)" }}><Icon name="bell" /></span>
+        <div className="grow">
+          <b style={{ fontSize: 17 }}>{t("settings.notify")}</b>
+          <p className="sm">{notifyText}</p>
+        </div>
+        <Toggle on={data.me.alertNotify} label={t("settings.notify")} onChange={(v) => void onNotify(v)} />
+      </div>
       <Link href="/privacy" className="card row-card" style={{ textDecoration: "none" }}>
         <div className="grow"><b style={{ fontSize: 17 }}>{t("settings.whatWeKeep")}</b><p className="sm">{t("settings.privacySub")}</p></div>
         <Icon name="chev" />
       </Link>
       <div className="spacer" />
-      <button className="ghost" style={{ alignSelf: "center" }} onClick={signOut}>{t("settings.signOut")}</button>
+      <button className="ghost" style={{ alignSelf: "center" }} onClick={leave}>{t("settings.signOut")}</button>
     </Screen>
   );
 }

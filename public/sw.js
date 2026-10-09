@@ -5,42 +5,86 @@
 // payment carries two buttons. "Block payment" blocks it from the lock screen
 // (no unlock, no app) and shows "You blocked it". "It's fine" opens the app on
 // the approve step, because approving a payment always needs a second confirm.
+//
+// A tap on any other notification opens the app straight on the screen the
+// notification is about (/open/<alertId> for a family alert, which resolves to
+// the paused payment or the message; /check/<id> or /hold/<id> on Mr Rao's
+// phone), in the window that already shows the app when there is one.
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
-self.addEventListener("push", (event) => {
-  let data = {};
+const ICON = "/icon-192.png";
+const OPERATOR_PAGES = /^\/(demo|tests|campaigns|reports)(\/|$)/;
+
+function parse(event) {
   try {
-    data = event.data ? event.data.json() : {};
+    return event.data ? event.data.json() : {};
   } catch {
-    data = { title: "Pause Button", body: event.data ? event.data.text() : "" };
+    return { title: "Pause Button", body: event.data ? event.data.text() : "" };
   }
+}
+
+async function showAlert(data) {
   const urgent = !!data.urgent;
-  event.waitUntil(
-    self.registration.showNotification(data.title || "Pause Button", {
-      body: data.body || "",
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
-      tag: data.tag || "pause-button",
-      renotify: true,
-      requireInteraction: urgent,
-      vibrate: urgent ? [400, 150, 400, 150, 400, 150, 800] : [150, 80, 150],
-      actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : [],
-      data: { url: data.url || "/family", holdId: data.holdId || null, who: data.who || "" },
-    }),
-  );
+  const tag = data.tag || "pause-button";
+  // A newer notification about the same message replaces the older one in the
+  // tray (a quiet heads-up, then the urgent alert when Papa forwards it).
+  if (data.checkId) {
+    const open = await self.registration.getNotifications();
+    for (const n of open) {
+      if (n.tag !== tag && n.data && n.data.checkId === data.checkId) n.close();
+    }
+  }
+  const at = data.at ? Date.parse(data.at) : NaN;
+  const options = {
+    body: data.body || "",
+    icon: ICON,
+    badge: ICON,
+    tag,
+    renotify: true,
+    requireInteraction: urgent,
+    vibrate: urgent ? [400, 150, 400, 150, 400, 150, 800] : [150, 80, 150],
+    actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : [],
+    data: {
+      url: data.url || "/family",
+      holdId: data.holdId || null,
+      who: data.who || "",
+      alertId: data.alertId || null,
+      checkId: data.checkId || null,
+      kind: data.kind || null,
+    },
+  };
+  if (!Number.isNaN(at)) options.timestamp = at;
+  return self.registration.showNotification(data.title || "Pause Button", options);
+}
+
+self.addEventListener("push", (event) => {
+  event.waitUntil(showAlert(parse(event)));
 });
 
+/**
+ * Opens the app on `url`. The window that already shows this part of the app
+ * (a family phone for a family alert) is focused and navigated; the operator
+ * pages are never used; with no window open, a new one opens straight on the
+ * page, so a closed app initialises on the right screen.
+ */
 function openApp(url) {
   const target = new URL(url, self.location.origin).href;
+  const section = new URL(target).pathname.split("/")[1] || "";
+  const wantsFamily = section === "family" || section === "open";
+  const isFamily = (pathname) => pathname.startsWith("/family") || pathname.startsWith("/open");
   return self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-    const open = list.find((c) => "focus" in c);
-    if (open) {
-      if ("navigate" in open) open.navigate(target).catch(() => {});
-      return open.focus();
-    }
-    return self.clients.openWindow(target);
+    const windows = list.filter((c) => "focus" in c && !OPERATOR_PAGES.test(new URL(c.url).pathname));
+    const client = windows.find((c) => isFamily(new URL(c.url).pathname) === wantsFamily) || windows[0];
+    if (!client) return self.clients.openWindow(target);
+    return client
+      .focus()
+      .then((focused) => {
+        const w = focused || client;
+        return "navigate" in w ? w.navigate(target) : w;
+      })
+      .catch(() => self.clients.openWindow(target));
   });
 }
 
@@ -59,8 +103,8 @@ function blockFromLockScreen(holdId, who) {
         body: ok
           ? `${name}'s phone now shows “Payment cancelled”. Nothing left the account.`
           : (json && json.error) || "Open Pause Button to block the payment.",
-        icon: "/icon-192.png",
-        badge: "/icon-192.png",
+        icon: ICON,
+        badge: ICON,
         tag: `hold-${holdId}`,
         actions: [{ action: "open", title: ok ? `Call ${name}` : "Open" }],
         data: { url: `/family/hold/${holdId}${ok ? "?call=1" : ""}` },
@@ -69,7 +113,7 @@ function blockFromLockScreen(holdId, who) {
     .catch(() =>
       self.registration.showNotification("Could not reach Pause Button", {
         body: "Open the app to block the payment. The money stays paused meanwhile.",
-        icon: "/icon-192.png",
+        icon: ICON,
         tag: `hold-${holdId}`,
         data: { url: `/family/hold/${holdId}` },
       }),
@@ -89,4 +133,32 @@ self.addEventListener("notificationclick", (event) => {
     return;
   }
   event.waitUntil(openApp(url));
+});
+
+// The push service replaced this phone's subscription (it expired or was
+// rotated): subscribe again with the same key and tell the server, which
+// forgets the old endpoint. The session cookie goes along with the request.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  const old = event.oldSubscription || null;
+  const knownKey = old && old.options ? old.options.applicationServerKey : null;
+  const key = knownKey
+    ? Promise.resolve(knownKey)
+    : fetch("/api/push/key", { credentials: "same-origin" })
+        .then((r) => r.json())
+        .then((j) => j.publicKey || null);
+  event.waitUntil(
+    key
+      .then((k) => (k ? self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: k }) : null))
+      .then((sub) =>
+        sub
+          ? fetch("/api/push/subscribe", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              credentials: "same-origin",
+              body: JSON.stringify({ subscription: sub.toJSON(), previousEndpoint: old ? old.endpoint : null }),
+            })
+          : null,
+      )
+      .catch(() => {}),
+  );
 });

@@ -22,6 +22,7 @@ export function toMeView(u: User): MeView {
     watchWhatsapp: u.watchWhatsapp,
     unknownOnly: u.unknownOnly,
     autoTellFamily: u.autoTellFamily,
+    alertNotify: u.alertNotify,
   };
 }
 

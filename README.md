@@ -155,7 +155,7 @@ e2e/                   three-phone Playwright test
 ## Tests
 
 ```bash
-pnpm test        # unit tests: rules, pipeline, model parity, server flow, phase 2 flows, devices, push, quality gate
+pnpm test        # unit tests: rules, pipeline, model parity, server flow, phase 2 flows, devices, push, service worker, quality gate
 pnpm eval        # prints every example and test message with its verdict and scores
 pnpm build && pnpm e2e   # two browser "phones" against a fresh in-memory database
 pnpm e2e:headed          # same, in visible windows side by side, slowed down to watch
@@ -199,7 +199,54 @@ Everyone (Mr Rao, Mrs Rao, Arjun, Meera, or your own teammates with their own nu
 - Each trusted person: sign in with the number Mr Rao entered, choose "I protect someone", enter the code, turn on **Notifications** on the "So we can reach you fast" screen (the phone asks for permission), tap **Send me a test alert**: it should ring *and* appear in the notification bar.
 - iPhones: push only works once the app is installed (Share → Add to Home Screen); the screen says so.
 
-**Alerts when the app is closed (Web Push)** are built in: the family phone registers `public/sw.js`, subscribes with the server's VAPID key (`/api/push/key`, `/api/push/subscribe`), and every alert in `src/lib/server/checks.ts` also goes out as a system notification that opens the alert screen. Dead subscriptions are forgotten automatically. Without VAPID keys the app simply skips push.
+**Alerts when the app is closed (Web Push)** are built in: see "Push notifications" below. Without VAPID keys the app simply skips push.
+
+## Push notifications (alerts when the app is closed)
+
+Every alert the app creates also goes out as a Web Push notification, so the person is told even when the app is in the background, the phone is locked, or the app is closed. Nothing changes for a phone that has the app open: it still polls every 2 s, buzzes, flashes and opens the alert by itself.
+
+**What is pushed, and to whom**
+
+| What happened | Who is told | The notification | A tap opens |
+|---|---|---|---|
+| A scam was pasted, forwarded or spoken; "Pay anyway"; the live-call guard | every linked family member (urgent) | "Papa needs you now", with **Block payment** and **It's fine** when a payment is paused (F2) | the paused payment, or the message |
+| A detected message (Android watcher, simulated inbox) is a scam and "Tell Arjun automatically" is on | family members with the early heads-up (quiet) | "Heads-up: Papa got a scam message" | the message |
+| "Ask Arjun" | every linked family member (quiet) | "Papa is asking: is this message safe?" | the message, with the answer buttons |
+| A detected message is SCAM or SUSPICIOUS | Mr Rao's own phone, in his language (F5) | "Possible scam from +91 9XXXX XXXXX" | his verdict screen |
+| The family blocked or released a paused payment, or answered an "Ask" | Mr Rao's own phone, in his language | "Payment cancelled: Arjun blocked the Rs 80,000 payment" | the payment, or the verdict |
+
+Safe messages are never pushed. A newer notification about the same message replaces the older one in the tray (the quiet heads-up goes when the urgent alert for the forwarded message arrives), and notifications for alerts that were handled in the app, by this person or the other sibling, are cleared.
+
+**Tap to open.** A family notification points at `/open/<alertId>`: a small resolver page (`src/screens/family/open.tsx`, `POST /api/family/alerts/[id]/open`) that marks the alert opened and goes straight to the paused payment (`/family/hold/…`) or the message (`/family/check/…`), never the home screen, also when the alert was already handled (it then shows the outcome). The service worker reuses the window that already shows that part of the app, or opens a new one when the app is closed, so a closed app initialises on the right screen. A signed-out phone keeps the destination through the welcome and sign-in screens (`pending-open.ts`). Someone else's alert goes home. Mr Rao's notifications point straight at `/check/<id>` or `/hold/<id>`.
+
+**Phones, people and preferences.** One subscription per browser, stored in `push_subscriptions` and keyed by endpoint. The phone re-sends it on every app start, so it always belongs to the person signed in; signing out removes it (`POST /api/auth/sign-out` carries the endpoint) and the next sign-in registers the phone afresh, without asking for permission again. A subscription made with an older VAPID key is replaced; the browser's `pushsubscriptionchange` re-subscribes and the old endpoint is forgotten; a phone the push service reports gone (404, 410) is deleted. The **Notifications** toggle (family: "So we can reach you fast" and Settings; Mr Rao: Settings) is honoured on the server (`users.alert_notify`), so a second phone of the same person stays quiet too. "Send me a test alert" ignores the toggle on purpose. (The demo panel runs several phones in one browser, which has one subscription: it belongs to whichever frame registered last, so test push on real phones.)
+
+**Reliability.** Each delivery is written to `push_deliveries` (sent; failed, with the push service's status and error; or gone), with the alert and an idempotency key (`alert:<id>`, `check:<id>`, `hold:<id>:<status>`), so the same alert is never pushed twice to one phone and a missing notification can be traced. A temporary failure (429, 5xx, network) is retried once, honouring a short `Retry-After`. A push never fails an alert: the in-app alert, the hold and the event log are written first. The demo panel's event log shows "Push notification sent to N phones" and "Push notification failed for N phones".
+
+**Fallback.** Without VAPID keys, or when permission is denied, not yet given, or not possible (Safari in the browser), everything else works: the open app still polls, buzzes, flashes and opens alerts. The family home then shows a card saying alerts reach the phone only while the app is open, with the one tap that fixes it; the settings say what is blocking it.
+
+**Setup and deployment**
+- Environment variables, on every Vercel environment: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (print a pair with `pnpm push:keys`). Rotating the keys is safe: phones re-subscribe on their next app start.
+- Database: migration `drizzle/0007_push_deliveries.sql` (`pnpm db:migrate`, which the Vercel build runs; the embedded database migrates itself).
+- HTTPS is required (Web Push works on `localhost` and over `pnpm share`, not on a LAN `http://` address).
+- Android: the Android app opens the site in Chrome (Trusted Web Activity), so Chrome asks for the notification permission, shows the notifications and the tap opens the app on the alert. No Firebase. With `/.well-known/assetlinks.json` verified (`ANDROID_CERT_SHA256`) it opens full screen inside the app.
+- iPhone: install to the home screen first (iOS 16.4+), then turn Notifications on; the screen says so.
+
+**Test matrix** (the scenarios in the brief)
+
+| Scenario | What happens | Where it is tested |
+|---|---|---|
+| The recipient is using the app | The poll opens the alert and plays the alarm; the tray notification is cleared once the alert is handled | `flow.test.ts`, e2e "scam: STOP…", `sw.test.ts` |
+| Another app is open · the app is in the background | The notification shows; a tap focuses the app's window and navigates it to the alert | `sw.test.ts` "opens the alert in the family window" |
+| The phone is locked | Urgent notifications stay until handled; **Block payment** works from the lock screen | e2e "F2 lock screen", `sw.test.ts` "Block payment" |
+| The app was closed | A tap opens a new window on `/open/<id>`, which initialises the app on the payment or the message | `sw.test.ts` "with the app closed", e2e "push notification tap" |
+| A tap reaches the correct alert | `/open/<id>` resolves to the hold or the check, also once handled; someone else's alert goes home; signed out keeps the destination | `push.test.ts` "the tap opens…", e2e "push notification tap" |
+| Several alerts in succession | One notification per alert; a newer one about the same message replaces the older; never the same alert twice to one phone | `sw.test.ts` "replaces the older one", `push.test.ts` "never … twice" |
+| The token changes or is invalid | `pushsubscriptionchange` re-subscribes; `previousEndpoint` is forgotten; 404/410 deletes the phone; a key change replaces the subscription | `sw.test.ts` "subscription changes", `push.test.ts` "forgets…", "a replaced endpoint" |
+| Permission is denied | Status "denied"; the home card and the settings say so; alerts still work while the app is open | `push.ts` client, `PushHint` (manual: deny in the browser) |
+| Sender and recipient on different devices | Subscriptions are per phone and per person; every phone of the person is told | `push.test.ts` "sends to every phone" |
+| The recipient logs out and another user logs in | Sign-out removes this phone; the next sign-in moves the endpoint to the new person | `push.test.ts` "a phone another person signs in on" |
+| Temporary delivery errors | One retry on 429/5xx/network; status and error logged in `push_deliveries` | `push.test.ts` "retries once" |
 
 ## The Android app (APK)
 

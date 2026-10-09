@@ -129,7 +129,8 @@ test("F1 forward to Pause: share a message from the inbox, no copy, no paste", a
   await expect(rao.getByText("Arjun and Meera were alerted")).toBeVisible();
   // Arjun's phone first opened the quiet heads-up for the inbox message; the forwarded
   // check brings the urgent alert (with the Rs 80,000 hold). Wait for that one, then open it.
-  await expect(arjun.getByText(/It asks for Rs 80,000/)).toBeVisible({ timeout: 10_000 });
+  // Only the visible one: the router keeps the previous alert screen mounted (hidden) for back navigation.
+  await expect(arjun.getByText(/It asks for Rs 80,000/).filter({ visible: true })).toBeVisible({ timeout: 10_000 });
   await arjun.getByRole("button", { name: "Open", exact: true }).click();
   await expect(arjun.getByTestId("victim-message")).toContainText("Papa forwarded it from WhatsApp");
 });
@@ -436,4 +437,44 @@ test("on a laptop, Call shows the number instead of dialing", async ({ browser }
   await page.waitForURL(/\/stop$/);
   await page.getByRole("button", { name: "Call Arjun" }).click();
   await expect(page.getByText(/^Call Arjun: \+91 \d{5} \d{5}$/)).toBeVisible();
+});
+
+test("push notification tap: /open/<alert> lands on the paused payment, with the app closed or signed out", async ({ browser }) => {
+  const rao = await phone(browser, "Mr Rao");
+  const arjun = await phone(browser, "Arjun");
+  const meera = await phone(browser, "Meera");
+  await rao.getByRole("button", { name: "CBI parcel call" }).click();
+  await rao.getByTestId("check-button").click();
+  await rao.getByTestId("stop-continue").click();
+  await expect(arjun.getByRole("heading", { name: "Papa got a scam message" })).toBeVisible({ timeout: 10_000 });
+
+  // What the push payload carries: each phone's own alert id.
+  type State = { alerts: { id: string; kind: string; holdId: string | null }[] };
+  const mine = ((await (await arjun.request.get("/api/family/state")).json()) as State).alerts.find((a) => a.kind === "urgent")!;
+  const hers = ((await (await meera.request.get("/api/family/state")).json()) as State).alerts.find((a) => a.kind === "urgent")!;
+  expect(mine.holdId).toBeTruthy();
+
+  // The app was in the background or closed: the tap opens a fresh page straight on the payment, not the home screen.
+  const tapped = await arjun.context().newPage();
+  await tapped.goto(`/open/${mine.id}`);
+  await tapped.waitForURL(`/family/hold/${mine.holdId}`);
+  await expect(tapped.getByText("Rs 80,000 paused")).toBeVisible();
+
+  // Someone else's alert never opens on this phone.
+  await tapped.goto(`/open/${hers.id}`);
+  await tapped.waitForURL("/family");
+
+  // A signed-out phone keeps the destination through the welcome and sign-in screens.
+  const fresh = await (await newContext(browser)).newPage();
+  await fresh.goto(`/open/${mine.id}`);
+  await fresh.waitForURL("/welcome");
+  await fresh.getByRole("button", { name: "Get started" }).click();
+  await fresh.getByRole("button", { name: "Continue as Arjun (demo)" }).click();
+  await fresh.waitForURL(`/family/hold/${mine.holdId}`, { timeout: 15_000 });
+  await expect(fresh.getByText("Rs 80,000 paused")).toBeVisible();
+
+  // Mr Rao's own phone has the Notifications setting, in his language.
+  await rao.goto("/settings");
+  await expect(rao.getByTestId("notify-row")).toContainText("Notifications");
+  await expect(rao.getByRole("switch", { name: "Notifications" })).toBeVisible();
 });
