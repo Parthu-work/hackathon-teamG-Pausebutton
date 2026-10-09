@@ -4,8 +4,13 @@ name: Publish APK to the website
 # public/pause-button.apk, so <site>/download serves it to anyone who scans the
 # QR code. Then waits for the site to redeploy and checks, from the outside,
 # that the health check, the download page, the QR and the APK all work.
-# Run it from the Actions tab after changing the app or the deployment address.
+# Runs by itself when android/ changes on main, and from the Actions tab
+# (e.g. after changing the deployment address). Its own commit only touches
+# public/, so it never triggers itself.
 on:
+  push:
+    branches: [main]
+    paths: ["android/**"]
   workflow_dispatch:
     inputs:
       host:
@@ -72,7 +77,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add public/pause-button.apk
-          if git commit -m "Publish the Android app for ${HOST%/}"; then git push; else echo "Unchanged APK: nothing to commit."; fi
+          if git commit -m "Publish the Android app for ${HOST%/}"; then
+            # main may have moved while the APK built; this commit only adds one file.
+            git pull --rebase --autostash origin main && git push origin HEAD:main
+          else
+            echo "Unchanged APK: nothing to commit."
+          fi
 
       - name: The site serves this APK (waits for the redeploy)
         run: |

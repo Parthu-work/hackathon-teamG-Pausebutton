@@ -1,0 +1,71 @@
+name: Uptime
+
+# Every hour, checks the live site from outside (scripts/check-site.sh): the
+# server and database, the download page and the APK. When a check fails it
+# opens one "The live site is down" issue (label site-down), so everyone
+# watching the repo hears about it; later failures comment on that issue, and
+# the first good check closes it.
+#
+# Hourly keeps it inside the free Actions minutes of a private repo (each run
+# bills a minute; every 15 minutes would use about 2,900 a month).
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+env:
+  HOST: ${{ vars.PB_HOST || 'https://hackathon-teamg-pausebutton-production.up.railway.app' }}
+
+jobs:
+  check:
+    name: Check the live site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+
+      - name: Check the live site
+        run: |
+          bash scripts/check-site.sh "$HOST" | tee report.md
+          status=${PIPESTATUS[0]}
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Open or update the "site is down" issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -s report.md ] || echo "The check could not run. See $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > report.md
+          printf '\n[This run](%s/%s/actions/runs/%s) · fix: Railway → the service → Deployments → logs.\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> report.md
+          gh label create site-down --repo "$GITHUB_REPOSITORY" --color B60205 \
+            --description "The live site failed its uptime check" 2>/dev/null || true
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --label site-down --state open --json number --jq '.[0].number // empty')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body-file report.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label site-down \
+              --title "The live site is down" --body-file report.md
+          fi
+
+      - name: Close the "site is down" issue
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --label site-down --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ -n "$open" ]; then
+            gh issue close "$open" --repo "$GITHUB_REPOSITORY" --reason completed \
+              --comment "Back up: every check passed at $(date -u '+%Y-%m-%d %H:%M UTC')."
+          fi
