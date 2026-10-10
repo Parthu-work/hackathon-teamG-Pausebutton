@@ -186,10 +186,9 @@ export async function removeDevice(db: Db, owner: User, id: string) {
 }
 
 /**
- * Digital Asset Links: tells Android that the app may open this site full
- * screen (no browser bar). Fingerprints come from the signing keys
- * (`ANDROID_CERT_SHA256`, comma-separated); without them the list is empty
- * and the app still works, just with Chrome's bar visible.
+ * Digital Asset Links for phones still on the 0.2 app (a Trusted Web Activity
+ * that opened the site in Chrome). The current app needs none. Fingerprints
+ * come from `ANDROID_CERT_SHA256` (comma-separated); without it the list is empty.
  */
 export function assetLinks() {
   const prints = (process.env.ANDROID_CERT_SHA256 ?? "")
