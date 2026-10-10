@@ -261,6 +261,8 @@ public class PairActivity extends Activity {
         root.addView(foot);
 
         ScrollView scroll = new ScrollView(this);
+        // Android 15+ draws every screen of this app edge to edge: keep clear of the status and navigation bars.
+        scroll.setFitsSystemWindows(true);
         scroll.addView(root);
         setContentView(scroll);
     }

@@ -62,6 +62,8 @@ public class ConsentActivity extends Activity {
         root.addView(button("Not now", false, this::finish));
 
         ScrollView scroll = new ScrollView(this);
+        // Android 15+ draws every screen of this app edge to edge: keep clear of the status and navigation bars.
+        scroll.setFitsSystemWindows(true);
         scroll.addView(root);
         setContentView(scroll);
     }

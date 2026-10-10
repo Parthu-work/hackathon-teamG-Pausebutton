@@ -35,7 +35,8 @@ public class MainActivity extends BridgeActivity {
     public void onPause() {
         super.onPause();
         // The sign-in cookie on disk now, so Block on a lock-screen notification works once the app is closed.
-        CookieManager.getInstance().flush();
+        // (No bridge: Android's WebView is missing or being updated, and CookieManager would throw.)
+        if (bridge != null) CookieManager.getInstance().flush();
     }
 
     private void openPage(Intent intent) {
