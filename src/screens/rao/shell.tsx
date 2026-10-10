@@ -4,6 +4,7 @@ import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-q
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { Icon } from "@/components/icons";
+import { NativeNotificationsProvider } from "@/components/native-notifications";
 import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
 import { bcp47, joinNamesIn, translator, type T } from "@/lib/i18n";
 import { api, ApiError, post } from "@/lib/client/api";
@@ -75,11 +76,26 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
   }, [lang]);
 
   // Alerts while the app is closed (a message the watcher caught, the family's
-  // decision): install the service worker now, and re-register this phone for
-  // him if it already has permission (endpoints and keys can change).
+  // decision): install the service worker now (the Android app needs none), and
+  // re-register this phone for him if it already has permission (endpoints,
+  // keys and FCM tokens can change).
   useEffect(() => {
     void registerServiceWorker().then(() => resyncPush("rao"));
   }, []);
+
+  // In the Android app: why we ask before Android's notification prompt, and what to do when they are off.
+  const notifications = useMemo(
+    () => ({
+      why: t("settings.notifyWhy"),
+      whySub: t("settings.notifyWhySub"),
+      continue: t("settings.notifyContinue"),
+      notNow: t("common.notNow"),
+      off: t("settings.notifyAppOff"),
+      offSub: t("settings.notifyAppOffSub"),
+      openSettings: t("settings.notifyOpenSettings"),
+    }),
+    [t],
+  );
 
   useEffect(() => {
     if (q.error instanceof ApiError && q.error.status === 401 && q.fetchStatus === "idle") router.replace("/welcome");
@@ -153,7 +169,7 @@ function RaoShellInner({ children }: { children: React.ReactNode }) {
           </>
         }
       >
-        {children}
+        <NativeNotificationsProvider app="rao" copy={notifications} wanted={q.data?.me.alertNotify ?? false}>{children}</NativeNotificationsProvider>
       </PhoneFrame>
     </RaoContext.Provider>
   );

@@ -1,25 +1,34 @@
+import { createSign } from "node:crypto";
 import { and, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import webpush, { WebPushError } from "web-push";
 import { z } from "zod";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { APP_UTC_OFFSET_MINUTES } from "@/lib/check/config";
+import { readServiceAccount, type ServiceAccount } from "./env";
 import { errorFields, log } from "./log";
 
-// Web Push: phones get a system notification (with vibration) even when the
-// app is closed. Needs VAPID keys in the environment (`pnpm push:keys`);
-// without them everything else works and this module just does nothing.
+// Push: phones get a system notification (with vibration) even when the app
+// is closed. Two push services, one code path:
+// - Web Push for browsers and the iPhone home-screen app. Needs the VAPID
+//   keys (`pnpm push:keys`).
+// - FCM (Firebase Cloud Messaging) for the Android app, which registers its
+//   FCM token instead (kind "fcm", endpoint "fcm:<token>"). Needs
+//   FCM_SERVICE_ACCOUNT. The message is data only: the app builds the
+//   notification itself, as the service worker does for Web Push.
+// Without either, everything else works and this module just does nothing.
 //
 // Every delivery is written to push_deliveries (sent / failed with the error /
 // gone), so a missing notification can be traced. A temporary failure from the
 // push service (429, 5xx, network) is retried once; a phone that unsubscribed
-// (404, 410) is forgotten; a person who turned Notifications off is skipped.
+// (404, 410, FCM's UNREGISTERED) is forgotten; a person who turned
+// Notifications off is skipped.
 //
 // Receipts: each phone's copy carries its delivery row's id, and the service
-// worker reports back once the notification is on screen (or why it could
-// not be shown). A push the service accepted that no phone ever confirms is
-// "silent": it is logged when that phone is next sent one, and counted in the
-// operators' delivery health (/api/ops/push-health).
+// worker (or the Android app) reports back once the notification is on screen
+// (or why it could not be shown). A push the service accepted that no phone
+// ever confirms is "silent": it is logged when that phone is next sent one,
+// and counted in the operators' delivery health (/api/ops/push-health).
 
 export type PushKind = "urgent" | "headsup" | "ask" | "message" | "outcome" | "test";
 
@@ -67,18 +76,25 @@ export const subscriptionSchema = z.object({
 });
 export type SubscriptionInput = z.infer<typeof subscriptionSchema>;
 
-export function pushEnabled() {
+/** Web Push (browsers, iPhone) is set up: both VAPID keys. */
+function webPushEnabled() {
   return !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
 }
 
+/** Push is set up for at least one kind of phone: callers use it to decide whether alerts can reach a closed app. */
+export function pushEnabled() {
+  return webPushEnabled() || fcmEnabled();
+}
+
+/** The VAPID public key browsers subscribe with; null without Web Push (FCM needs none). */
 export function pushPublicKey() {
-  return pushEnabled() ? process.env.VAPID_PUBLIC_KEY! : null;
+  return webPushEnabled() ? process.env.VAPID_PUBLIC_KEY! : null;
 }
 
 let configured = false;
 function configure() {
   if (configured) return true;
-  if (!pushEnabled()) return false;
+  if (!webPushEnabled()) return false;
   webpush.setVapidDetails(
     process.env.VAPID_SUBJECT ?? "mailto:pause-button@example.com",
     process.env.VAPID_PUBLIC_KEY!,
@@ -97,7 +113,25 @@ export async function saveSubscription(db: Db, userId: string, sub: Subscription
   if (previousEndpoint && previousEndpoint !== sub.endpoint) {
     await db.delete(schema.pushSubscriptions).where(eq(schema.pushSubscriptions.endpoint, previousEndpoint));
   }
-  const row = { userId, endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth, userAgent: userAgent ?? null };
+  const row = { userId, kind: "webpush" as const, endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth, userAgent: userAgent ?? null };
+  await db
+    .insert(schema.pushSubscriptions)
+    .values(row)
+    .onConflictDoUpdate({ target: schema.pushSubscriptions.endpoint, set: row });
+}
+
+const FCM_PREFIX = "fcm:";
+
+/** The Android app's FCM token as a push_subscriptions endpoint. */
+export const fcmEndpoint = (token: string) => `${FCM_PREFIX}${token}`;
+
+/**
+ * Registers (or re-registers) the Android app on one phone, by its FCM token.
+ * Like a browser's endpoint, the token is the key: a phone that a different
+ * person signs in on moves to them.
+ */
+export async function saveFcmToken(db: Db, userId: string, token: string, userAgent?: string | null) {
+  const row = { userId, kind: "fcm" as const, endpoint: fcmEndpoint(token), p256dh: "", auth: "", userAgent: userAgent ?? null };
   await db
     .insert(schema.pushSubscriptions)
     .values(row)
@@ -121,11 +155,13 @@ type Outcome = { status: "sent" | "failed" | "gone"; statusCode: number | null; 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** The push service's Retry-After (seconds), when it is short enough to wait for. */
-function retryAfterMs(error: unknown): number | null {
-  if (!(error instanceof WebPushError)) return null;
-  const header = (error.headers as Record<string, string | undefined> | undefined)?.["retry-after"];
+function retryAfterMs(header: string | null | undefined): number | null {
   const seconds = header ? Number(header) : NaN;
   return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds * 1000, MAX_RETRY_AFTER_MS) : null;
+}
+
+function webPushRetryAfter(error: unknown) {
+  return error instanceof WebPushError ? retryAfterMs((error.headers as Record<string, string | undefined> | undefined)?.["retry-after"]) : null;
 }
 
 async function deliver(
@@ -147,8 +183,142 @@ async function deliver(
       // Only a temporary problem (the service is busy, the network blinked) is worth one more try.
       const temporary = code === null || RETRY_STATUSES.has(code);
       if (!temporary || attempt === MAX_ATTEMPTS) break;
-      await sleep(retryAfterMs(error) ?? retryDelayMs);
+      await sleep(webPushRetryAfter(error) ?? retryDelayMs);
     }
+  }
+  return last;
+}
+
+// ---------------- FCM (the Android app) ----------------
+
+const FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
+const TOKEN_URL = "https://oauth2.googleapis.com/token";
+/** An access token is renewed this long before Google says it expires. */
+const TOKEN_EARLY_MS = 5 * 60_000;
+
+let account: { raw: string | undefined; parsed: ServiceAccount | null } | null = null;
+function serviceAccount() {
+  const raw = process.env.FCM_SERVICE_ACCOUNT;
+  if (!account || account.raw !== raw) account = { raw, parsed: readServiceAccount(raw) };
+  return account.parsed;
+}
+
+/** FCM is set up: the Firebase service account (FCM_SERVICE_ACCOUNT). */
+export function fcmEnabled() {
+  return !!serviceAccount();
+}
+
+/** A failed call to Google's token endpoint, with its HTTP status. */
+class GoogleAuthError extends Error {
+  constructor(message: string, readonly statusCode: number) {
+    super(message);
+  }
+}
+
+type AccessToken = { email: string; token: string; expiresAt: number };
+let accessToken: AccessToken | null = null;
+let exchanging: Promise<AccessToken> | null = null;
+
+/**
+ * An OAuth access token for FCM, from the service account: a JWT signed with
+ * its private key, exchanged at Google's token endpoint. Kept until five
+ * minutes before it expires; pushes sent at the same moment share one exchange.
+ */
+async function fcmAccessToken(sa: ServiceAccount): Promise<string> {
+  if (accessToken && accessToken.email === sa.client_email && accessToken.expiresAt - TOKEN_EARLY_MS > Date.now()) return accessToken.token;
+  exchanging ??= exchangeJwt(sa)
+    .then((t) => (accessToken = t))
+    .finally(() => (exchanging = null));
+  return (await exchanging).token;
+}
+
+async function exchangeJwt(sa: ServiceAccount): Promise<AccessToken> {
+  const iat = Math.floor(Date.now() / 1000);
+  const part = (v: object) => Buffer.from(JSON.stringify(v)).toString("base64url");
+  const unsigned = `${part({ alg: "RS256", typ: "JWT" })}.${part({ iss: sa.client_email, scope: FCM_SCOPE, aud: TOKEN_URL, iat, exp: iat + 3600 })}`;
+  const signature = createSign("RSA-SHA256").update(unsigned).sign(sa.private_key, "base64url");
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${unsigned}.${signature}` }),
+  });
+  const json = (await res.json().catch(() => ({}))) as { access_token?: unknown; expires_in?: unknown; error?: unknown };
+  if (!res.ok || typeof json.access_token !== "string") {
+    throw new GoogleAuthError(`oauth ${res.status}: ${typeof json.error === "string" ? json.error : "no access token"}`, res.status);
+  }
+  const seconds = Number(json.expires_in);
+  return { email: sa.client_email, token: json.access_token, expiresAt: Date.now() + (seconds > 0 ? seconds : 3600) * 1000 };
+}
+
+/**
+ * The FCM message for one phone: data only, every value a string (FCM's
+ * rule), so the app always builds the notification itself and can post the
+ * receipt. Urgent alerts go at high priority and expire sooner, as for Web Push.
+ */
+function fcmMessage(payload: PushPayload & { receipt: string }) {
+  const data: Record<string, string> = {
+    title: payload.title,
+    body: payload.body,
+    url: payload.url,
+    tag: payload.tag,
+    urgent: payload.urgent ? "1" : "0",
+    receipt: payload.receipt,
+  };
+  for (const key of ["kind", "alertId", "checkId", "holdId", "who", "at"] as const) {
+    const value = payload[key];
+    if (value) data[key] = value;
+  }
+  if (payload.actions?.length) data.actions = JSON.stringify(payload.actions);
+  return { data, android: { priority: payload.urgent ? "HIGH" : "NORMAL", ttl: payload.urgent ? "300s" : "3600s" } };
+}
+
+type FcmErrorBody = {
+  error?: { message?: string; status?: string; details?: { errorCode?: string; fieldViolations?: { field?: string }[] }[] };
+};
+
+/** FCM's own error code (UNREGISTERED, INVALID_ARGUMENT, …), and whether the error is about the token. */
+async function readFcmError(res: Response) {
+  const body = (await res.json().catch(() => ({}))) as FcmErrorBody;
+  const e = body.error ?? {};
+  const code = e.details?.find((d) => d.errorCode)?.errorCode ?? e.status ?? null;
+  const aboutToken = !!e.details?.some((d) => d.fieldViolations?.some((f) => f.field === "message.token")) || /registration token/i.test(e.message ?? "");
+  const text = [code, e.message].filter(Boolean).join(": ").slice(0, 200) || `HTTP ${res.status}`;
+  return { code, aboutToken, text };
+}
+
+/**
+ * Sends one message to one Android phone, by the same rules as Web Push: a
+ * token FCM no longer knows (404, UNREGISTERED, or INVALID_ARGUMENT about the
+ * token) is gone; 429, 5xx or no answer is retried once. A 401 also drops the
+ * cached access token and retries, signing in afresh.
+ */
+async function deliverFcm(sa: ServiceAccount, token: string, message: ReturnType<typeof fcmMessage>, retryDelayMs: number): Promise<Outcome> {
+  let last: Outcome = { status: "failed", statusCode: null, error: "not attempted", attempts: 0 };
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let wait: number | null = null;
+    try {
+      const res = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(sa.project_id)}/messages:send`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${await fcmAccessToken(sa)}`, "content-type": "application/json" },
+        body: JSON.stringify({ message: { token, ...message } }),
+      });
+      if (res.ok) return { status: "sent", statusCode: res.status, error: null, attempts: attempt };
+      const error = await readFcmError(res);
+      if (res.status === 404 || error.code === "UNREGISTERED" || (error.code === "INVALID_ARGUMENT" && error.aboutToken)) {
+        return { status: "gone", statusCode: res.status, error: error.text, attempts: attempt };
+      }
+      if (res.status === 401) accessToken = null;
+      last = { status: "failed", statusCode: res.status, error: error.text, attempts: attempt };
+      wait = retryAfterMs(res.headers.get("retry-after"));
+    } catch (error) {
+      // The network, or Google refused the service account (the token exchange).
+      const code = error instanceof GoogleAuthError ? error.statusCode : null;
+      last = { status: "failed", statusCode: code, error: error instanceof Error ? error.message : String(error), attempts: attempt };
+    }
+    const code = last.statusCode;
+    const temporary = code === null || code === 401 || RETRY_STATUSES.has(code);
+    if (!temporary || attempt === MAX_ATTEMPTS) break;
+    await sleep(wait ?? retryDelayMs);
   }
   return last;
 }
@@ -160,7 +330,9 @@ async function deliver(
  * how many were skipped because they already had this key.
  */
 export async function pushToUsers(db: Db, userIds: string[], payload: PushPayload, opts: PushOptions = {}): Promise<PushResult> {
-  if (!userIds.length || !configure()) return NONE;
+  const web = configure();
+  const fcm = serviceAccount();
+  if (!userIds.length || (!web && !fcm)) return NONE;
   try {
     let recipients = [...new Set(userIds)];
     if (!opts.force) {
@@ -169,7 +341,9 @@ export async function pushToUsers(db: Db, userIds: string[], payload: PushPayloa
     }
     if (!recipients.length) return NONE;
 
-    let rows = await db.query.pushSubscriptions.findMany({ where: inArray(schema.pushSubscriptions.userId, recipients) });
+    // Only the phones this server can reach: browsers need the VAPID keys, the Android app FCM.
+    const phones = await db.query.pushSubscriptions.findMany({ where: inArray(schema.pushSubscriptions.userId, recipients) });
+    let rows = phones.filter((r) => (r.kind === "fcm" ? !!fcm : web));
     if (!rows.length) return NONE;
 
     // Idempotent: a phone that already has this alert is not told twice.
@@ -193,14 +367,12 @@ export async function pushToUsers(db: Db, userIds: string[], payload: PushPayloa
     // Each phone's copy carries its own delivery id, for the receipt.
     const ids = rows.map(() => crypto.randomUUID());
     const options = { TTL: payload.urgent ? 300 : 3600, urgency: payload.urgent ? ("high" as const) : ("normal" as const) };
+    const retryDelayMs = opts.retryDelayMs ?? RETRY_DELAY_MS;
     const outcomes = await Promise.all(
       rows.map((r, i) =>
-        deliver(
-          { endpoint: r.endpoint, keys: { p256dh: r.p256dh, auth: r.auth } },
-          JSON.stringify({ ...payload, receipt: ids[i] }),
-          options,
-          opts.retryDelayMs ?? RETRY_DELAY_MS,
-        ),
+        r.kind === "fcm"
+          ? deliverFcm(fcm!, r.endpoint.slice(FCM_PREFIX.length), fcmMessage({ ...payload, receipt: ids[i] }), retryDelayMs)
+          : deliver({ endpoint: r.endpoint, keys: { p256dh: r.p256dh, auth: r.auth } }, JSON.stringify({ ...payload, receipt: ids[i] }), options, retryDelayMs),
       ),
     );
 
@@ -223,7 +395,9 @@ export async function pushToUsers(db: Db, userIds: string[], payload: PushPayloa
     const gone = rows.filter((_, i) => outcomes[i].status === "gone").map((r) => r.id);
     const alive = rows.filter((_, i) => outcomes[i].status === "sent").map((r) => r.id);
     const failed = outcomes.filter((o) => o.status === "failed");
-    for (const f of failed) log.warn("push_failed", { statusCode: f.statusCode ?? "network", attempts: f.attempts, error: f.error });
+    outcomes.forEach((o, i) => {
+      if (o.status === "failed") log.warn("push_failed", { service: rows[i].kind, statusCode: o.statusCode ?? "network", attempts: o.attempts, error: o.error });
+    });
     if (gone.length) await db.delete(schema.pushSubscriptions).where(inArray(schema.pushSubscriptions.id, gone));
     if (alive.length) await db.update(schema.pushSubscriptions).set({ lastUsedAt: new Date() }).where(inArray(schema.pushSubscriptions.id, alive));
     return { sent: alive.length, failed: failed.length, gone: gone.length, skipped };
@@ -239,10 +413,10 @@ export const SILENT_AFTER_MS = 2 * 60_000;
 const SILENT_STREAK = 2;
 
 /**
- * The service worker's report: the push arrived, and the notification is on
- * screen (or could not be shown, and why). The delivery id is the only
- * credential: it is random and only that phone was sent it. Only the first
- * receipt counts, and an unknown id changes nothing.
+ * The service worker's (or the Android app's) report: the push arrived, and
+ * the notification is on screen (or could not be shown, and why). The
+ * delivery id is the only credential: it is random and only that phone was
+ * sent it. Only the first receipt counts, and an unknown id changes nothing.
  */
 export async function recordReceipt(db: Db, deliveryId: string, shown: boolean, displayError?: string | null) {
   const now = new Date();
@@ -271,7 +445,8 @@ async function warnAboutSilentPhones(db: Db, endpoints: string[], now = Date.now
   for (const endpoint of endpoints) {
     const latest = recent.filter((d) => d.endpoint === endpoint).slice(0, SILENT_STREAK);
     if (latest.length === SILENT_STREAK && latest.every((d) => !d.receivedAt)) {
-      log.warn("push_silent_phone", { userId: latest[0].userId, unconfirmed: SILENT_STREAK, pushService: new URL(endpoint).host });
+      const pushService = endpoint.startsWith(FCM_PREFIX) ? "fcm" : new URL(endpoint).host;
+      log.warn("push_silent_phone", { userId: latest[0].userId, unconfirmed: SILENT_STREAK, pushService });
     }
   }
 }
@@ -310,7 +485,7 @@ export async function pushHealth(db: Db, days = 14, now = new Date()) {
   return { days: rows as PushHealthDay[], total, silentAfterMinutes: SILENT_AFTER_MS / 60_000, enabled: pushEnabled() };
 }
 
-/** "3 phones · last alert reached this phone at …": what the settings screens can show. */
+/** "3 phones · last alert reached this phone at …": what the settings screens can show. Counts browsers and the Android app alike. */
 export async function pushStatusFor(db: Db, userId: string) {
   const subs = await db.query.pushSubscriptions.findMany({ where: eq(schema.pushSubscriptions.userId, userId) });
   const last = subs.map((s) => s.lastUsedAt?.getTime() ?? 0).reduce((a, b) => Math.max(a, b), 0);
