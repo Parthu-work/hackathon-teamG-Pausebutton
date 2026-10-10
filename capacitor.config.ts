@@ -3,7 +3,8 @@ import type { CapacitorConfig } from "@capacitor/cli";
 // The Android app (android/) is a Capacitor shell around the hosted web app:
 // its WebView loads server.url, so Next's server routes and server components
 // keep working and nothing is bundled twice. webDir holds only a placeholder
-// page (capacitor/www), shown for a moment before the site loads.
+// page (capacitor/www): Capacitor needs one, but the WebView opens server.url
+// straight away.
 // PB_HOST: the deployed site. "pnpm cap:sync" copies it into the Android project,
 // and the Gradle build reads it from there (android/app/build.gradle), so the
 // WebView and the native code (message watcher, push) always use the same site.

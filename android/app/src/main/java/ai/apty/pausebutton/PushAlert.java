@@ -48,6 +48,12 @@ public final class PushAlert {
         }
     }
 
+    /**
+     * The longest page address the app opens: room for a whole shared message
+     * in English, well within what the server takes in one request line.
+     */
+    public static final int MAX_PATH = 8000;
+
     /** Ids go into paths (/family/hold/<holdId>): letters, digits, - and _ only. */
     private static final Pattern ID = Pattern.compile("[A-Za-z0-9_-]{1,80}");
 
@@ -108,7 +114,7 @@ public final class PushAlert {
      * ("//evil.example"), another scheme, the API, spaces or backslashes.
      */
     public static boolean isAppPath(String path) {
-        if (path == null || path.length() > 4000 || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/api/")) return false;
+        if (path == null || path.length() > MAX_PATH || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/api/")) return false;
         for (int i = 0; i < path.length(); i++) {
             char c = path.charAt(i);
             if (c <= ' ' || c >= 0x7f || c == '\\') return false;

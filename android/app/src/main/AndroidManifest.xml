@@ -25,19 +25,29 @@
         android:usesCleartextTraffic="${cleartext}"
         tools:replace="android:allowBackup,android:usesCleartextTraffic">
 
-        <!-- The app: the hosted site in a WebView (Capacitor), full screen, no browser bar. -->
+        <!-- The app: the hosted site in a WebView (Capacitor), full screen, no browser bar.
+             Not exported: only this app's own notifications and Share sheet open it on a page. -->
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
-            android:exported="true"
+            android:exported="false"
             android:label="@string/app_name"
             android:launchMode="singleTask"
-            android:theme="@style/AppTheme.NoActionBar">
+            android:theme="@style/AppTheme.NoActionBar" />
+
+        <!-- The launcher icon. It keeps the name of the 0.2 app's launcher (the Chrome-based
+             LauncherActivity, now gone), so a Pause Button icon already on the home screen
+             still opens the app after this version installs over that one. -->
+        <activity-alias
+            android:name=".LauncherActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <!-- F1 · "Forward to Pause": Pause Button in the Share sheet of WhatsApp, Messages and any text app. -->
         <activity

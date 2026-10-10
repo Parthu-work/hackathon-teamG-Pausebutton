@@ -4,14 +4,14 @@ An app around the web app: **Capacitor** shows the hosted site (`PB_HOST`) in a 
 
 | Native piece | What it does |
 |---|---|
-| **`MainActivity`** | The app (Capacitor's `BridgeActivity`). Loads the site from `capacitor.config.ts` (`server.url`). A notification or the Share sheet opens it on a page of that site (intent extra `pb_url`, a path such as `/open/<alertId>`; nothing else is ever loaded). Schedules the 30-minute sync when the phone is connected. |
+| **`MainActivity`** | The app (Capacitor's `BridgeActivity`). Loads the site from `capacitor.config.ts` (`server.url`). A notification or the Share sheet opens it on a page of that site (intent extra `pb_url`, a path such as `/open/<alertId>`; nothing else is ever loaded). Schedules the 30-minute sync when the phone is connected. The launcher icon is an alias that keeps the 0.2 app's name (`LauncherActivity`), so an icon already on the home screen still works after the update. |
 | **`PauseButtonNativePlugin`** | What the web app can ask of the phone (`registerPlugin("PauseButtonNative")`, wrapped in `src/lib/client/native.ts`): `pair`, `watcherStatus`, `openListenerSettings`, `openBatterySettings`, `disconnect`, `notificationStatus`, `requestNotifications`, `openNotificationSettings`, `pushAvailable`. The web app uses it on the Connect screen and wherever it asks for notifications. |
 | **`MessageWatcherService`** | The real version of the simulated inbox (screens M1–M4): once the person agreed and allowed notification access, it reads new SMS and WhatsApp notifications and hands them to the **`Watcher`**, which posts them to `POST /api/device/inbox` and gets them there through an outage or a restart. See "The message watcher in the real world". |
 | **`ConsentActivity`** | What is read, what leaves the phone and what is kept, before notification access is turned on. Until the person taps "I agree", the watcher reads nothing. |
 | **`SyncWorker`** | The safety net, every 30 minutes with a network, even with the app closed: sends what waits, fetches the person's watch settings, and tells the server the phone is alive. See "The 30-minute sync". |
 | **`PauseMessagingService`**, **`Alerts`**, **`NotificationActionReceiver`** | Push through Firebase Cloud Messaging, with the app closed too: shows each alert as a notification, with **Block payment** and **It's fine** on a paused payment (Block works from the lock screen), and confirms delivery to the server. See "Push". |
-| **`ShareActivity`** | F1 · Forward to Pause: "Pause Button" in the Share sheet of WhatsApp, Messages and any app that shares text. Opens the app on `/share`, which checks the text at once; the verdict says which app it came from. |
-| **`PairActivity`** | "Connect this phone" for a `pausebutton://pair?code=…&host=…` link opened outside the app (a browser, a QR). Inside the app, the web app's own Connect screen does the same through the plugin. |
+| **`ShareActivity`** | F1 · Forward to Pause: "Pause Button" in the Share sheet of WhatsApp, Messages and any app that shares text. Opens the app on `/share`, which checks the text at once; the verdict says which app it came from. A very long message is shortened to fit the page's address: an English one stays whole (up to the 4,000 letters the server checks), one in Hindi or Telugu keeps about its first 900 letters. |
+| **`PairActivity`** | "Connect this phone" for a `pausebutton://pair?code=…&host=…` link opened outside the app (a browser, a QR). Inside the app, the web app's own Connect screen does the same through the plugin. Anyone can send such a link, so it only fills in the code and the person taps Connect: it never replaces a connection, and the screen warns when the link names another server than the app's own site. |
 | **`BootReceiver`** | After a reboot or an update: asks Android to bind the watcher again and makes sure the sync is scheduled. |
 
 The plain-Java parts (`Outbox`, `Courier`, `Sync`, `SeenStore`, `RateGate`, `WatchRules`, `DayCounts`, `PushAlert`) hold the rules and are tested on the JVM.
@@ -90,7 +90,8 @@ It is scheduled when the phone is connected, after a reboot and whenever the app
 ```bash
 cd android
 ./gradlew testDebugUnitTest            # on the JVM (src/test): outbox, Idempotency-Key through retries and a restart,
-                                       # 202, the sync's order, dedup, retries, rate cap, contacts, push rules
+                                       # 202, the sync's order, dedup, retries, rate cap, contacts, push rules,
+                                       # the shared text's page, which pairing links name another server
 ./gradlew connectedDebugAndroidTest    # on a device or emulator (src/androidTest): dedup and the outbox across a restart,
                                        # the Idempotency-Key, pairing, removal on the web app, disconnect on the phone,
                                        # and the 30-minute sync through WorkManager's test driver
@@ -109,6 +110,7 @@ On the emulator:
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell cmd notification allow_listener ai.apty.pausebutton/.MessageWatcherService
+# fills in the code; then tap Connect (a build for another PB_HOST warns about this address):
 adb shell am start -a android.intent.action.VIEW -d "pausebutton://pair?code=XXXXXX&host=http://10.0.2.2:3000"
 # a fake incoming SMS (debug builds accept notifications from the shell):
 adb shell cmd notification post -S bigtext -t "+91 9XXXX XXXXX" demo "Sir this is CBI Mumbai. Stay on the call, tell no one, and transfer Rs 80,000."

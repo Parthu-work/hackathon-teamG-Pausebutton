@@ -62,17 +62,32 @@ public class PairActivity extends Activity {
         Watcher.get(this).kick();
     }
 
-    /** pausebutton://pair?code=ABC123&host=https://… from the web app. */
+    /**
+     * pausebutton://pair?code=ABC123&host=https://… from the web app: fills in
+     * the code (and the address), and the person taps Connect. Anyone can send
+     * such a link, so it never connects by itself, never replaces a connection,
+     * and says so when it names another server than this app's own site: a
+     * link in a scammer's message must not quietly send this phone's messages
+     * (OTPs included) to someone else.
+     */
     private void readLink(Intent intent) {
         Uri data = intent != null ? intent.getData() : null;
         if (data == null) return;
+        if (Prefs.token(this) != null) return; // already connected: "Disconnect this phone" first
         String code = data.getQueryParameter("code");
         String host = data.getQueryParameter("host");
         if (host != null && !host.isEmpty()) hostField.setText(host);
-        if (code != null && !code.isEmpty()) {
-            codeField.setText(code);
-            connect();
-        }
+        if (code != null && !code.isEmpty()) codeField.setText(code);
+        status.setText(knownHost(host, Prefs.site(), Prefs.host(this))
+                ? "Tap Connect to let Pause Button check this phone's messages."
+                : "This link is for " + host + ", not " + Prefs.site() + ". Tap Connect only if you trust it.");
+    }
+
+    /** A link's host is the app's own site or the person's earlier choice (no host: the address field keeps theirs). */
+    static boolean knownHost(String linkHost, String site, String chosen) {
+        if (linkHost == null || linkHost.trim().isEmpty()) return true;
+        String host = Prefs.trimSlash(linkHost.trim());
+        return host.equalsIgnoreCase(Prefs.trimSlash(site)) || host.equalsIgnoreCase(Prefs.trimSlash(chosen));
     }
 
     private void connect() {
