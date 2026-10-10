@@ -550,7 +550,7 @@ export const hi: Dict = {
     tapToRetry: "दोबारा जाँचने के लिए टैप करें",
     checking: "जाँच हो रही है…",
     retrying: "दोबारा जाँच हो रही है…",
-    retryFailed: "अभी भी जाँच नहीं हो पाई। हम 30 मिनट के अंदर फिर कोशिश करेंगे।",
+    retryFailed: "अभी भी जाँच नहीं हो पाई। थोड़ी देर बाद फिर कोशिश कीजिए, या संदेश चिपकाकर जाँचिए।",
     statusFailed: "जाँच नहीं हुई",
     statusChecking: "जाँच जारी",
     statusNotWatched: "नज़र नहीं",

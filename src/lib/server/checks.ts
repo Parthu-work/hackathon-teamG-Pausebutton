@@ -414,12 +414,13 @@ async function familyReach(db: Db, alertRows: Alert[], family: { familyId: strin
   const told = alertRows.filter((a) => family.some((f) => f.familyId === a.recipientId));
   const waiting = told.filter((a) => !a.openedAt && !a.handledAt && !a.deliveredAt);
   if (!waiting.length) return { unreachableNames: [], nobodyReached: false };
+  // Every push for the alert counts, the sync job's second one (key alert:<id>:repush) too.
   const deliveries = await db.query.pushDeliveries.findMany({
-    where: inArray(schema.pushDeliveries.key, waiting.map((a) => `alert:${a.id}`)),
+    where: inArray(schema.pushDeliveries.alertId, waiting.map((a) => a.id)),
   });
   const unreachable = new Set<string>();
   for (const a of waiting) {
-    const mine = deliveries.filter((d) => d.key === `alert:${a.id}` && d.userId === a.recipientId);
+    const mine = deliveries.filter((d) => d.alertId === a.id && d.userId === a.recipientId);
     const through = mine.some((d) => d.status === "sent" && !(d.receivedAt && !d.shownAt));
     if (through) continue;
     if (mine.length || (a.kind === "urgent" && now - a.createdAt.getTime() >= REACH_GRACE_MS)) unreachable.add(a.recipientId);

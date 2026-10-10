@@ -550,7 +550,7 @@ export const en = {
     tapToRetry: "Tap to check it again",
     checking: "Checking…",
     retrying: "Checking again…",
-    retryFailed: "Still could not check it. We will try again within 30 minutes.",
+    retryFailed: "Still could not check it. Try again in a while, or paste the message to check it.",
     statusFailed: "COULD NOT CHECK",
     statusChecking: "CHECKING",
     statusNotWatched: "NOT WATCHED",
