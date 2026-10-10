@@ -38,7 +38,9 @@ const NotificationsContext = createContext<Ctx | null>(null);
 
 // "Not now" holds until the app is next opened: no asking again on every screen.
 const NOT_NOW_KEY = "pb-notifications-not-now";
+let notNowHere = false;
 const saidNotNow = () => {
+  if (notNowHere) return true;
   try {
     return sessionStorage.getItem(NOT_NOW_KEY) === "1";
   } catch {
@@ -48,10 +50,11 @@ const saidNotNow = () => {
 const noStorage = () => false;
 let notNowListeners: (() => void)[] = [];
 function sayNotNow() {
+  notNowHere = true;
   try {
     sessionStorage.setItem(NOT_NOW_KEY, "1");
   } catch {
-    /* only this screen forgets */
+    /* remembered until the page reloads */
   }
   for (const fn of notNowListeners) fn();
 }
