@@ -1,11 +1,10 @@
 package ai.apty.pausebutton;
 
 import android.app.Activity;
-import android.content.Intent;
+import android.content.ActivityNotFoundException;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.util.TypedValue;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -53,10 +52,14 @@ public class ConsentActivity extends Activity {
             root.addView(text(s[1], 16, false, 0xFF14202B));
         }
         root.addView(text("Next, Android shows a warning that Pause Button can read all notifications. It looks only at SMS and WhatsApp.", 14, false, 0xFF55626E));
+        if (MessageWatcherService.mayBeRestricted(this)) {
+            root.addView(text("If the switch is greyed out or Android says “Restricted setting”: open Pause Button’s App info, tap ⋮ at the top right, "
+                    + "then “Allow restricted settings”, and switch it on again.", 14, false, 0xFF55626E));
+        }
 
         root.addView(button("I agree, allow notification access", true, () -> {
             Prefs.setConsent(this, System.currentTimeMillis());
-            startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+            openAccessSettings();
             finish();
         }));
         root.addView(button("Not now", false, this::finish));
@@ -66,6 +69,14 @@ public class ConsentActivity extends Activity {
         scroll.setFitsSystemWindows(true);
         scroll.addView(root);
         setContentView(scroll);
+    }
+
+    private void openAccessSettings() {
+        try {
+            startActivity(MessageWatcherService.accessSettings(this));
+        } catch (ActivityNotFoundException e) {
+            startActivity(MessageWatcherService.accessList());
+        }
     }
 
     private int dp(int v) {

@@ -17,6 +17,9 @@ import { useHelper, useRao } from "./shell";
 // Said on the consent screen, and again before Android's notification access settings.
 const WHAT_WE_READ = "The text of new SMS and WhatsApp messages that arrive on this phone, as they appear in your notifications.";
 const WHAT_WE_NEVER_DO = "Read old chats, send messages for you, or keep the text of a safe message or of one we do not check.";
+// Android 13+ locks notification access for an app installed from a downloaded APK.
+const RESTRICTED_STEPS =
+  "If the switch is greyed out or Android says “Restricted setting”: open Pause Button’s App info, tap ⋮ at the top right, then “Allow restricted settings”, and switch message reading on again.";
 
 /** M1 · consent, plus M4 · what to watch. */
 export function WatchScreen() {
@@ -300,6 +303,10 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
     setExplain(null);
     await (step === "reading" ? bridge.openListenerSettings() : bridge.openBatterySettings()).catch(() => {});
   }
+  // An app from before openAppInfo: its notification settings, whose page also leads to App info.
+  async function openAppInfo() {
+    await bridge.openAppInfo().catch(() => bridge.openNotificationSettings().catch(() => {}));
+  }
   async function disconnect() {
     setExplain(null);
     await bridge.disconnect().catch(() => {});
@@ -324,6 +331,8 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
   }
   if (!w) return <LoadingScreen />;
   const reading = w.consented && w.listenerOn;
+  // Unknown in apps from before it was reported: say it, worded as an "if".
+  const mayBeRestricted = w.mayBeRestricted ?? true;
 
   const overlay =
     (explain === "reading" && (
@@ -342,6 +351,7 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
           Then Android shows a list of apps: find Pause Button and switch it on. Android warns you when you do; that is normal for any app that reads
           notifications.
         </p>
+        {mayBeRestricted && <p className="sm">{RESTRICTED_STEPS}</p>}
         <button className="btn amber" onClick={() => void go("reading")} data-testid="reading-continue">Continue</button>
         <button className="btn line" onClick={() => setExplain(null)}>Not now</button>
       </Sheet>
@@ -413,6 +423,12 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
       {w.paired && !reading && cameBack && (
         <div className="card tint-amber" data-testid="cannot-read">
           <p className="p" style={{ fontSize: 16 }}>Pause Button can&apos;t check messages automatically. You can still paste or forward them.</p>
+          {w.consented && mayBeRestricted && (
+            <>
+              <p className="sm" style={{ color: "var(--text)" }}>{RESTRICTED_STEPS}</p>
+              <button className="btn line sm-btn" onClick={() => void openAppInfo()} data-testid="open-app-info">Open App info</button>
+            </>
+          )}
         </div>
       )}
 

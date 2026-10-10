@@ -1,6 +1,7 @@
 package ai.apty.pausebutton;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -121,10 +122,17 @@ public class PairActivity extends Activity {
         Watcher.get(this).reportStatus(Watcher.listenerEnabled(this));
     }
 
-    /** Agreeing comes first; after that this opens Android's notification access settings. */
+    /** Agreeing comes first; after that this opens Android's notification access switch for Pause Button. */
     private void allowAccess() {
-        if (!Prefs.consented(this)) startActivity(new Intent(this, ConsentActivity.class));
-        else startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+        if (!Prefs.consented(this)) {
+            startActivity(new Intent(this, ConsentActivity.class));
+            return;
+        }
+        try {
+            startActivity(MessageWatcherService.accessSettings(this));
+        } catch (ActivityNotFoundException e) {
+            startActivity(MessageWatcherService.accessList());
+        }
     }
 
     private void refresh() {

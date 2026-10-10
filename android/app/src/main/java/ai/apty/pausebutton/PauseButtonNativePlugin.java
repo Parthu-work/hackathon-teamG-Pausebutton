@@ -90,6 +90,7 @@ public class PauseButtonNativePlugin extends Plugin {
         r.put("consented", Prefs.consented(getContext()));
         r.put("listenerOn", Watcher.listenerEnabled(getContext()));
         r.put("batteryUnrestricted", Watcher.batteryUnrestricted(getContext()));
+        r.put("mayBeRestricted", MessageWatcherService.mayBeRestricted(getContext()));
         r.put("waiting", waiting);
         r.put("lastError", orNull(Prefs.lastError(getContext())));
         r.put("lastDeliveredAt", lastDeliveredAt > 0 ? (Object) lastDeliveredAt : JSONObject.NULL);
@@ -101,7 +102,14 @@ public class PauseButtonNativePlugin extends Plugin {
     @PluginMethod
     public void openListenerSettings(PluginCall call) {
         if (!Prefs.consented(getContext())) start(new Intent(getContext(), ConsentActivity.class), null);
-        else start(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS), null);
+        else start(MessageWatcherService.accessSettings(getContext()), MessageWatcherService.accessList());
+        call.resolve();
+    }
+
+    /** The app's App info page: where Android 13+ hides ⋮ › Allow restricted settings for an app installed from an APK. */
+    @PluginMethod
+    public void openAppInfo(PluginCall call) {
+        start(MessageWatcherService.appInfo(getContext()), new Intent(Settings.ACTION_SETTINGS));
         call.resolve();
     }
 
