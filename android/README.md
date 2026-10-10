@@ -92,7 +92,7 @@ cd android
 ./gradlew testDebugUnitTest            # on the JVM (src/test): outbox, Idempotency-Key through retries and a restart,
                                        # 202, the sync's order, dedup, retries, rate cap, contacts, push rules,
                                        # the shared text's page, which pairing links name another server
-./gradlew connectedDebugAndroidTest    # on a device or emulator (src/androidTest): dedup and the outbox across a restart,
+./gradlew :app:connectedDebugAndroidTest    # on a device or emulator (src/androidTest): dedup and the outbox across a restart,
                                        # the Idempotency-Key, pairing, removal on the web app, disconnect on the phone,
                                        # and the 30-minute sync through WorkManager's test driver
 ```

@@ -147,6 +147,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Instrumentation tests on an Android 14 emulator
+        # :app only: Capacitor's library modules have no device tests, and the Cordova shim's test classpath carries a duplicate kotlin-stdlib.
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -155,7 +156,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: android
-          script: chmod +x gradlew && ./gradlew --no-daemon connectedDebugAndroidTest
+          script: chmod +x gradlew && ./gradlew --no-daemon :app:connectedDebugAndroidTest
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
