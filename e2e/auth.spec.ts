@@ -166,3 +166,26 @@ test("family invited by name: the name is filled in, the family home greets them
   await page.goto("/welcome");
   await page.waitForURL("/family");
 });
+
+test("invites: Mr Rao can start before anyone joins, and copies an invite that says where to go", async ({ browser }) => {
+  const context = await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] });
+  await ownNetwork(context);
+  await signUpByApi(context, newNumber(), "protected", "Ramesh Rao");
+  const invited = await context.request.post("/api/me/people", { data: { name: "Kiran", relation: "Son", phone: newNumber() } });
+  expect(invited.ok(), await invited.text()).toBeTruthy();
+  const { inviteCode } = (await invited.json()) as { inviteCode: string };
+
+  const page = await context.newPage();
+  await page.goto("/setup/invites");
+  await page.getByRole("button", { name: "Copy invite" }).click();
+  await expect(page.getByText("Invite copied")).toBeVisible();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain(inviteCode);
+  expect(copied).toContain(new URL(page.url()).origin);
+
+  // Kiran has not joined yet: starting is still allowed.
+  await expect(page.getByText("Your people get alerts once they join.")).toBeVisible();
+  await page.getByRole("button", { name: "Start checking messages" }).click();
+  await page.waitForURL("/");
+  await context.close();
+});
