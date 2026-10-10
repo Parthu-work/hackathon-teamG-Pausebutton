@@ -3,7 +3,8 @@ import { defineConfig, devices } from "@playwright/test";
 // Three-phone end-to-end test (Mr Rao, Arjun, Meera) against a fresh in-memory database.
 //   pnpm e2e          headless (CI); run `pnpm build` first
 //   pnpm e2e:headed   builds, then opens the three phones as visible windows, slowed down
-const PORT = 3300;
+// E2E_PORT: run two suites side by side (each starts its own server).
+const PORT = Number(process.env.E2E_PORT ?? 3300);
 const HEADED = !!process.env.HEADED;
 
 export default defineConfig({
