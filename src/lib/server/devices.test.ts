@@ -77,6 +77,27 @@ describe("the Android message watcher", () => {
     await db.update(schema.users).set({ watchWhatsapp: true, unknownOnly: true }).where(eq(schema.users.id, rao.id));
   });
 
+  it("a message the phone posts twice under one id is checked and counted once; its 30-minute sync reports in", async () => {
+    const rao = (await personaUser(db, "rao"))!;
+    const pairing = await createPairing(db, rao, "https://pause.example.com");
+    const { token } = await pairDevice(db, pairing.code, "Pixel 9");
+    const { device, user } = await deviceByToken(db, `Bearer ${token}`);
+    const msg = { channel: "sms" as const, sender: "VM-COURIER", fromContact: false, text: examples.find((e) => e.id === "courier")!.text };
+    const key = "2f6c1c9e-4b1a-4d2e-9f00-5a1b2c3d4e5f";
+    const first = await deviceInbox(db, device, user, msg, key);
+    const again = await deviceInbox(db, device, user, msg, key);
+    expect(first).toMatchObject({ status: "checked", duplicate: false });
+    expect(again).toEqual({ ...first, duplicate: true });
+    const mine = () => listDevices(db, rao).then((ds) => ds.find((d) => d.name === "Pixel 9")!);
+    expect((await mine()).messagesSeen).toBe(1);
+
+    expect((await mine()).lastSyncAt).toBeNull();
+    const synced = await setDeviceStatus(db, device, { listenerOn: true, waiting: 4, sync: true });
+    expect(synced).toMatchObject({ listenerOn: true, waiting: 4 });
+    expect(await mine()).toMatchObject({ listenerOn: true, waiting: 4, lastSyncAt: expect.any(String), notSyncing: false });
+    await removeDevice(db, rao, (await mine()).id);
+  });
+
   it("an expired code cannot pair", async () => {
     const rao = (await personaUser(db, "rao"))!;
     const pairing = await createPairing(db, rao, "https://pause.example.com");

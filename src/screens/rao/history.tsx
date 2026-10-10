@@ -313,7 +313,7 @@ export function PrivacyScreen() {
   }
 
   // Every line here is in docs/retention.md: change both together.
-  const keep = [t("privacy.keep1"), t("privacy.keep2"), t("privacy.keep3", { helper }), t("privacy.keep4", { helper }), t("privacy.keep5")];
+  const keep = [t("privacy.keep1"), t("privacy.keep2"), t("privacy.keep3", { helper }), t("privacy.keep4", { helper }), t("privacy.keep5"), t("privacy.keep6")];
   const never = [t("privacy.never1", { helper }), t("privacy.never2"), t("privacy.never3")];
   return (
     <Screen

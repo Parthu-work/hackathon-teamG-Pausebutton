@@ -25,6 +25,7 @@ import { campaignFor, forgetSightings, recordSighting } from "./sightings";
 
 type User = typeof schema.users.$inferSelect;
 type Check = typeof schema.checks.$inferSelect;
+type Alert = typeof schema.alerts.$inferSelect;
 
 /** Sources where the person brought the message to us (as against a detected one): they get the hold and the urgent alert. */
 export const DIRECT_SOURCES: CheckSource[] = ["paste", "share", "voice", "call"];
@@ -70,6 +71,23 @@ export type NewCheck = {
   title?: string | null;
 };
 
+export type StoreOptions = {
+  /**
+   * Runs in the same transaction as the insert: the watcher's inbox row is
+   * marked checked with it, so a retry can never store a second check for
+   * one message. Such a check is done for good once stored: a sighting, log
+   * line, alert or push that fails after it is logged and never fails the caller.
+   */
+  onStored?: (tx: Db, checkId: string) => Promise<void>;
+};
+
+/** What a log line or an inbox row may say about an error: its code or name, never its message (that can quote the text). */
+export function failureCode(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+  const code = (error as Error & { code?: unknown }).code;
+  return typeof code === "string" || typeof code === "number" ? String(code) : error.name;
+}
+
 /**
  * Runs the check, stores the result (the text only for a scam or suspicious
  * message, for 24 hours: see sharedText) and does what
@@ -81,11 +99,13 @@ export type NewCheck = {
  *  - detected SCAM (simulated inbox, Android watcher): a quiet heads-up, if
  *    Mr Rao turned on "Tell Arjun automatically"; the hold starts if he then
  *    tries to pay.
+ * Family is told automatically about a SCAM only: a suspicious or safe
+ * message reaches them when Mr Rao asks (askFamily).
  */
-export async function createCheck(db: Db, owner: User, input: NewCheck) {
+export async function createCheck(db: Db, owner: User, input: NewCheck, opts: StoreOptions = {}) {
   const text = input.text.slice(0, MAX_MESSAGE_CHARS);
   const result = await checkMessage(text, { blockedDomains: await liveBlockedDomains(db) });
-  return storeCheck(db, owner, input, result, text);
+  return storeCheck(db, owner, input, result, text, opts);
 }
 
 /** Stores a result (from checkMessage or the live-call guard) and sends what it calls for. */
@@ -95,47 +115,65 @@ export async function storeCheck(
   input: NewCheck & { callAnswers?: CallAnswers | null },
   result: CheckResult,
   text: string,
+  opts: StoreOptions = {},
 ) {
   await purgeSharedText(db);
   const normalized = normalizeForMatch(input.text).text;
   const print = fingerprint(normalized);
-  const [check] = await db
-    .insert(schema.checks)
-    .values({
-      userId: owner.id,
-      source: input.source,
-      senderLabel: input.senderLabel ?? null,
-      title: input.title || defaultTitle(result, normalized),
-      fingerprint: print,
-      verdict: result.verdict,
-      score: result.score,
-      rulesScore: result.rulesScore,
-      modelScore: result.modelScore,
-      hardRule: result.hardRule,
-      decidedBy: result.decidedBy,
-      signals: result.signals,
-      hardPhrases: result.hardPhrases,
-      link: result.link,
-      family: result.family,
-      amount: result.amount?.value ?? null,
-      amountText: result.amount?.text ?? null,
-      payee: result.payee,
-      modelTerms: result.modelTerms,
-      aiStatus: result.ai.status,
-      aiModel: result.ai.model ?? null,
-      aiScamType: result.ai.family ?? null,
-      novel: result.novel,
-      callAnswers: input.callAnswers ?? null,
-      degraded: result.degraded,
-      safeHint: result.verdict === "SAFE" && /debited|credited|a\/c|avl bal|account ending/.test(normalized) ? "bank" : null,
-      // Family members who are alerted read the exact message (24 h). Safe messages are not kept.
-      messageText: result.verdict === "SAFE" ? null : text,
-    })
-    .returning();
+  const values: typeof schema.checks.$inferInsert = {
+    userId: owner.id,
+    source: input.source,
+    senderLabel: input.senderLabel ?? null,
+    title: input.title || defaultTitle(result, normalized),
+    fingerprint: print,
+    verdict: result.verdict,
+    score: result.score,
+    rulesScore: result.rulesScore,
+    modelScore: result.modelScore,
+    hardRule: result.hardRule,
+    decidedBy: result.decidedBy,
+    signals: result.signals,
+    hardPhrases: result.hardPhrases,
+    link: result.link,
+    family: result.family,
+    amount: result.amount?.value ?? null,
+    amountText: result.amount?.text ?? null,
+    payee: result.payee,
+    modelTerms: result.modelTerms,
+    aiStatus: result.ai.status,
+    aiModel: result.ai.model ?? null,
+    aiScamType: result.ai.family ?? null,
+    novel: result.novel,
+    callAnswers: input.callAnswers ?? null,
+    degraded: result.degraded,
+    safeHint: result.verdict === "SAFE" && /debited|credited|a\/c|avl bal|account ending/.test(normalized) ? "bank" : null,
+    // Family members who are alerted read the exact message (24 h). Safe messages are not kept.
+    messageText: result.verdict === "SAFE" ? null : text,
+  };
+  const { onStored } = opts;
+  const [check] = onStored
+    ? await db.transaction(async (tx) => {
+        const rows = await tx.insert(schema.checks).values(values).returning();
+        await onStored(tx, rows[0].id);
+        return rows;
+      })
+    : await db.insert(schema.checks).values(values).returning();
+
+  // A check stored with onStored is done for good: what follows can only fail into the log.
+  const after = async (step: string, fn: () => Promise<unknown>) => {
+    if (!onStored) return void (await fn());
+    try {
+      await fn();
+    } catch (error) {
+      log.error("check_followup_failed", { checkId: check.id, step, error: failureCode(error) });
+    }
+  };
 
   // Campaign radar: the fingerprint, never the words (F3). Safe messages are not counted.
   if (result.verdict !== "SAFE" && input.source !== "call") {
-    await recordSighting(db, { fingerprint: print, householdKey: owner.id, family: result.family, title: check.title, domain: result.link?.domain ?? null });
+    await after("sighting", () =>
+      recordSighting(db, { fingerprint: print, householdKey: owner.id, family: result.family, title: check.title, domain: result.link?.domain ?? null }),
+    );
   }
 
   const how = result.hardRule ? `hard rule ${result.hardRule}` : `${result.score}%`;
@@ -145,12 +183,12 @@ export async function storeCheck(
     : input.source === "voice" ? "spoken"
     : input.source === "call" ? "live-call guard"
     : `${input.source.toUpperCase()} from ${input.senderLabel}`;
-  await logEvent(db, owner.id, "Check service", "verdict", `Verdict ${result.verdict} (${how}) · ${from}${result.novel ? " · new trick" : ""}`);
+  await after("event", () => logEvent(db, owner.id, "Check service", "verdict", `Verdict ${result.verdict} (${how}) · ${from}${result.novel ? " · new trick" : ""}`));
 
   let holdId: string | null = null;
   if (result.verdict === "SCAM") {
-    const family = await linkedFamily(db, owner.id);
     if (DIRECT_SOURCES.includes(input.source)) {
+      const family = await linkedFamily(db, owner.id);
       if (check.amount) {
         const hold = await createHold(db, check, owner);
         holdId = hold.id;
@@ -159,14 +197,49 @@ export async function storeCheck(
       }
       await sendAlerts(db, owner, check, family.map((f) => f.familyId), "urgent", holdId);
     } else if (owner.autoTellFamily) {
-      const recipients = family.filter((f) => f.earlyHeadsUp).map((f) => f.familyId);
-      await sendAlerts(db, owner, check, recipients, "headsup", null);
+      await after("alerts", async () => {
+        const family = await linkedFamily(db, owner.id);
+        const recipients = family.filter((f) => f.earlyHeadsUp).map((f) => f.familyId);
+        await sendAlerts(db, owner, check, recipients, "headsup", null);
+      });
     }
   }
   // A message that arrived on his phone (Android watcher, simulated inbox) while
   // the app may be closed: his own phone gets "Possible scam from …" (SAFE: nothing).
-  if (input.source === "sms" || input.source === "whatsapp") await notifyOwnerOfMessage(db, owner, check);
+  if (input.source === "sms" || input.source === "whatsapp") await after("notify_owner", () => notifyOwnerOfMessage(db, owner, check));
   return { checkId: check.id, holdId, verdict: check.verdict };
+}
+
+/**
+ * The push for one family alert: what sendAlerts sends, and what the sync job
+ * sends once more when no phone confirmed it. A tap lands on /open/<alertId>,
+ * which opens the paused payment or the message.
+ */
+export function alertPush(owner: User, check: Check, alert: Alert, relation: string | null | undefined): PushPayload {
+  const who = callNameOf(owner, relation);
+  const phrases = keyPhrases(check.signals, check.link, check.hardPhrases, 2).map((p) => `“${p}”`).join(" ");
+  const text =
+    alert.kind === "urgent"
+      ? check.source === "call"
+        ? { title: `${who} is on a scam call`, body: `A caller is pressuring ${who} right now. Call ${who} and tell them to hang up.`, urgent: true }
+        : { title: `${who} needs you now`, body: `${who} got a scam message${check.amount ? ` asking for ${rupees(check.amount)}` : ""}. Nothing is paid. Tell ${who} what to do.`, urgent: true }
+      : alert.kind === "headsup"
+        ? { title: `Heads-up: ${who} got a ${check.verdict === "SCAM" ? "scam" : "suspicious"} message`, body: `${phrases || check.title}. ${who} has not tried to pay.`, urgent: false }
+        : { title: `${who} is asking: is this message safe?`, body: phrases || check.title, urgent: false };
+  // F2: a paused payment can be blocked from the lock screen, without unlocking the phone.
+  const actions: PushPayload["actions"] = alert.holdId ? [{ action: "block", title: "Block payment" }, { action: "fine", title: "It's fine" }] : undefined;
+  return {
+    ...text,
+    url: `/open/${alert.id}`,
+    tag: `alert-${alert.id}`,
+    kind: alert.kind,
+    alertId: alert.id,
+    checkId: check.id,
+    holdId: alert.holdId,
+    actions,
+    who,
+    at: alert.createdAt.toISOString(),
+  };
 }
 
 async function sendAlerts(
@@ -183,30 +256,16 @@ async function sendAlerts(
   const what = kind === "urgent" ? "Urgent alert" : kind === "headsup" ? "Quiet heads-up" : "“Ask” request";
   await logEvent(db, owner.id, "Check service", "alert", `${what} sent to ${joinNames(names)}`, holdId);
 
-  // Push notifications reach the family phones even when the app is closed. A
-  // tap lands on /open/<alertId>, which opens the paused payment or the message.
+  // Push notifications reach the family phones even when the app is closed.
   const family = await linkedFamily(db, owner.id);
-  const phrases = keyPhrases(check.signals, check.link, check.hardPhrases, 2).map((p) => `“${p}”`).join(" ");
   const sent = await Promise.all(
-    rows.map((a) => {
-      const who = callNameOf(owner, family.find((f) => f.familyId === a.recipientId)?.relation);
-      const text =
-        kind === "urgent"
-          ? check.source === "call"
-            ? { title: `${who} is on a scam call`, body: `A caller is pressuring ${who} right now. Call ${who} and tell them to hang up.`, urgent: true }
-            : { title: `${who} needs you now`, body: `${who} got a scam message${check.amount ? ` asking for ${rupees(check.amount)}` : ""}. Nothing is paid. Tell ${who} what to do.`, urgent: true }
-          : kind === "headsup"
-            ? { title: `Heads-up: ${who} got a ${check.verdict === "SCAM" ? "scam" : "suspicious"} message`, body: `${phrases || check.title}. ${who} has not tried to pay.`, urgent: false }
-            : { title: `${who} is asking: is this message safe?`, body: phrases || check.title, urgent: false };
-      // F2: a paused payment can be blocked from the lock screen, without unlocking the phone.
-      const actions: PushPayload["actions"] = holdId ? [{ action: "block", title: "Block payment" }, { action: "fine", title: "It's fine" }] : undefined;
-      return pushToUsers(
-        db,
-        [a.recipientId],
-        { ...text, url: `/open/${a.id}`, tag: `alert-${a.id}`, kind, alertId: a.id, checkId: check.id, holdId, actions, who, at: a.createdAt.toISOString() },
-        { key: `alert:${a.id}`, alertId: a.id, checkId: check.id },
-      );
-    }),
+    rows.map((a) =>
+      pushToUsers(db, [a.recipientId], alertPush(owner, check, a, family.find((f) => f.familyId === a.recipientId)?.relation), {
+        key: `alert:${a.id}`,
+        alertId: a.id,
+        checkId: check.id,
+      }),
+    ),
   );
   const total = sent.reduce<PushResult>((acc, r) => ({ sent: acc.sent + r.sent, failed: acc.failed + r.failed, gone: acc.gone + r.gone, skipped: acc.skipped + r.skipped }), { sent: 0, failed: 0, gone: 0, skipped: 0 });
   await logPush(db, owner.id, total, holdId);
@@ -289,19 +348,29 @@ export function sharedText(check: Check): string | null {
 /**
  * Deletes message text older than 24 hours. Runs before every check and from
  * the hourly purge (retention.ts); the read gate in sharedText covers the gap
- * between runs. Real inbox rows never keep text: any left from before is cleared.
+ * between runs. A real inbox row keeps its text only while it waits for its
+ * check (received, or failed and due another try) and for 24 hours at most:
+ * then the text goes and the row stays "could not check", with nothing left
+ * to try again. Any other text on a real inbox row is cleared at once.
  */
 export async function purgeSharedText(db: Db, now = new Date()) {
+  const cutoff = new Date(now.getTime() - SHARE_TEXT_HOURS * 3600_000);
   const checks = await db
     .update(schema.checks)
     .set({ messageText: null })
-    .where(and(isNotNull(schema.checks.messageText), lt(schema.checks.createdAt, new Date(now.getTime() - SHARE_TEXT_HOURS * 3600_000))))
+    .where(and(isNotNull(schema.checks.messageText), lt(schema.checks.createdAt, cutoff)))
     .returning({ id: schema.checks.id });
+  const m = schema.simMessages;
+  // A check that never finished in 24 hours (the server stopped mid-check, and no sync ran) failed.
+  await db
+    .update(m)
+    .set({ status: "failed", error: "expired" })
+    .where(and(eq(m.synthetic, false), eq(m.status, "received"), lt(m.createdAt, cutoff)));
   const inbox = await db
-    .update(schema.simMessages)
+    .update(m)
     .set({ text: null })
-    .where(and(isNotNull(schema.simMessages.text), eq(schema.simMessages.synthetic, false)))
-    .returning({ id: schema.simMessages.id });
+    .where(and(isNotNull(m.text), eq(m.synthetic, false), or(notInArray(m.status, ["received", "failed"]), lt(m.createdAt, cutoff))))
+    .returning({ id: m.id });
   return { checkText: checks.length, inboxText: inbox.length };
 }
 
@@ -325,8 +394,6 @@ async function ownCheck(db: Db, owner: User, checkId: string) {
   if (!check) throw new HttpError(404, "That check was not found.");
   return check;
 }
-
-type Alert = typeof schema.alerts.$inferSelect;
 
 /** How long an urgent alert may wait for a phone that has no push before Mr Rao is told. */
 export const REACH_GRACE_MS = 30_000;
