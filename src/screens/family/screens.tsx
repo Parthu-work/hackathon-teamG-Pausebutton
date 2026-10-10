@@ -662,7 +662,7 @@ export function FamilyHoldScreen() {
 
   return (
     <Screen overlay={confirm && <ApproveSheet hold={hold} callName={callName} onKeep={() => setConfirm(false)} onApprove={() => decide.mutate("approve")} others={others} />}>
-      <TitleRow title={`${callName}'s payment`} back="/family" right={<span className="pill medium ink">{clock.label}</span>} />
+      <TitleRow title={`${callName}'s payment`} back="/family" right={<span className="pill medium ink">{clock.label} left</span>} />
       <div className="row"><VerdictPill verdict={hold.verdict} size="medium" icon={false} /><span style={{ fontWeight: 800, fontSize: 18 }}>{amount} paused</span></div>
       {hold.twoKeys && (
         <div className="card" style={{ border: "2px solid var(--text)", gap: 6 }} data-testid="two-keys">

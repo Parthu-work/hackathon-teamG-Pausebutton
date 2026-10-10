@@ -215,6 +215,12 @@ describe("two keys above Rs 50,000", () => {
     const both = await decideHold(db, meera, hold.id, "approve", true);
     expect(both.status).toBe("approved");
     expect(both.approvedBy).toEqual(["Arjun", "Meera"]);
+
+    // The next one: a single Block stops it, without waiting for anyone else.
+    const next = await cbiHold(await fresh(rao.id));
+    expect(lengthOf(next)).toBe(5 * MINUTE);
+    const blocked = await decideHold(db, meera, next.id, "block", false);
+    expect(blocked).toMatchObject({ status: "blocked", twoKeys: true });
   });
 
   it("a small payment has the same timer and no two-key card", async () => {

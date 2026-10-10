@@ -518,7 +518,6 @@ export const en = {
     notInContacts: "not in your contacts",
     forwardHint: "Long-press a message, tap Share, choose Pause Button.",
     forwardedFrom: "Forwarded from {app}",
-    pausedFor: "{amount} is paused for {n} minutes. Sent automatically at {time}.",
   },
   speak: {
     title: "Tell me what they said",

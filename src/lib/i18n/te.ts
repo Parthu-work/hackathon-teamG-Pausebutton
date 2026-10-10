@@ -518,7 +518,6 @@ export const te: Dict = {
     notInContacts: "మీ కాంటాక్ట్‌లలో లేరు",
     forwardHint: "మెసేజ్‌ని నొక్కి పట్టుకుని, Share నొక్కి, Pause Button ఎంచుకోండి.",
     forwardedFrom: "{app} నుంచి ఫార్వర్డ్",
-    pausedFor: "{amount} {n} నిమిషాలు ఆపాం. {time}కి దానంతట అదే పంపాం.",
   },
   speak: {
     title: "వాళ్ళు ఏం చెప్పారో నాకు చెప్పండి",

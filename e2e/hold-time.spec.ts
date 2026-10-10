@@ -88,6 +88,9 @@ test("Arjun sets Papa's hold time to 30 minutes; Papa's next hold is 30 minutes"
   // Arjun's phone counts down the same 30 minutes.
   await arjun.goto(`/family/hold/${holdId}`);
   await expect(arjun.getByRole("heading", { name: "Papa's payment" })).toBeVisible();
-  await expect(arjun.getByText(/^(30:00|29:\d\d)$/)).toBeVisible();
+  const left = arjun.getByText(/^\d\d:\d\d left$/);
+  await expect(left).toHaveText(/^(30:00|29:\d\d) left$/);
+  const first = seconds((await left.innerText()).replace(" left", ""));
+  await expect.poll(async () => seconds((await left.innerText()).replace(" left", "")), { timeout: 5_000 }).toBeLessThan(first);
   await expect(arjun.getByTestId("two-keys")).toContainText("we hold for 30 minutes");
 });
