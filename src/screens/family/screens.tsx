@@ -316,7 +316,8 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
 
   return (
     <Screen tabs={<FamilyTabs active="home" callName={label} />}>
-      <Greeting name={me} />
+      {/* The greeting tops the home; one person's page opened from the list starts with its Back button. */}
+      {!back && <Greeting name={me} />}
       <div className="row">
         {back && <BackButton href="/family" />}
         <Avatar name={p.name} />

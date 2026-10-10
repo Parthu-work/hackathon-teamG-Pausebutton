@@ -222,7 +222,8 @@ export function SignInScreen() {
             </div>
             {!expiry.expired && <p className="sm" style={{ marginTop: 6 }} data-testid="code-expiry">The code works for {expiry.label} more.</p>}
           </div>
-          <ErrorRow error={expiry.expired ? "That code has expired. Tap Resend." : error} />
+          {/* A Resend that failed (e.g. too many requests) says why, even once the code has expired. */}
+          <ErrorRow error={expiry.expired && !send.isError ? "That code has expired. Tap Resend." : error} />
           <button className="btn ink" type="submit" disabled={busy || !complete || expiry.expired}>Sign in</button>
         </form>
         <button className="btn line" disabled={busy || resendIn > 0} onClick={() => send.mutate()}>
