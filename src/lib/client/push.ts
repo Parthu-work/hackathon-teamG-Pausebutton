@@ -297,7 +297,15 @@ export function nativeNotificationStatus(): NotificationStatus | null {
   return nativeStatus;
 }
 
-async function subscribeNative(app: PushApp): Promise<PushStatus> {
+/** A second tap while Android's prompt is up gets the first tap's answer, not a second prompt. */
+let subscribing: Promise<PushStatus> | null = null;
+
+function subscribeNative(app: PushApp): Promise<PushStatus> {
+  subscribing ??= askAndRegister(app).finally(() => (subscribing = null));
+  return subscribing;
+}
+
+async function askAndRegister(app: PushApp): Promise<PushStatus> {
   const bridge = nativeBridge()!;
   try {
     let status = await bridge.notificationStatus();

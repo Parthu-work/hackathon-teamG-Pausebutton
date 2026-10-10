@@ -270,12 +270,12 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
   const [explain, setExplain] = useState<"reading" | "battery" | "disconnect" | null>(null);
   const [cameBack, setCameBack] = useState(false);
 
-  // Back from Android's settings (or anywhere else): read the watcher again at once.
+  // Back from Android's settings (or anywhere else): read the watcher again at
+  // once, and only then say what still works (access may just have been switched on).
   useEffect(
     () =>
       onAppResume(() => {
-        setCameBack(true);
-        void queryClient.invalidateQueries({ queryKey: ["native-watcher"] });
+        void queryClient.invalidateQueries({ queryKey: ["native-watcher"] }).then(() => setCameBack(true));
         void queryClient.invalidateQueries({ queryKey: ["devices"] });
       }),
     [queryClient],
