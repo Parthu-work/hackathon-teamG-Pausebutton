@@ -223,7 +223,7 @@ function ConnectWithCode() {
             <div className="lbl">On this phone</div>
             {[
               "Install the Pause Button app (APK) if you have not yet.",
-              "Tap “Open the Pause Button app” above, or type the code in the app.",
+              "Tap “Open the Pause Button app” above, then Connect, or type the code in the app.",
               "In the app, tap “Allow notification access”, find Pause Button in the list and switch it on.",
               "Tap “Allow running in background” so the phone does not stop it.",
             ].map((step, i) => (
