@@ -50,20 +50,25 @@ export function otpSender(env: Record<string, string | undefined> = process.env)
   return env.OTP_PROVIDER === "sms" ? new SmsOtpSender() : new DemoOtpSender();
 }
 
+/** Inside the resend cooldown (30 s after the last code for the number): a 429 with the seconds left. */
+export async function assertResendOpen(db: Db, phone: string, now = new Date()) {
+  const t = schema.otpCodes;
+  const latest = await db.query.otpCodes.findFirst({
+    where: and(eq(t.phone, phone), isNull(t.consumedAt)),
+    orderBy: desc(t.createdAt),
+  });
+  if (!latest) return;
+  const wait = Math.ceil((latest.createdAt.getTime() + OTP_RESEND_SECONDS * 1000 - now.getTime()) / 1000);
+  if (wait > 0) throw new HttpError(429, `Please wait ${wait} second${wait === 1 ? "" : "s"} before asking for a new code.`, wait);
+}
+
 /**
  * A fresh code for a number. Inside the resend cooldown it is a 429 with the
  * seconds left; otherwise every older unused code for the number stops working.
  */
 export async function issueCode(db: Db, phone: string, now = new Date()) {
   const t = schema.otpCodes;
-  const latest = await db.query.otpCodes.findFirst({
-    where: and(eq(t.phone, phone), isNull(t.consumedAt)),
-    orderBy: desc(t.createdAt),
-  });
-  if (latest) {
-    const wait = Math.ceil((latest.createdAt.getTime() + OTP_RESEND_SECONDS * 1000 - now.getTime()) / 1000);
-    if (wait > 0) throw new HttpError(429, `Please wait ${wait} seconds before asking for a new code.`, wait);
-  }
+  await assertResendOpen(db, phone, now);
   const code = String(crypto.randomInt(0, 10 ** OTP_LENGTH)).padStart(OTP_LENGTH, "0");
   const expiresAt = new Date(now.getTime() + OTP_TTL_MINUTES * 60_000);
   const row = await db.transaction(async (tx) => {

@@ -67,7 +67,8 @@ describe("sign-in codes (otp.ts)", () => {
     const { code } = await issueCode(db, phone);
     expect(code).toMatch(/^\d{4}$/);
     const [row] = await codesOf(phone);
-    expect(row.codeHash).not.toContain(code);
+    expect(row.codeHash).toMatch(/^[0-9a-f]{64}$/); // an HMAC-SHA256, never the digits
+    expect(Object.values(row)).not.toContain(code);
     await expect(verifyCode(db, phone, code)).resolves.toBeUndefined();
     await expect(verifyCode(db, phone, code)).rejects.toMatchObject({ status: 400, message: OTP_NONE });
     // Random, not one fixed demo code.
@@ -129,6 +130,10 @@ describe("sign-in codes (otp.ts)", () => {
       retryAfter: 20,
       message: "Please wait 20 seconds before asking for a new code.",
     });
+    await expect(issueCode(db, phone, new Date(t0.getTime() + 29_500))).rejects.toMatchObject({
+      retryAfter: 1,
+      message: "Please wait 1 second before asking for a new code.",
+    });
     await expect(issueCode(db, phone, new Date(t0.getTime() + 30_000))).resolves.toMatchObject({ code: expect.stringMatching(/^\d{4}$/) });
   });
 
@@ -173,6 +178,26 @@ describe("POST /api/auth/code and /api/auth/sign-in", () => {
     expect(wait).toBeGreaterThan(0);
     expect(wait).toBeLessThanOrEqual(30);
     expect(await res.json()).toEqual({ error: `Please wait ${wait} seconds before asking for a new code.` });
+  });
+
+  it("tapping Send again and again inside the 30 s wait uses up none of the 5 requests a number has", async () => {
+    process.env.DEMO_SIGNIN = "on";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = new Date("2026-10-10T10:00:00Z");
+    vi.setSystemTime(t0);
+    const phone = newNumber();
+    expect((await askCode(phone)).status).toBe(200);
+    for (let i = 1; i <= 8; i++) {
+      vi.setSystemTime(new Date(t0.getTime() + i * 1000));
+      const res = await askCode(phone);
+      expect(res.status).toBe(429);
+      expect((await res.json()).error).toBe(`Please wait ${30 - i} seconds before asking for a new code.`);
+    }
+    // Then four more codes, each after its wait: all five requests were still there.
+    for (let i = 1; i <= 4; i++) {
+      vi.setSystemTime(new Date(t0.getTime() + i * 31_000));
+      expect((await askCode(phone)).status).toBe(200);
+    }
   });
 
   it("with demo sign-in off no code is handed out, and neither route works (403)", async () => {
