@@ -15,13 +15,21 @@ type Policy = { ip: Rule[]; subject: Rule[] };
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
-/** Per caller IP and per signed-in person (or paired phone, or mobile number). */
+/**
+ * Per caller IP and per signed-in person (or paired phone, or mobile number).
+ * Sign-in has two: asking for a code (signInCode) and trying one (signIn)
+ * count apart, so wrong tries never use up the right to ask for a new code,
+ * and the code's own lock (5 wrong tries, otp.ts) is what a person meets
+ * first. Per number, 10 tries in 10 minutes is two codes' worth; the daily
+ * caps keep a stranger from guessing a 4-digit code by patience.
+ */
 export const POLICIES = {
   check: { ip: [{ limit: 30, windowMs: MINUTE }], subject: [{ limit: 10, windowMs: MINUTE }, { limit: 200, windowMs: DAY }] },
   call: { ip: [{ limit: 30, windowMs: MINUTE }], subject: [{ limit: 10, windowMs: MINUTE }, { limit: 100, windowMs: DAY }] },
   inbox: { ip: [{ limit: 120, windowMs: MINUTE }], subject: [{ limit: 30, windowMs: MINUTE }, { limit: 1000, windowMs: DAY }] },
   demoSignIn: { ip: [{ limit: 20, windowMs: 10 * MINUTE }], subject: [] },
-  signIn: { ip: [{ limit: 10, windowMs: 10 * MINUTE }], subject: [{ limit: 5, windowMs: 10 * MINUTE }] },
+  signInCode: { ip: [{ limit: 10, windowMs: 10 * MINUTE }], subject: [{ limit: 5, windowMs: 10 * MINUTE }, { limit: 20, windowMs: DAY }] },
+  signIn: { ip: [{ limit: 10, windowMs: 10 * MINUTE }], subject: [{ limit: 10, windowMs: 10 * MINUTE }, { limit: 30, windowMs: DAY }] },
 } satisfies Record<string, Policy>;
 
 export type PolicyName = keyof typeof POLICIES;

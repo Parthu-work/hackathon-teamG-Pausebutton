@@ -681,7 +681,10 @@ test("Delete my account: a shared demo account cannot be deleted; a real one can
   const ctx = await newContext(browser);
   const page = await ctx.newPage();
   const phoneNumber = `9${Math.floor(100_000_000 + Math.random() * 899_999_999)}`;
-  expect((await ctx.request.post("/api/auth/sign-in", { data: { phone: phoneNumber, code: "1234" } })).ok()).toBeTruthy();
+  const sent = await ctx.request.post("/api/auth/code", { data: { phone: phoneNumber } });
+  expect(sent.ok(), await sent.text()).toBeTruthy();
+  const { demoCode } = (await sent.json()) as { demoCode: string };
+  expect((await ctx.request.post("/api/auth/sign-in", { data: { phone: phoneNumber, code: demoCode } })).ok()).toBeTruthy();
   expect((await ctx.request.post("/api/auth/role", { data: { role: "protected", name: "Test Person" } })).ok()).toBeTruthy();
   await page.goto("/privacy");
   await page.getByTestId("delete-account").click();

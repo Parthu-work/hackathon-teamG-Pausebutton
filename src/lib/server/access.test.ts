@@ -29,6 +29,7 @@ vi.mock("./checks", async (orig) => {
 import { getDb, type Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { POST as checksPost } from "@/app/api/me/checks/route";
+import { POST as codePost } from "@/app/api/auth/code/route";
 import { GET as demoGet, POST as demoPost } from "@/app/api/auth/demo/route";
 import { POST as signInPost } from "@/app/api/auth/sign-in/route";
 import { GET as campaignsGet } from "@/app/api/ops/campaigns/route";
@@ -38,6 +39,7 @@ import { GET as reportsGet } from "@/app/api/ops/reports/route";
 import { POST as reviewPost } from "@/app/api/ops/reports/[id]/route";
 import { GET as testsLatestGet } from "@/app/api/tests/latest/route";
 import { personaUser, resetDemo } from "./demo";
+import { issueCode } from "./otp";
 import { rateLimit, TOO_MANY } from "./ratelimit";
 import { liveBlockedDomains, reviewDomain, seedReport } from "./reports";
 import { demoSignInOpen, sessionToken } from "./session";
@@ -125,10 +127,18 @@ describe("rate limits", () => {
     expect(statuses.at(-1)).toBe(429);
   });
 
-  it("throttles code guesses per mobile number", async () => {
-    const guess = (ip: string) => signInPost(req("/api/auth/sign-in", { body: { phone: "98765 00001", code: "0000" }, headers: { "x-real-ip": ip } }), ctx());
-    for (let i = 0; i < 5; i++) expect((await guess(`10.0.0.${i}`)).status).toBe(400);
-    expect((await guess("10.0.0.99")).status).toBe(429);
+  it("throttles code guesses per mobile number, from any address, before the code is even looked at", async () => {
+    const phone = "98765 00001";
+    const sent = await codePost(req("/api/auth/code", { body: { phone }, headers: { "x-real-ip": "10.0.1.1" } }), ctx());
+    expect(sent.status).toBe(200);
+    const { demoCode } = (await sent.json()) as { demoCode: string };
+    const wrong = String((Number(demoCode) + 1) % 10_000).padStart(4, "0");
+    const guess = (ip: string) => signInPost(req("/api/auth/sign-in", { body: { phone, code: wrong }, headers: { "x-real-ip": ip } }), ctx());
+    // The code locks after 5 wrong guesses; the number is throttled after 10 tries.
+    for (let i = 0; i < 10; i++) expect((await guess(`10.0.0.${i}`)).status).toBe(400);
+    const over = await guess("10.0.0.99");
+    expect(over.status).toBe(429);
+    expect(over.headers.get("retry-after")).toMatch(/^\d+$/);
   });
 });
 
@@ -166,14 +176,20 @@ describe("demo sign-in switch", () => {
     expect(demoSignInOpen()).toBe(false);
   });
 
-  it("when off, nobody can become Mr Rao: neither the demo buttons nor the 1234 code work", async () => {
+  it("when off, nobody can become Mr Rao: neither the demo buttons nor a sign-in code work", async () => {
     process.env.DEMO_SIGNIN = "off";
     const demo = await demoPost(req("/api/auth/demo", { body: { persona: "rao" } }), ctx());
     expect(demo.status).toBe(403);
     const rao = (await personaUser(db, "rao"))!;
-    const signIn = await signInPost(req("/api/auth/sign-in", { body: { phone: rao.phone, code: "1234" } }), ctx());
+    // No code is shown (or issued) for his number...
+    const sent = await codePost(req("/api/auth/code", { body: { phone: rao.phone } }), ctx());
+    expect(sent.status).toBe(403);
+    expect(await sent.json()).not.toHaveProperty("demoCode");
+    // ...and not even a code from before it was turned off signs in.
+    const { code } = await issueCode(db, rao.phone);
+    const signIn = await signInPost(req("/api/auth/sign-in", { body: { phone: rao.phone, code } }), ctx());
     expect(signIn.status).toBe(403);
-    expect(await (await demoGet(req("/api/auth/demo"), ctx())).json()).toEqual({ open: false });
+    expect(await (await demoGet(req("/api/auth/demo"), ctx())).json()).toEqual({ open: false, codes: "off" });
   });
 });
 
