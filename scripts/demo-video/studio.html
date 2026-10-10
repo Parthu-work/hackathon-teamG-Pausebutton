@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Pause Button · demo studio</title>
+<style>
+@font-face{font-family:Atkinson;src:url(/__studio/fonts/atkinson-hyperlegible-400.woff2) format("woff2");font-weight:400}
+@font-face{font-family:Atkinson;src:url(/__studio/fonts/atkinson-hyperlegible-700.woff2) format("woff2");font-weight:700}
+@font-face{font-family:Bricolage;src:url(/__studio/fonts/bricolage-grotesque-600-800.woff2) format("woff2");font-weight:600 800}
+@font-face{font-family:Devanagari;src:url(/__studio/fonts/noto-sans-devanagari-400-800.woff2) format("woff2");font-weight:400 800}
+@font-face{font-family:Telugu;src:url(/__studio/fonts/noto-sans-telugu-400-800.woff2) format("woff2");font-weight:400 800}
+:root{--bg:#0B1219;--surface:#16212C;--text:#EEF3F7;--muted:#A3B2BF;--border:#263543;--amber:#F2A900;--green:#6FD0A5;--red:#FF8F84;--ease:cubic-bezier(.2,.7,.2,1)}
+*{box-sizing:border-box}
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:var(--bg);color:var(--text);font-family:Atkinson,Devanagari,Telugu,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+#stage{position:absolute;inset:0;background:radial-gradient(1500px 850px at 22% 12%,#1A2D43 0%,#0B1219 64%)}
+#stage::before{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.04) 1px,transparent 1px);background-size:30px 30px;pointer-events:none}
+#top{position:absolute;left:72px;right:72px;top:0;height:104px;display:flex;align-items:center;gap:16px;z-index:5}
+.pm{display:inline-flex;gap:5px}.pm i{display:block;width:9px;height:30px;border-radius:3px;background:var(--amber);animation:breathe 2.6s ease-in-out infinite}.pm i:nth-child(2){animation-delay:.25s}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.5}}
+#brand{font-family:Bricolage;font-weight:800;font-size:30px;letter-spacing:-.02em}
+#chap{margin-left:22px;padding-left:24px;border-left:1px solid var(--border);font-size:20px;color:var(--muted);font-weight:700;letter-spacing:.02em;transition:opacity .3s;min-height:28px}
+#live{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:16px;color:var(--muted);font-weight:700;letter-spacing:.05em}
+#live .dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(111,208,165,.18)}
+#live .dot.off{background:var(--red);box-shadow:0 0 0 4px rgba(255,143,132,.18)}
+.slot{position:absolute;left:0;top:112px;width:418px;transition:transform .85s var(--ease),opacity .5s;will-change:transform}
+.who{height:42px;display:flex;align-items:center;gap:10px;font-size:19px;font-weight:700;color:var(--text);padding:0 8px;white-space:nowrap}
+.who span{color:var(--muted);font-weight:400}
+.who .av{width:28px;height:28px;border-radius:50%;background:#2B3E50;display:grid;place-items:center;font-size:14px;font-weight:800;color:#fff;flex:none}
+.phone{width:418px;height:828px;border-radius:52px;background:#0A0F14;padding:14px;box-shadow:0 1px 0 rgba(255,255,255,.1) inset,0 34px 80px -24px rgba(0,0,0,.9),0 0 0 1px #1E2B38;position:relative}
+.phone iframe{width:390px;height:800px;border:0;border-radius:40px;background:#F7F5F0;display:block}
+.slot.dim{opacity:.35;filter:saturate(.6)}
+#wideslot{position:absolute;left:72px;top:112px;width:1330px;transition:transform .85s var(--ease),opacity .5s;transform:translateX(-1600px);opacity:0}
+#wideslot .lap{width:1330px;height:828px;border-radius:22px;background:#0A0F14;padding:12px;box-shadow:0 1px 0 rgba(255,255,255,.1) inset,0 34px 80px -24px rgba(0,0,0,.9),0 0 0 1px #1E2B38}
+#wideslot iframe{width:1306px;height:804px;border:0;border-radius:14px;background:#F7F5F0;display:block}
+#server{position:absolute;left:1440px;top:112px;width:408px;height:870px;border-radius:24px;background:rgba(22,33,44,.84);border:1px solid var(--border);padding:22px 22px 18px;display:flex;flex-direction:column;gap:12px;transition:transform .85s var(--ease),opacity .5s}
+#server h3{margin:0;font-size:13px;letter-spacing:.16em;color:var(--muted);font-weight:700}
+#server .meta{font-size:14px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace}
+#log{flex:1;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:11px}
+.ev{display:grid;grid-template-columns:66px 1fr;gap:10px;font-size:15px;line-height:1.35;animation:pop .35s ease-out}
+.ev time{color:var(--muted);font-variant-numeric:tabular-nums;font-size:14px;padding-top:2px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.ev .tag{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.08em;padding:2px 7px;border-radius:6px;background:#223140;color:var(--muted);margin-right:7px;vertical-align:2px;text-transform:uppercase}
+.ev .tag.sim{background:#35290C;color:#F2C56B}.ev .tag.fam{background:#12342A;color:var(--green)}.ev .tag.rao{background:#2B3E50;color:#CFE0F2}.ev .tag.op{background:#3A1C1A;color:var(--red)}
+@keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+#sync{border-top:1px solid var(--border);padding-top:12px;font-size:15px;color:var(--muted);line-height:1.45}
+#sync b{color:var(--text)}
+#callout{position:absolute;left:840px;top:230px;width:960px;display:flex;flex-direction:column;gap:26px;opacity:0;transition:opacity .5s,transform .85s var(--ease);transform:translateY(24px);pointer-events:none}
+#callout h2{font-family:Bricolage;font-weight:800;font-size:58px;line-height:1.03;letter-spacing:-.025em;margin:0}
+#callout ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:16px}
+#callout li{font-size:27px;line-height:1.3;padding-left:36px;position:relative;color:#D5DEE7;opacity:0;transform:translateX(-12px);transition:opacity .45s,transform .45s}
+#callout li.on{opacity:1;transform:none}
+#callout li::before{content:"";position:absolute;left:0;top:13px;width:16px;height:16px;border-radius:4px;background:var(--amber)}
+#cap{position:absolute;left:72px;right:72px;bottom:28px;min-height:86px;border-radius:20px;background:rgba(22,33,44,.9);border:1px solid var(--border);display:flex;align-items:center;gap:18px;padding:18px 28px;transition:opacity .22s;z-index:6}
+#cap .bar{width:8px;height:40px;border-radius:3px;background:var(--amber);flex:none}
+#cap p{margin:0;font-size:29px;line-height:1.3;font-weight:700;color:var(--text)}
+#cap.hide{opacity:0}
+#card{position:absolute;inset:0;background:rgba(11,18,25,.975);display:flex;flex-direction:column;justify-content:center;padding:0 200px;gap:24px;opacity:0;transition:opacity .45s;pointer-events:none;z-index:20}
+#card .k{font-size:22px;letter-spacing:.24em;color:var(--amber);font-weight:700}
+#card h1{font-family:Bricolage;font-weight:800;font-size:96px;line-height:1;letter-spacing:-.03em;margin:0;max-width:1450px}
+#card h1.sm{font-size:72px}
+#card p{font-size:36px;color:var(--muted);margin:0;max-width:1350px;line-height:1.3}
+#card.on{opacity:1}
+#card .pm.big{gap:14px;margin-bottom:8px}.pm.big i{width:22px;height:78px;border-radius:7px}
+#card ul{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:16px}
+#card li{font-size:32px;line-height:1.3;color:#D5DEE7;padding-left:42px;position:relative;max-width:1450px}
+#card li::before{content:"";position:absolute;left:0;top:15px;width:18px;height:18px;border-radius:5px;background:var(--amber)}
+#card .url{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:30px;color:var(--text);letter-spacing:.01em}
+#cursor{position:absolute;left:0;top:0;width:40px;height:40px;pointer-events:none;z-index:50;transition:transform .62s var(--ease);filter:drop-shadow(0 3px 6px rgba(0,0,0,.55));transform:translate(960px,540px)}
+#ripple{position:absolute;left:0;top:0;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;border:3px solid var(--amber);pointer-events:none;z-index:49;opacity:0}
+#ripple.go{animation:rip .55s ease-out}
+@keyframes rip{0%{opacity:.95;transform:scale(.6)}100%{opacity:0;transform:scale(3.4)}}
+#spot{position:absolute;border:3px solid var(--amber);border-radius:16px;box-shadow:0 0 0 6px rgba(242,169,0,.22),0 0 44px rgba(242,169,0,.28);pointer-events:none;z-index:40;opacity:0;transition:all .45s var(--ease)}
+#spotlabel{position:absolute;z-index:41;background:var(--amber);color:#14202B;font-weight:800;font-size:19px;padding:7px 12px;border-radius:10px;pointer-events:none;opacity:0;transition:all .45s var(--ease);white-space:nowrap;box-shadow:0 10px 26px -8px rgba(0,0,0,.65)}
+#spotlabel::after{content:"";position:absolute;left:18px;bottom:-8px;border:8px solid transparent;border-top-color:var(--amber);border-bottom:0}
+#spotlabel.below::after{bottom:auto;top:-8px;border-top:0;border-bottom:8px solid var(--amber)}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="top">
+    <span class="pm"><i></i><i></i></span><span id="brand">Pause Button</span>
+    <span id="chap"></span>
+    <span id="live"><span class="dot" id="livedot"></span><span id="livetxt">LIVE · PRODUCTION BUILD · ONE SERVICE · THREE PHONES</span></span>
+  </div>
+  <div class="slot" id="slot-rao"><div class="who"><span class="av">R</span><b id="who-rao">Mr Rao</b><span id="role-rao"></span></div><div class="phone"><iframe id="f-rao" title="phone 1"></iframe></div></div>
+  <div class="slot" id="slot-arjun"><div class="who"><span class="av">A</span><b id="who-arjun">Arjun</b><span id="role-arjun">· son · trusted person</span></div><div class="phone"><iframe id="f-arjun" title="phone 2"></iframe></div></div>
+  <div class="slot" id="slot-meera"><div class="who"><span class="av">M</span><b id="who-meera">Meera</b><span id="role-meera">· daughter · trusted person</span></div><div class="phone"><iframe id="f-meera" title="phone 3"></iframe></div></div>
+  <div id="wideslot"><div class="who"><span class="av">◻</span><b id="who-wide"></b><span id="role-wide"></span></div><div class="lap"><iframe id="f-wide" title="laptop"></iframe></div></div>
+  <div id="server">
+    <h3>THE SERVICE · LIVE EVENT LOG</h3>
+    <div class="meta">GET /api/demo/events?since=… · every second</div>
+    <div id="log"></div>
+    <div id="sync">Sync job · every 30 min · <b id="synctxt">no run yet</b></div>
+  </div>
+  <div id="callout"><h2 id="co-title"></h2><ul id="co-list"></ul></div>
+  <div id="cap"><span class="bar"></span><p id="captxt"></p></div>
+  <div id="card"></div>
+  <div id="spot"></div><div id="spotlabel"></div>
+  <div id="ripple"></div>
+  <svg id="cursor" viewBox="0 0 40 40"><path d="M8 4 L8 32 L15.5 25 L21 37 L26 34.5 L20.5 23 L31 22 Z" fill="#fff" stroke="#14202B" stroke-width="2.2" stroke-linejoin="round"/></svg>
+</div>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const slots = { rao: $("#slot-rao"), arjun: $("#slot-arjun"), meera: $("#slot-meera") };
+  const TRIO = { rao: 72, arjun: 526, meera: 980 };
+  const OFF_LEFT = -700, OFF_RIGHT = 2100;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+  function place(el, x, opacity = 1) { el.style.transform = `translateX(${x}px)`; el.style.opacity = String(opacity); }
+
+  const S = (window.__studio = {
+    /** trio: three phones + the service panel. solo: one phone left, the callout on the right. wide: the laptop + the service panel. none: an empty stage. */
+    layout(mode, active) {
+      const wide = $("#wideslot"), server = $("#server"), callout = $("#callout");
+      for (const k of Object.keys(slots)) slots[k].classList.remove("dim");
+      if (mode === "trio") {
+        for (const k of Object.keys(slots)) place(slots[k], TRIO[k]);
+        place(wide, -1600, 0); place(server, 0); callout.style.opacity = "0"; callout.style.transform = "translateY(24px)";
+      } else if (mode === "solo") {
+        for (const k of Object.keys(slots)) place(slots[k], k === active ? 300 : OFF_LEFT, k === active ? 1 : 0);
+        place(wide, -1600, 0); place(server, 600, 0); callout.style.opacity = "1"; callout.style.transform = "none";
+      } else if (mode === "wide") {
+        for (const k of Object.keys(slots)) place(slots[k], OFF_LEFT, 0);
+        place(wide, 0, 1); place(server, 0); callout.style.opacity = "0";
+      } else {
+        for (const k of Object.keys(slots)) place(slots[k], OFF_LEFT, 0);
+        place(wide, -1600, 0); place(server, 600, 0); callout.style.opacity = "0";
+      }
+    },
+    dim(active) { for (const k of Object.keys(slots)) slots[k].classList.toggle("dim", !!active && k !== active); },
+    who(slot, name, role) { $(`#who-${slot}`).textContent = name; $(`#role-${slot}`).textContent = role ? `· ${role}` : ""; },
+    chap(text) { $("#chap").textContent = text; },
+    /** Replaces a slot's iframe, so the new page starts clean (its window.name carries the persona). */
+    setFrame(slot, name, src) {
+      const old = $(`#f-${slot}`);
+      const f = document.createElement("iframe");
+      f.id = old.id; f.title = old.title; f.name = name || ""; f.setAttribute("allow", "autoplay");
+      old.replaceWith(f);
+      f.src = src;
+    },
+    caption(text) {
+      const cap = $("#cap"), p = $("#captxt");
+      if (!text) { cap.classList.add("hide"); return; }
+      cap.classList.add("hide");
+      setTimeout(() => { p.textContent = text; cap.classList.remove("hide"); }, 180);
+    },
+    chapter(n, title, sub) {
+      $("#card").innerHTML = `<div class="k">CHAPTER ${esc(n)}</div><h1>${esc(title)}</h1>${sub ? `<p>${esc(sub)}</p>` : ""}`;
+      $("#card").classList.add("on");
+    },
+    card(html) { $("#card").innerHTML = html; $("#card").classList.add("on"); },
+    hideCard() { $("#card").classList.remove("on"); },
+    callout(title, items) {
+      $("#co-title").textContent = title;
+      $("#co-list").innerHTML = items.map((t) => `<li>${esc(t)}</li>`).join("");
+    },
+    calloutStep(i) { [...$("#co-list").children].forEach((li, k) => li.classList.toggle("on", k <= i)); },
+    spot(x, y, w, h, label, below) {
+      const s = $("#spot"), l = $("#spotlabel");
+      const pad = 8;
+      Object.assign(s.style, { left: `${x - pad}px`, top: `${y - pad}px`, width: `${w + pad * 2}px`, height: `${h + pad * 2}px`, opacity: "1" });
+      if (label) {
+        l.textContent = label; l.classList.toggle("below", !!below);
+        const lw = Math.min(l.offsetWidth || 240, 520);
+        const lx = Math.max(20, Math.min(x - pad, 1920 - lw - 20));
+        Object.assign(l.style, { left: `${lx}px`, top: below ? `${y + h + pad + 12}px` : `${y - pad - 54}px`, opacity: "1" });
+      } else l.style.opacity = "0";
+    },
+    unspot() { $("#spot").style.opacity = "0"; $("#spotlabel").style.opacity = "0"; },
+    cursor(x, y) { $("#cursor").style.transform = `translate(${x - 8}px,${y - 4}px)`; },
+    ripple(x, y) { const r = $("#ripple"); r.classList.remove("go"); r.style.left = `${x}px`; r.style.top = `${y}px`; void r.offsetWidth; r.classList.add("go"); },
+    syncText() { return $("#synctxt").textContent; },
+  });
+
+  // The service's own event log, as the operator panel shows it.
+  let since = 0, lastOk = 0;
+  const tagOf = (actor) => (/simulator/i.test(actor) ? "sim" : /operator|system|sync/i.test(actor) ? "op" : /arjun|meera|dinesh/i.test(actor) ? "fam" : /rao|papa|mummy/i.test(actor) ? "rao" : "");
+  async function pollEvents() {
+    try {
+      const r = await fetch(`/api/demo/events?since=${since}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      const { events } = await r.json();
+      lastOk = Date.now();
+      for (const e of events) {
+        since = Math.max(since, e.id);
+        const row = document.createElement("div");
+        row.className = "ev";
+        const t = new Date(e.createdAt);
+        const hh = String(t.getHours()).padStart(2, "0"), mm = String(t.getMinutes()).padStart(2, "0"), ss = String(t.getSeconds()).padStart(2, "0");
+        row.innerHTML = `<time>${hh}:${mm}:${ss}</time><div><span class="tag ${tagOf(e.actor)}">${esc(e.actor)}</span>${esc(e.message)}</div>`;
+        $("#log").appendChild(row);
+      }
+      while ($("#log").children.length > 14) $("#log").removeChild($("#log").firstChild);
+    } catch {}
+    $("#livedot").classList.toggle("off", Date.now() - lastOk > 5000);
+  }
+  async function pollSync() {
+    try {
+      const r = await fetch("/api/ops/sync-health", { cache: "no-store" });
+      if (!r.ok) return;
+      const h = await r.json();
+      const run = h.lastRun;
+      $("#synctxt").textContent = run
+        ? `ran ${new Date(run.startedAt).toLocaleTimeString("en-GB")} · re-checked ${run.rechecked} · re-pushed ${run.repushed} · quiet phones ${run.quietDevices}`
+        : h.overdue ? "no run yet (overdue)" : "no run yet";
+    } catch {}
+  }
+  setInterval(pollEvents, 1000); pollEvents();
+  setInterval(pollSync, 3000); pollSync();
+  S.layout("none");
+})();
+</script>
+</body>
+</html>
