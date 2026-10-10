@@ -15,6 +15,7 @@ import { signOut } from "@/lib/client/sign-out";
 import { deleteMyAccount } from "@/lib/client/account";
 import { api, ApiError, operatorApi, post } from "@/lib/client/api";
 import type { ActivityItem, CheckView, EventView, HoldView, ProtectedView, SharedMessage } from "@/lib/views";
+import { Greeting } from "./greeting";
 import { LedgerCards, useCallOnArrival, useLedger } from "./phase2";
 import { useFamily, useTabLabel } from "./shell";
 
@@ -238,6 +239,7 @@ export function FamilyHomeScreen() {
   if (data.people.length === 1) return <PersonHome person={data.people[0]} />;
   return (
     <Screen tabs={<FamilyTabs active="home" callName={label} />}>
+      <Greeting name={data.me.name} />
       <h1 className="h1">Who you protect</h1>
       <p className="sm">You get an alert when any of them gets a scam message or is about to pay.</p>
       <PushHint />
@@ -314,6 +316,7 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
 
   return (
     <Screen tabs={<FamilyTabs active="home" callName={label} />}>
+      <Greeting name={me} />
       <div className="row">
         {back && <BackButton href="/family" />}
         <Avatar name={p.name} />

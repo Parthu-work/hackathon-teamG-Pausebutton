@@ -12,6 +12,7 @@ import { ApiError, post } from "@/lib/client/api";
 import { saveMessage } from "@/lib/client/messages";
 import { takePendingShare } from "@/lib/client/pending-share";
 import { canListen } from "@/lib/client/speech";
+import { displayName } from "@/lib/display-name";
 import { useHelper, useRao, useT } from "./shell";
 
 const MAX = 4000;
@@ -24,8 +25,11 @@ const TITLES: Record<string, string> = {
   hindi: "Lottery win message",
 };
 
-function greetingKey(h: number) {
-  return h < 12 ? "home.morning" : h < 17 ? "home.afternoon" : "home.evening";
+/** "Good morning, Ramesh", or the plain greeting when there is no name to use (old "Guest" accounts). */
+function greetingKey(h: number, named: boolean) {
+  if (h < 12) return named ? "home.morningName" : "home.morning";
+  if (h < 17) return named ? "home.afternoonName" : "home.afternoon";
+  return named ? "home.eveningName" : "home.evening";
 }
 
 const currentHour = () => new Date().getHours();
@@ -43,8 +47,10 @@ export function HomeScreen() {
   const [picked, setPicked] = useState<string | null>(null);
   const [phase, setPhase] = useState<"edit" | "checking" | "error">("edit");
   const [progress, setProgress] = useState(0);
-  // The greeting and the microphone depend on the phone, so they render after hydration.
+  // The greeting and the microphone depend on the phone, so they render after
+  // hydration (until then: the afternoon greeting).
   const hour = useClientValue(currentHour, null);
+  const name = displayName(data?.me.name);
   const mic = useClientValue(canListen, false);
 
   // F1 · A message forwarded before sign-in: now that he is signed in, check it.
@@ -153,7 +159,7 @@ export function HomeScreen() {
       </div>
       {!ready && (
         <>
-          <h1 className="h1" style={{ marginTop: 6 }}>{hour === null ? t("home.afternoon") : t(greetingKey(hour))}</h1>
+          <h1 className="h1" style={{ marginTop: 6 }}>{t(greetingKey(hour ?? 12, !!name), { name: name ?? "" })}</h1>
           <p className="p">{t("home.startHere")}</p>
         </>
       )}
