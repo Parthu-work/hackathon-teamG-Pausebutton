@@ -11,7 +11,9 @@ export default defineConfig({
   testDir: "e2e",
   timeout: HEADED ? 180_000 : 60_000,
   retries: process.env.CI ? 1 : 0,
-  workers: HEADED ? 1 : undefined,
+  // One test at a time: the specs share one server and one demo household,
+  // and each test resets it (POST /api/demo/reset) before it starts.
+  workers: 1,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: `http://localhost:${PORT}`,

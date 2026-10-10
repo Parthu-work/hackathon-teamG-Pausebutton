@@ -55,7 +55,7 @@ describe("pasted scam → hold → family decides", () => {
     expect((await familyState(db, arjun)).alerts).toEqual([]);
   });
 
-  it("a hold past 10 minutes reads as expired but still holds the money", async () => {
+  it("a hold past its time reads as expired but still holds the money", async () => {
     const { rao } = await users();
     const { holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
     await db.update(schema.holds).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(schema.holds.id, holdId!));
