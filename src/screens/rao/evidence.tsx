@@ -304,7 +304,7 @@ export function PayScreen() {
       {hold?.twoKeys && (
         <div className="card" style={{ border: "2px solid var(--text)", gap: 4 }}>
           <b style={{ fontSize: 16 }}>{t("hold.twoKeys")}</b>
-          <p className="sm">{t("hold.twoKeysBody")}</p>
+          <p className="sm">{t("hold.twoKeysBody", { minutes: hold.holdMinutes })}</p>
         </div>
       )}
       <div className="spacer" />

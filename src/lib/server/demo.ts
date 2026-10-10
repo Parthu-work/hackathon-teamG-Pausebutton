@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { INVITE_HOURS } from "@/lib/check/config";
+import { DEFAULT_HOLD_MINUTES, INVITE_HOURS } from "@/lib/check/config";
 import { findLinks, worstLink } from "@/lib/check/links";
 import { normalizeForMatch } from "@/lib/check/normalize";
 import { detectFamily } from "@/lib/check/rules";
@@ -167,7 +167,7 @@ export async function resetDemo(db: Db) {
     await db.delete(schema.events).where(eq(schema.events.householdId, owner.id));
     await db
       .update(schema.users)
-      .set({ watchSms: true, watchWhatsapp: true, unknownOnly: true, autoTellFamily: true, language: "en", textSize: "A" })
+      .set({ watchSms: true, watchWhatsapp: true, unknownOnly: true, autoTellFamily: true, language: "en", textSize: "A", holdMinutes: DEFAULT_HOLD_MINUTES })
       .where(eq(schema.users.id, owner.id));
     await relinkTrusted(db, owner.id, TRUSTED[key]);
     await logEvent(db, owner.id, "Operator", "reset", `Demo data reset for ${owner.name} · holds and checks cleared · Arjun and Meera still linked`);

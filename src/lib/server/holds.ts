@@ -14,10 +14,10 @@ type Hold = typeof schema.holds.$inferSelect;
 type Check = typeof schema.checks.$inferSelect;
 type User = typeof schema.users.$inferSelect;
 
-/** Expired is derived: a pending hold past its time. Money stays held either way. */
 const joinNames = (names: string[]) =>
   names.length <= 1 ? names[0] ?? "" : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
 
+/** Expired is derived: a pending hold past its time. Money stays held either way. */
 export function holdStatus(h: Hold, now = Date.now()): HoldStatus {
   if (h.status === "pending" && h.expiresAt.getTime() <= now) return "expired";
   return h.status;
@@ -30,8 +30,14 @@ export const twoKeysFor = (amount: number) => amount > TWO_KEY_AMOUNT;
 export const holdMinutesOf = (owner: Pick<User, "holdMinutes">) =>
   (HOLD_CHOICES as readonly number[]).includes(owner.holdMinutes) ? owner.holdMinutes : DEFAULT_HOLD_MINUTES;
 
+/**
+ * Starts the countdown with the owner's hold time as it is now. The end time
+ * is stored and never recomputed: changing the setting later moves only the
+ * next hold, and a hold already running keeps its time.
+ */
 export async function createHold(db: Db, check: Check, owner: User) {
   const amount = check.amount ?? 0;
+  const now = Date.now();
   const [hold] = await db
     .insert(schema.holds)
     .values({
@@ -39,7 +45,9 @@ export async function createHold(db: Db, check: Check, owner: User) {
       userId: owner.id,
       payee: check.payee ?? "Unknown account",
       amount,
-      expiresAt: new Date(Date.now() + holdMinutesOf(owner) * 60_000),
+      // createdAt from the same clock, so the hold's length (HoldView.holdMinutes) reads back exactly.
+      createdAt: new Date(now),
+      expiresAt: new Date(now + holdMinutesOf(owner) * 60_000),
     })
     .returning();
   return hold;

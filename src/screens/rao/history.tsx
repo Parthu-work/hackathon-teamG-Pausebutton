@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
 import { Icon } from "@/components/icons";
 import { Avatar, clockTime, Marks, RaoTabs, Screen, Sheet, TitleRow, Toggle, useToast, VerdictPill } from "@/components/ui";
+import { HOLD_CHOICES } from "@/lib/check/config";
 import { LANGUAGES } from "@/lib/i18n";
 import type { CheckRow } from "@/lib/server/checks";
 import { deleteMyAccount } from "@/lib/client/account";
@@ -215,6 +216,18 @@ export function SettingsScreen() {
           <p className="sm">{data.people.length > 1 ? t("settings.yourTrustedN", { n: data.people.length }) : t("settings.yourTrusted")}</p>
         </div>
         <button className="ghost" onClick={() => router.push("/settings/people")}>{t("settings.change")}</button>
+      </div>
+      {/* D2 · how long a paused payment waits for the family; a running one keeps its time. */}
+      <div className="card" data-testid="hold-time">
+        <div className="lbl">{t("settings.holdTime")}</div>
+        <p className="sm">{t("settings.holdTimeSub")}</p>
+        <div className="row wrap" style={{ gap: 8 }} role="group" aria-label={t("settings.holdTime")}>
+          {HOLD_CHOICES.map((n) => (
+            <button key={n} className={`chip ${data.me.holdMinutes === n ? "on" : ""}`} aria-pressed={data.me.holdMinutes === n} onClick={() => save.mutate({ holdMinutes: n })}>
+              {t("settings.holdTimeMinutes", { n })}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="card">
         <div className="lbl">{t("settings.textSize")}</div>
