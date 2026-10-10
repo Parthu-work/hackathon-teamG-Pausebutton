@@ -21,6 +21,8 @@
     "env:check": "tsx scripts/check-env.ts",
     "e2e:headed": "next build && HEADED=1 playwright test",
     "push:keys": "tsx scripts/push-keys.ts",
+    "cap:sync": "cap sync android",
+    "android:build": "cap sync android && cd android && ./gradlew assembleDebug",
     "share": "cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
