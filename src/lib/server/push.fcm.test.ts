@@ -48,6 +48,8 @@ const SEND_URL = "https://fcm.googleapis.com/v1/projects/pause-test/messages:sen
 type Sent = { token: string; data: Record<string, string>; android: { priority: string; ttl: string }; [other: string]: unknown };
 /** What FCM answers next (one per send, in order); 200 once they run out. */
 let fcmAnswers: Response[] = [];
+/** What Google's token endpoint answers next; an access token once they run out. */
+let tokenAnswers: Response[] = [];
 let fetchMock: MockInstance<typeof fetch>;
 const calls = (url: string) => fetchMock.mock.calls.filter(([u]) => String(u) === url);
 const sentMessages = () => calls(SEND_URL).map(([, init]) => (JSON.parse(String(init!.body)) as { message: Sent }).message);
@@ -70,7 +72,7 @@ beforeAll(async () => {
   const realFetch = globalThis.fetch;
   fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === TOKEN_URL) return Response.json({ access_token: "ya29.test-access-token", expires_in: 3599, token_type: "Bearer" });
+    if (url === TOKEN_URL) return tokenAnswers.shift() ?? Response.json({ access_token: "ya29.test-access-token", expires_in: 3599, token_type: "Bearer" });
     if (url === SEND_URL) return fcmAnswers.shift() ?? Response.json({ name: "projects/pause-test/messages/1" });
     return realFetch(input, init);
   });
@@ -79,6 +81,7 @@ beforeEach(() => {
   fetchMock.mockClear();
   sendNotification.mockClear();
   fcmAnswers = [];
+  tokenAnswers = [];
 });
 afterEach(() => {
   scope.headers = new Headers();
@@ -262,6 +265,49 @@ describe("FCM: the Android app", () => {
     expect(await pushToUsers(db, [arjun.id, meera.id], note, { key: "alert:a9" })).toEqual({ sent: 0, failed: 0, gone: 0, skipped: 3 });
     expect(sendNotification).not.toHaveBeenCalled();
     expect(calls(SEND_URL)).toHaveLength(0);
+  });
+
+  it("leaves the Android app's phones alone while FCM is not set up, and browsers still get the alert", async () => {
+    const { meera } = await users();
+    await db.delete(schema.pushSubscriptions).where(eq(schema.pushSubscriptions.userId, meera.id));
+    await saveFcmToken(db, meera.id, "meera-token-0003", "test");
+    await saveSubscription(db, meera.id, { endpoint: "https://push.example.test/meera-2", keys: { p256dh: "p", auth: "a" } }, "test");
+    const saved = process.env.FCM_SERVICE_ACCOUNT;
+    delete process.env.FCM_SERVICE_ACCOUNT;
+    try {
+      expect(fcmEnabled()).toBe(false);
+      expect(pushEnabled()).toBe(true); // the VAPID keys
+      const note: PushPayload = { title: "x", body: "y", url: "/family", tag: "t", urgent: true };
+      expect(await pushToUsers(db, [meera.id], note, { key: "fcm:off" })).toEqual({ sent: 1, failed: 0, gone: 0, skipped: 0 });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(sendNotification).toHaveBeenCalledTimes(1);
+      expect((await deliveriesWith("fcm:off")).map((d) => d.endpoint)).toEqual(["https://push.example.test/meera-2"]);
+      expect(await subsOf(meera.id)).toHaveLength(2); // the app's token waits for FCM to be set up
+    } finally {
+      process.env.FCM_SERVICE_ACCOUNT = saved;
+    }
+  });
+
+  it("records a failure, without a retry, when Google refuses the service account", async () => {
+    const { meera } = await users();
+    await db.delete(schema.pushSubscriptions).where(eq(schema.pushSubscriptions.userId, meera.id));
+    await saveFcmToken(db, meera.id, "meera-token-0004", "test");
+    const saved = process.env.FCM_SERVICE_ACCOUNT;
+    // Another service account (its key was replaced, say): no access token is cached for it.
+    process.env.FCM_SERVICE_ACCOUNT = JSON.stringify({ ...SERVICE_ACCOUNT, client_email: "rotated@pause-test.iam.gserviceaccount.com" });
+    tokenAnswers = [Response.json({ error: "invalid_grant", error_description: "Invalid JWT Signature." }, { status: 400 })];
+    try {
+      const note: PushPayload = { title: "x", body: "y", url: "/family", tag: "t", urgent: true };
+      expect(await pushToUsers(db, [meera.id], note, { key: "fcm:refused", retryDelayMs: 0 })).toEqual({ sent: 0, failed: 1, gone: 0, skipped: 0 });
+      expect(calls(TOKEN_URL)).toHaveLength(1);
+      expect(calls(SEND_URL)).toHaveLength(0);
+      expect(await deliveriesWith("fcm:refused")).toEqual([
+        expect.objectContaining({ status: "failed", statusCode: 400, attempts: 1, error: "oauth 400: invalid_grant" }),
+      ]);
+      expect(await subsOf(meera.id)).toHaveLength(1); // the phone is not to blame
+    } finally {
+      process.env.FCM_SERVICE_ACCOUNT = saved;
+    }
   });
 });
 
