@@ -1,5 +1,15 @@
 apply plugin: 'com.android.application'
 
+// The site the app opens and the message watcher talks to. "pnpm cap:sync" copies
+// capacitor.config.ts (server.url, from PB_HOST) into src/main/assets/capacitor.config.json;
+// the build reads the same address, so the WebView and the native code never disagree.
+def syncedConfig = file("src/main/assets/capacitor.config.json")
+def syncedHost = syncedConfig.exists() ? new groovy.json.JsonSlurper().parse(syncedConfig).server?.url?.toString()?.replaceAll('/+$', '') : null
+def host = (project.findProperty("PB_HOST") ?: syncedHost ?: "https://hackathon-teamg-pausebutton-production.up.railway.app").toString().replaceAll('/+$', '')
+if (syncedHost && syncedHost != host) {
+    throw new GradleException("PB_HOST is " + host + " but the app would open " + syncedHost + ". Run: PB_HOST=" + host + " pnpm cap:sync")
+}
+
 android {
     namespace = "ai.apty.pausebutton"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +17,11 @@ android {
         applicationId "ai.apty.pausebutton"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 3
+        versionName "0.3.0"
+        buildConfigField "String", "DEFAULT_HOST", '"' + host + '"'
+        resValue "string", "default_host", host
+        // On a device or emulator: ./gradlew connectedDebugAndroidTest (src/androidTest).
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,11 +29,51 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    signingConfigs {
+        // One shared debug key, committed (android/debug.keystore, the standard
+        // debug password), so every build, on any laptop or CI run, has the same
+        // signature and a newer APK installs over an older one, the 0.2 builds
+        // (before Capacitor) included. Anyone with the repo can sign with it: use
+        // PB_KEYSTORE for a public release.
+        debug {
+            storeFile rootProject.file("debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+        // A real release key when PB_KEYSTORE is set; otherwise the debug key, so
+        // "assembleRelease" always produces an installable APK for the demo.
+        release {
+            def ks = project.findProperty("PB_KEYSTORE")
+            if (ks) {
+                storeFile file(ks)
+                storePassword project.findProperty("PB_KEYSTORE_PASSWORD")
+                keyAlias project.findProperty("PB_KEY_ALIAS")
+                keyPassword project.findProperty("PB_KEY_PASSWORD")
+            } else {
+                initWith signingConfigs.debug
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            // Lets a debug build talk to http://10.0.2.2:3000 (emulator) or a LAN address
+            // (with PB_CLEARTEXT=1 for the WebView, see capacitor.config.ts).
+            manifestPlaceholders = [cleartext: "true"]
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            manifestPlaceholders = [cleartext: "false"]
+            signingConfig signingConfigs.release
         }
+    }
+
+    buildFeatures {
+        buildConfig true
+        resValues true
     }
 }
 
@@ -33,17 +86,28 @@ repositories {
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
-    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
-    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.core:core:$androidxCoreVersion"
+    // The 30-minute sync (SyncWorker).
+    implementation "androidx.work:work-runtime:$androidxWorkVersion"
+    // PauseMessagingService extends the push plugin's Firebase service, so the app compiles against Firebase too.
+    implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
     implementation project(':capacitor-android')
-    testImplementation "junit:junit:$junitVersion"
-    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
-    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+
+    // The message watcher's rules on the JVM: ./gradlew testDebugUnitTest (src/test).
+    // org.json is only a stub in the unit-test android.jar, so the real one comes in.
+    testImplementation "junit:junit:$junitVersion"
+    testImplementation "org.json:json:20250517"
+    // On a device or emulator (src/androidTest).
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test:runner:$androidxTestRunnerVersion"
+    androidTestImplementation "androidx.work:work-testing:$androidxWorkVersion"
 }
 
 apply from: 'capacitor.build.gradle'
 
+// Firebase (push for the Android app) only in a build made with app/google-services.json.
+// Without it everything else works, but alerts reach the phone only while the app is open.
 try {
     def servicesJSON = file('google-services.json')
     if (servicesJSON.text) {

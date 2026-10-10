@@ -1,7 +1,7 @@
-// Top-level build file where you can add configuration options common to all sub-projects/modules.
+// Pause Button for Android: a Capacitor app (the hosted web app in a WebView) plus
+// a native message watcher and push. See README.md and ../README.md.
 
 buildscript {
-    
     repositories {
         google()
         mavenCentral()

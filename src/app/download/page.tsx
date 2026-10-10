@@ -20,8 +20,14 @@ export default function Page() {
             <li>Tap <b>Download for Android</b>, then open the file.</li>
             <li>If Android asks, allow installs from Chrome (or your file app) once.</li>
             <li>If Play Protect warns about an unknown app: <b>More details → Install anyway</b>. This is a test build.</li>
+            <li>
+              Already have Pause Button? Install this one over it. It now opens as its own app, not in Chrome, so sign in once more the first time.
+            </li>
             <li>If Android says <b>App not installed</b>, uninstall the old Pause Button first (early test builds were signed differently), then install again.</li>
-            <li>Open <b>Pause Button</b> and allow notifications, so family alerts reach you.</li>
+            <li>
+              Open <b>Pause Button</b>. When it asks, allow notifications, so family alerts reach you even when the app is closed. You can say no and still use
+              it.
+            </li>
           </ol>
         </section>
 
