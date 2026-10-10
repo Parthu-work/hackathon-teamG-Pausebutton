@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, Screen, Sheet, TitleRow, useToast, VerdictPill } from "@/components/ui";
 import { api, post } from "@/lib/client/api";
-import type { SimMessageView } from "@/lib/views";
+import type { SimMessageView, SimStatus } from "@/lib/views";
 import { useT } from "./shell";
 
 /** P1 · Simulated inbox (demo mode, any phone) · F1a · Share a message to Pause Button */
@@ -22,10 +22,33 @@ export function InboxScreen() {
     onSuccess: () => queryClient.invalidateQueries(),
     onError: (e) => toast({ title: t("inbox.couldNotDeliver"), sub: e.message, icon: "warn", tone: "red" }),
   });
+  // "We could not check this message": the same check again, once per tap.
+  const retry = useMutation({
+    mutationFn: (id: string) => post<{ id: string; checkId: string | null; status: SimStatus }>(`/api/me/inbox/${id}/retry`),
+    onSuccess: (r) => {
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      if (r.checkId) router.push(`/check/${r.checkId}`);
+      else if (r.status === "failed") toast({ title: t("inbox.retryFailed"), icon: "warn", tone: "red" });
+    },
+    onError: () => toast({ title: t("inbox.retryFailed"), icon: "warn", tone: "red" }),
+  });
 
   function open(m: SimMessageView) {
     if (m.checkId) router.push(`/check/${m.checkId}`);
+    else if (m.status === "failed") {
+      if (m.canRetry) retry.mutate(m.id);
+      else toast({ title: t("inbox.couldNotCheck"), sub: t("inbox.textNotKept"), icon: "info" });
+    } else if (m.status === "received") toast({ title: t("inbox.checking"), icon: "info" });
     else toast({ title: m.fromContact ? t("inbox.notChecked") : t("inbox.notWatched"), sub: m.fromContact ? t("inbox.contactsNotChecked") : t("inbox.watchingOff"), icon: "info" });
+  }
+
+  /** The small label on the right: the verdict, or why there is none. */
+  function statusTag(m: SimMessageView) {
+    if (m.verdict && m.verdict !== "SKIPPED") return <VerdictPill verdict={m.verdict} size="small" icon={false} label={t(`verdictLabel.${m.verdict}`)} />;
+    if (m.status === "failed") return <span className="tag a">{t("inbox.statusFailed")}</span>;
+    if (m.status === "received") return <span className="tag">{t("inbox.statusChecking")}</span>;
+    if (m.status === "skipped") return <span className="tag">{m.verdict ?? t("inbox.statusNotWatched")}</span>;
+    return null;
   }
 
   /** F1a · the phone's Share sheet: Pause Button is one of the targets. */
@@ -86,15 +109,20 @@ export function InboxScreen() {
             <span className="src"><Icon name="msg" /></span>
             <div className="grow">
               <b style={{ fontSize: 16 }}>{m.sender}</b>
-              <p className="sm" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.text ?? t("inbox.textNotKept")}</p>
+              {m.canRetry ? (
+                <>
+                  <p className="sm" style={{ color: "var(--text)" }}>{t("inbox.couldNotCheck")}</p>
+                  <p className="sm" style={{ fontWeight: 800 }}>{retry.isPending && retry.variables === m.id ? t("inbox.retrying") : t("inbox.tapToRetry")}</p>
+                </>
+              ) : (
+                <p className="sm" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {m.status === "received" ? t("inbox.checking") : (m.text ?? t("inbox.textNotKept"))}
+                </p>
+              )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
               <span className="sm">{clockTime(m.createdAt)}</span>
-              {m.verdict === "SKIPPED" || m.verdict === null ? (
-                <span className="tag">{m.verdict ?? "NOT WATCHED"}</span>
-              ) : (
-                <VerdictPill verdict={m.verdict} size="small" icon={false} label={t(`verdictLabel.${m.verdict}`)} />
-              )}
+              {statusTag(m)}
             </div>
           </button>
           {m.text && (

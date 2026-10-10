@@ -192,8 +192,15 @@ export function VerdictScreen() {
   const text = c.simText ?? c.messageText ?? loadMessage(id);
   const verdictLabel = (v: "SCAM" | "SUSPICIOUS" | "SAFE") => t(`verdictLabel.${v}`);
 
+  // "Ask" / "Ask anyway" / "Tell": on every verdict, whatever the check said. Family is
+  // alerted by itself only about a scam; anything else reaches them when he asks.
   async function ask() {
-    await post(`/api/me/checks/${id}/ask`, { text: loadMessage(id) ?? undefined });
+    try {
+      await post(`/api/me/checks/${id}/ask`, { text: loadMessage(id) ?? undefined });
+    } catch (e) {
+      toast({ title: t("call.couldNotTell"), sub: helper.all.length ? (e as Error).message : t("hold.addTrusted"), icon: "warn", tone: "red" });
+      return;
+    }
     await queryClient.invalidateQueries({ queryKey: ["check", id] });
     toast({ title: t("verdict.askedToast", { name: helper.first }), sub: t("verdict.answerShows"), icon: "bell" });
   }

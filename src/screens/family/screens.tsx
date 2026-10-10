@@ -276,6 +276,7 @@ function PersonCard({ p, me, serverNow, onOpen }: { p: ProtectedView; me: string
           <p className="sm" style={{ color: "inherit", opacity: 0.85 }}>
             Phone {p.online ? "online" : "offline"} · {p.today.total ? `${p.today.total} checked today` : "no checks today"}
           </p>
+          {p.watcher === "quiet" && <p className="sm" style={{ color: "inherit", fontWeight: 700 }} data-testid="watcher-quiet">{quietPhone(p)}</p>}
         </div>
         <Icon name="chev" />
       </div>
@@ -283,6 +284,9 @@ function PersonCard({ p, me, serverNow, onOpen }: { p: ProtectedView; me: string
     </button>
   );
 }
+
+/** Their Android phone stopped reporting: the server's sync job flags it after an hour, and it clears when the phone is back. */
+const quietPhone = (p: ProtectedView) => `${p.callName}'s phone has not synced for over an hour: new messages may not be checked`;
 
 /** J1 · one person's home: `/family/person/[id]`, or the whole home when only one person is linked. */
 export function PersonScreen() {
@@ -323,6 +327,7 @@ function PersonHome({ person: p, back }: { person: ProtectedView; back?: boolean
         </div>
         <span className="tag g">LINKED</span>
       </div>
+      {p.watcher === "quiet" && <div className="note" data-testid="watcher-quiet"><Icon name="wifi" />{quietPhone(p)}</div>}
       <PushHint />
 
       {hold && !clock.expired && hold.approvedBy.includes(me) && (

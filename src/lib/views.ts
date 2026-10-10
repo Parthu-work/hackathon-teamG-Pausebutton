@@ -176,6 +176,8 @@ export type SimMessageView = {
   phrases: string[];
   /** failed: "We could not check this message" (tap to try again); received: still being checked. */
   status: SimStatus;
+  /** A failed message whose text is still kept (24 hours), so a tap can check it again. */
+  canRetry: boolean;
 };
 
 export type RaoState = {

@@ -10,7 +10,7 @@ import { ensureDemoHousehold, personaUser, resetDemo } from "./demo";
 import { addAdvice, cancelHold, decideHold, holdStatus, toHoldView } from "./holds";
 import { acceptInvite, addPerson, newInviteCode } from "./people";
 import { personBody } from "./schemas";
-import { receiveNext } from "./sim";
+import { listInbox, receiveNext } from "./sim";
 import { familyActivity, familyState, raoState, startOfToday } from "./state";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -168,10 +168,14 @@ describe("simulated inbox", () => {
     const { rao, arjun } = await users();
     await receiveNext(db, rao); // the CBI WhatsApp
     const state = await raoState(db, rao);
-    expect(state.banner).toMatchObject({ verdict: "SCAM", channel: "whatsapp" });
+    expect(state.banner).toMatchObject({ verdict: "SCAM", channel: "whatsapp", status: "checked" });
     expect(state.activeHold).toBeNull();
     const fam = await familyState(db, arjun);
     expect(fam.alerts.map((a) => a.kind)).toEqual(["headsup"]);
+    // Demo messages keep their text; one from a saved contact is skipped, never "could not check".
+    const inbox = await listInbox(db, rao.id);
+    expect(inbox.every((m) => m.text && (m.status === "checked" ? m.checkId : m.status === "skipped" && !m.checkId))).toBe(true);
+    expect(inbox.find((m) => m.fromContact)).toMatchObject({ status: "skipped", verdict: "SKIPPED", canRetry: false });
   });
 });
 
