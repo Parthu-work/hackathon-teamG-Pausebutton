@@ -255,7 +255,7 @@ async function exchangeJwt(sa: ServiceAccount): Promise<AccessToken> {
  * rule), so the app always builds the notification itself and can post the
  * receipt. Urgent alerts go at high priority and expire sooner, as for Web Push.
  */
-export function fcmMessage(payload: PushPayload & { receipt: string }) {
+function fcmMessage(payload: PushPayload & { receipt: string }) {
   const data: Record<string, string> = {
     title: payload.title,
     body: payload.body,
