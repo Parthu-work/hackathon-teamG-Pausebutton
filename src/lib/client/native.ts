@@ -24,6 +24,12 @@ export type WatcherStatus = {
   listenerOn: boolean;
   /** The phone will not stop the app to save battery. */
   batteryUnrestricted: boolean;
+  /**
+   * Android 13+ and installed from a downloaded APK: notification access stays
+   * locked ("Restricted setting") until ⋮ › Allow restricted settings on App info.
+   * Missing in apps from before it was reported.
+   */
+  mayBeRestricted?: boolean;
   /** Messages in the phone's outbox, not yet delivered. */
   waiting: number;
   lastError: string | null;
@@ -41,6 +47,8 @@ export interface PauseButtonNativePlugin {
   watcherStatus(): Promise<WatcherStatus>;
   /** The app's consent screen first if the person has not agreed yet; then Android's notification access settings. */
   openListenerSettings(): Promise<void>;
+  /** The app's App info page (⋮ › Allow restricted settings). Rejects in apps from before it existed. */
+  openAppInfo(): Promise<void>;
   /** Android's "allow running in the background" (ignore battery optimisation) prompt for this app. */
   openBatterySettings(): Promise<void>;
   /** "Disconnect this phone": forgets the token here and tells the server. */

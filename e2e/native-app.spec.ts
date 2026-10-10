@@ -33,7 +33,7 @@ function fakeAndroidApp(fake: Fake) {
   };
   const listeners: Record<string, { id: string; fn: (data: unknown) => void }[]> = {};
   let next = 0;
-  const methods = ["pair", "watcherStatus", "openListenerSettings", "openBatterySettings", "disconnect", "notificationStatus", "requestNotifications", "openNotificationSettings", "pushAvailable"];
+  const methods = ["pair", "watcherStatus", "openListenerSettings", "openAppInfo", "openBatterySettings", "disconnect", "notificationStatus", "requestNotifications", "openNotificationSettings", "pushAvailable"];
   const w = window as unknown as Record<string, unknown>;
   w.__pbNative = state;
   w.__pbResume = () => (listeners["App.resume"] ?? []).forEach((l) => l.fn({}));
@@ -68,7 +68,8 @@ function fakeAndroidApp(fake: Fake) {
         }
         case "watcherStatus": {
           const { paired, userName, consented, listenerOn, batteryUnrestricted, waiting, lastError, lastDeliveredAt, today } = state;
-          return { paired, userName, consented, listenerOn, batteryUnrestricted, waiting, lastError, lastDeliveredAt, today };
+          // Android 13+, installed from the downloaded APK: notification access may be locked.
+          return { paired, userName, consented, listenerOn, batteryUnrestricted, mayBeRestricted: true, waiting, lastError, lastDeliveredAt, today };
         }
         case "openListenerSettings":
           state.consented = true; // agreed on the consent screen, then left Android's list without switching it on
@@ -149,6 +150,10 @@ test("in the Android app, Mr Rao's phone connects itself, and asks for each perm
   await expect(page.getByTestId("cannot-read")).toHaveCount(0);
   await resume(page);
   await expect(page.getByTestId("cannot-read")).toContainText("You can still paste or forward them.");
+  // Android 13+ locks the switch for an app from a downloaded APK: how to unlock it, and the way there.
+  await expect(page.getByTestId("cannot-read")).toContainText("Allow restricted settings");
+  await page.getByTestId("open-app-info").click();
+  expect((await native(page)).calls).toContain("openAppInfo");
 
   // Running in the background: "Not now" asks Android nothing; Continue opens its prompt.
   await page.getByRole("button", { name: "Allow running in the background" }).click();
