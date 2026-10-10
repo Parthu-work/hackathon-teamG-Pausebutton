@@ -48,6 +48,7 @@ jobs:
 
       - name: Run the scheduled purge
         if: ${{ !cancelled() }}
+        shell: bash
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
