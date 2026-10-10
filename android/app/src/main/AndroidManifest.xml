@@ -1,29 +1,116 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Urgent family alerts vibrate. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Android 13+: asked inside the app, only after the web app explains why. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- The message watcher: send what waited once the network is back, and come back after a reboot. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Never SMS or contacts permissions: the watcher reads notifications, once the person agreed. -->
+
+    <!-- allowBackup: message text and the phone's token must not leave through a backup.
+         Debug builds may talk plain http to a laptop (app/build.gradle, cleartext); release builds never.
+         tools:replace: these two are the app's to decide, whatever a library says. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/AppTheme">
+        android:theme="@style/Theme.PauseButton"
+        android:usesCleartextTraffic="${cleartext}"
+        tools:replace="android:allowBackup,android:usesCleartextTraffic">
 
+        <!-- The app: the hosted site in a WebView (Capacitor), full screen, no browser bar. -->
         <activity
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
-            android:label="@string/title_activity_main"
-            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:exported="true"
+            android:label="@string/app_name"
             android:launchMode="singleTask"
-            android:exported="true">
-
+            android:theme="@style/AppTheme.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
         </activity>
 
+        <!-- F1 · "Forward to Pause": Pause Button in the Share sheet of WhatsApp, Messages and any text app. -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="@string/share_label"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- "Connect this phone" from a link opened outside the app: pausebutton://pair?code=…&host=… -->
+        <activity
+            android:name=".PairActivity"
+            android:exported="true"
+            android:label="@string/connect_title">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="pausebutton" android:host="pair" />
+            </intent-filter>
+        </activity>
+
+        <!-- What the watcher reads, sends and keeps; "I agree" comes before notification access. -->
+        <activity
+            android:name=".ConsentActivity"
+            android:exported="false"
+            android:label="@string/connect_title" />
+
+        <!-- After a reboot or an update: asks Android to bind the watcher again, so waiting messages go out. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- F2 · Block payment from the lock screen. -->
+        <receiver
+            android:name=".NotificationActionReceiver"
+            android:exported="false" />
+
+        <!-- Reads new SMS and WhatsApp notifications once the person agreed and allowed notification access. -->
+        <service
+            android:name=".MessageWatcherService"
+            android:exported="true"
+            android:label="@string/watcher_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Push (Firebase Cloud Messaging): this app shows every alert itself, so the plugin's own service goes. -->
+        <service
+            android:name=".PauseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+            tools:node="remove" />
+
+        <!-- Capacitor's WebView: a photo taken for a file input is handed over through this. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -31,11 +118,7 @@
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths"></meta-data>
+                android:resource="@xml/file_paths" />
         </provider>
     </application>
-
-    <!-- Permissions -->
-
-    <uses-permission android:name="android.permission.INTERNET" />
 </manifest>

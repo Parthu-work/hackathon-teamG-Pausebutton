@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status bar icon for Pause Button's notifications: the two bars, white on transparent. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M8.25,5h1.5a1.5,1.5 0,0 1,1.5 1.5v11a1.5,1.5 0,0 1,-1.5 1.5h-1.5a1.5,1.5 0,0 1,-1.5 -1.5v-11a1.5,1.5 0,0 1,1.5 -1.5z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M14.25,5h1.5a1.5,1.5 0,0 1,1.5 1.5v11a1.5,1.5 0,0 1,-1.5 1.5h-1.5a1.5,1.5 0,0 1,-1.5 -1.5v-11a1.5,1.5 0,0 1,1.5 -1.5z" />
+</vector>
