@@ -49,7 +49,9 @@ Push. It gets alerts while closed through Firebase Cloud Messaging (FCM) instead
    Sign-out and Notifications off forget `fcm:<token>` and delete the token on the phone.
 3. **Sending.** `pushToUsers` sends each alert to every phone of the person: Web Push
    to browsers, FCM HTTP v1 (`projects/<project_id>/messages:send`) to the app. Same
-   idempotency key, same `push_deliveries` rows, same rules for who gets what.
+   idempotency key, same `push_deliveries` rows, same rules for who gets what. A server
+   with only one of the two set up sends only to that kind of phone; the other rows stay
+   until it is set up.
 4. **Showing.** The message is data only (no `notification` block), so the app always
    builds the notification itself. Every value is a string: `title`, `body`, `url`,
    `tag`, `urgent` (`"1"`/`"0"`), `kind`, `alertId`, `checkId`, `holdId`, `who`, `at`,
@@ -66,6 +68,7 @@ Push. It gets alerts while closed through Firebase Cloud Messaging (FCM) instead
 | 429, 5xx, no answer | one retry (after Retry-After, up to 5 s), then `failed` |
 | 401 | the cached access token is dropped and the push retried once |
 | any other error (including `INVALID_ARGUMENT` about the message) | `failed`; the phone is kept |
+| Google refuses the service account (`oauth 400: invalid_grant`, …) | `failed`, not retried; the phone is kept. Check `FCM_SERVICE_ACCOUNT` |
 
 **What to configure.**
 - Server: `FCM_SERVICE_ACCOUNT`, the Firebase project's service account key (Firebase
@@ -78,8 +81,6 @@ Push. It gets alerts while closed through Firebase Cloud Messaging (FCM) instead
 - App: `google-services.json` from the same Firebase project, at build time. Without
   it the app works, but cannot get a token: turning Notifications on says push is not
   set up, and alerts reach that phone only while the app is open.
-
-## Delivery health (operators)
 
 ## Delivery health (operators)
 
@@ -130,8 +131,8 @@ When an urgent alert goes to someone with no phone set up for push, the demo log
 | Protocol | `web-push` encryption (RFC 8291 aes128gcm), VAPID signing (RFC 8292), HTTPS POST (RFC 8030), TTL and Urgency headers; the push service's 201 / 429 + Retry-After / 500 / 410 answers | A push service running in the test: it verifies the VAPID JWT and decrypts with the phone's private key | `src/lib/server/push.protocol.test.ts` |
 | Service worker logic | `public/sw.js`: what shows, what a tap opens, lock-screen Block, re-subscribe, receipts | Browser APIs (sandbox stubs) | `src/lib/client/sw.test.ts` |
 | Real browser | Chromium's service worker (the full build, run headless: Playwright's default headless shell cannot show notifications) runs `sw.js`, shows the notification (title, tag, `requireInteraction`, Block buttons), posts the receipt the server accepts; the tap URL opens the paused payment. Papa's screens say "Nobody has seen this yet" after 30 s | The push service: DevTools `ServiceWorker.deliverPushMessage` hands the payload over | `e2e/family-phones.spec.ts` (Push in a real browser) |
-| FCM sending | Database, the service account JWT (signed, then verified with the public key), one token exchange shared and cached, the data-only message (string values, priority and TTL, receipt = delivery id), `UNREGISTERED` and token-`INVALID_ARGUMENT` forget the phone, a refused message does not, 503 then 200, 401 signs in afresh, browser and app recipients of one alert, idempotency, `POST /api/push/subscribe { fcmToken }` | Google's token endpoint and FCM (mocked `fetch`); Web Push (mocked `web-push`) | `src/lib/server/push.fcm.test.ts` |
-| The app's web half | The screens and the server in Chromium: the explanation before Android's prompt, never asking again after "Don't allow", "Turn on in Settings", Connect this phone (pairing with a real code), message reading and background running after saying why | Capacitor's native bridge and Android (a stand-in `window.androidBridge` with the PauseButtonNative plugin) | `e2e/native-app.spec.ts` |
+| FCM sending | Database, the service account JWT (signed, then verified with the public key), one token exchange shared and cached, the data-only message (string values, priority and TTL, receipt = delivery id), `UNREGISTERED` and token-`INVALID_ARGUMENT` forget the phone, a refused message does not, 503 then 200, 401 signs in afresh, a refused service account fails without a retry, app phones left alone while FCM is not set up, browser and app recipients of one alert, idempotency, `POST /api/push/subscribe { fcmToken }` | Google's token endpoint and FCM (mocked `fetch`); Web Push (mocked `web-push`) | `src/lib/server/push.fcm.test.ts` |
+| The app's web half | The screens and the server in Chromium: the explanation before Android's prompt, never asking again after "Don't allow", "Turn on in Settings", Connect this phone (pairing with a real code), message reading and background running after saying why; in a plain browser, the code and `pausebutton://pair` link, and each phone card's sync state (not syncing, last sync, messages waiting) | Capacitor's native bridge and Android (a stand-in `window.androidBridge` with the PauseButtonNative plugin); the device list's sync fields in the last test | `e2e/native-app.spec.ts` |
 
 Not automated, and why: the browser that Playwright ships cannot subscribe to Google's
 push service, no test here runs the Android app itself (its notification, its receipt,

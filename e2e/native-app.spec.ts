@@ -5,7 +5,8 @@ import { expect, test, type Browser, type BrowserContext, type Page } from "@pla
 // and the plugin headers its native side injects) answers as the phone would.
 // Real: the screens, the server, pairing with a code, telling the server
 // "disconnect". Standing in: Android (its permission prompt, its settings
-// screens, the app coming back to the front).
+// screens, the app coming back to the front). The last test is the same
+// Connect screen in a plain browser, where it stays as it was.
 //
 // Each test signs up its own household with the demo sign-in code, so the
 // family-phones tests (which share the demo personas) cannot get in the way.
@@ -141,6 +142,7 @@ test("in the Android app, Mr Rao's phone connects itself, and asks for each perm
   await page.getByRole("button", { name: "Allow message reading" }).click();
   await expect(page.getByRole("dialog")).toContainText("What we read");
   await expect(page.getByRole("dialog")).toContainText("What we never do");
+  expect((await native(page)).calls).not.toContain("openListenerSettings");
   await page.getByTestId("reading-continue").click();
   expect((await native(page)).calls).toContain("openListenerSettings");
   // Back in the app with access still off: it says what still works, and stays usable.
@@ -182,6 +184,7 @@ test("in the Android app, Mr Rao is told why before Android asks about notificat
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await toggle.click(); // on again: the explanation first
   await expect(page.getByRole("dialog")).toContainText("So your family's alerts reach you");
+  expect((await native(page)).calls).not.toContain("requestNotifications");
   await page.getByTestId("notifications-continue").click();
   // (The home screen stays mounted, hidden, behind Settings: its banner says the same.)
   await expect(page.getByTestId("native-notifications-off").filter({ visible: true })).toContainText("Notifications are off for Pause Button");
@@ -223,4 +226,40 @@ test("in the Android app, a family member hears why before Android asks, on the 
   // (By the tab, not a reload: a reload would start the stand-in Android afresh.)
   await ravi.getByRole("link", { name: "Settings" }).click();
   await expect(ravi.getByText("Alerts reach this phone even when the app is closed.")).toBeVisible();
+});
+
+test("in a browser, Connect this phone still gives a code and the app's link, and each phone says whether it still syncs", async ({ browser }) => {
+  // No stand-in Android here: a plain browser.
+  const ctx = await browser.newContext({ extraHTTPHeaders: { "x-real-ip": `10.${randomByte()}.${randomByte()}.${randomByte()}` } });
+  contexts.push(ctx);
+  const page = await ctx.newPage();
+  await signUp(page, randomPhone(), "protected", "Lakshmi");
+  await page.goto("/watch/connect");
+  await page.getByRole("button", { name: "Connect this phone" }).click();
+  const href = await page.getByRole("link", { name: "Open the Pause Button app" }).getAttribute("href");
+  expect(href).toMatch(/^pausebutton:\/\/pair\?code=/);
+  const code = new URL(href!).searchParams.get("code")!;
+  await expect(page.getByText(code, { exact: true })).toBeVisible();
+
+  // The phone to be watched trades the code, as the app does.
+  expect((await page.request.post("/api/device/pair", { data: { code, name: "Test phone" } })).ok()).toBeTruthy();
+  await expect(page.getByText("The app is connected.")).toBeVisible();
+  const card = page.getByTestId("phone-card");
+  await expect(card).toContainText("Test phone");
+  await expect(card.getByTestId("not-syncing")).toHaveCount(0);
+  await expect(card.getByTestId("phone-sync")).toHaveCount(0);
+
+  // Later the server's sync job finds it quiet for over an hour, with messages stuck on it
+  // (the job is not run here: the list the server sends says so).
+  const lastSyncAt = new Date(Date.now() - 90 * 60_000).toISOString();
+  await page.route("**/api/me/devices", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const devices = (await response.json()) as Record<string, unknown>[];
+    await route.fulfill({ response, json: devices.map((d) => ({ ...d, notSyncing: true, lastSeenAt: lastSyncAt, lastSyncAt, waiting: 3 })) });
+  });
+  await expect(card.getByTestId("not-syncing")).toContainText("Not syncing since");
+  await expect(card.getByTestId("not-syncing")).toContainText("Open the Pause Button app on that phone.");
+  await expect(card.getByTestId("phone-sync")).toContainText("Last sync at");
+  await expect(card.getByTestId("phone-sync")).toContainText("3 messages waiting to be sent");
 });
