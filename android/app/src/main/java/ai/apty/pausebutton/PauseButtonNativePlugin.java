@@ -180,7 +180,8 @@ public class PauseButtonNativePlugin extends Plugin {
         if (notificationsAllowed()) {
             permission = "granted";
             canAskAgain = true;
-            Prefs.setNotificationsRefused(getContext(), false); // allowed in Android's settings since
+            // Allowed in Android's settings since a refusal: a later refusal counts afresh.
+            if (Prefs.notificationsRefused(getContext())) Prefs.setNotificationsRefused(getContext(), false);
         } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || Prefs.notificationsRefused(getContext())) {
             permission = "denied"; // switched off in Android's settings: only the person can switch it back on
             canAskAgain = false;

@@ -18,6 +18,7 @@ public class PauseMessagingService extends MessagingService {
     @Override
     public void onMessageReceived(@NonNull RemoteMessage message) {
         super.onMessageReceived(message); // to the web app, when it is open
+        if (message.getData().isEmpty()) return; // not one of the server's alerts (e.g. a console test): Android shows those itself
         PushAlert alert = PushAlert.from(message.getData());
         // Already on a background thread, so the receipt goes out here.
         Alerts.receipt(alert, Alerts.show(this, alert));
