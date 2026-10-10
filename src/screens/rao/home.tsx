@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/icons";
+import { NativeNotificationsBanner } from "@/components/native-notifications";
 import { RaoTabs, Screen, useCall, useClientValue, useToast } from "@/components/ui";
 import examples from "@/data/examples.json";
 import { SIGNAL_TYPES } from "@/lib/check/types";
@@ -151,6 +152,7 @@ export function HomeScreen() {
           <Link className="tag a" href="/setup" style={{ textDecoration: "none" }}>{t("home.addHelper")}</Link>
         )}
       </div>
+      <NativeNotificationsBanner />
       {!ready && (
         <>
           <h1 className="h1" style={{ marginTop: 6 }}>{hour === null ? t("home.afternoon") : t(greetingKey(hour))}</h1>

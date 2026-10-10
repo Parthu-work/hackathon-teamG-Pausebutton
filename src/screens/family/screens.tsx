@@ -2,15 +2,17 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Icon } from "@/components/icons";
+import { NativeNotificationsBanner, useAskNotifications } from "@/components/native-notifications";
 import {
   Avatar, BackButton, clockTime, FamilyTabs, HighlightedText, LoadingScreen, Marks, Screen, Sheet, StatusPill, TitleRow, Toggle,
-  holdTotalMs, useCall, useCountdown, useLeaveIfGone, useToast, VerdictPill,
+  holdTotalMs, useCall, useClientValue, useCountdown, useLeaveIfGone, useToast, VerdictPill,
 } from "@/components/ui";
 import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
-import { closeNotifications, pushPermission, pushStatusText, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
+import { isNativeApp } from "@/lib/client/native";
+import { closeNotifications, pushPermission, pushStatusText, subscribePushPermission, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
 import { signOut } from "@/lib/client/sign-out";
 import { deleteMyAccount } from "@/lib/client/account";
 import { api, ApiError, operatorApi, post } from "@/lib/client/api";
@@ -92,13 +94,17 @@ export function JoinScreen() {
 /** Tells the person what happened after they turned Notifications on. */
 function usePushToast() {
   const toast = useToast();
+  // In the Android app notifications are off for the app, not blocked for a site, and there is no other browser to try.
+  const native = isNativeApp();
   const texts: Record<PushStatus, { title: string; sub: string; tone?: "red" }> = {
     subscribed: { title: "Alerts will reach this phone", sub: "Even when the app is closed" },
-    denied: { title: "Notifications are blocked", sub: "Allow them in your phone's settings for this site", tone: "red" },
+    denied: native
+      ? { title: "Notifications are off for Pause Button", sub: "Turn them on in your phone's settings", tone: "red" }
+      : { title: "Notifications are blocked", sub: "Allow them in your phone's settings for this site", tone: "red" },
     "needs-install": { title: "Install the app first", sub: "Share → Add to Home Screen, then turn this on" },
     unsupported: { title: "This browser cannot alert in the background", sub: "Use Chrome, or install the app" },
     off: { title: "Push is not set up on the server", sub: "Alerts still work while the app is open" },
-    error: { title: "Could not turn on alerts on this phone", sub: "Try again, or use Chrome" },
+    error: { title: "Could not turn on alerts on this phone", sub: native ? "Try again" : "Try again, or use Chrome" },
   };
   return (status: PushStatus) => toast({ ...texts[status], icon: status === "subscribed" ? "bell" : "warn" });
 }
@@ -111,8 +117,9 @@ function AlertToggles() {
   const { data } = useFamily();
   const queryClient = useQueryClient();
   const pushToast = usePushToast();
-  // Reads Notification.permission on every render; "" while rendering on the server.
-  const status = useSyncExternalStore(noSubscribe, pushStatusNow, pushStatusServer);
+  const askNotifications = useAskNotifications("family");
+  // Reads Notification.permission (in the Android app, Android's) on every render; "" while rendering on the server.
+  const status = useSyncExternalStore(subscribePushPermission, pushStatusNow, pushStatusServer);
   const save = useMutation({
     mutationFn: (body: Record<string, boolean>) => api("/api/family/settings", { method: "PATCH", body }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["family-state"] }),
@@ -125,7 +132,8 @@ function AlertToggles() {
   ];
   async function onNotify(on: boolean) {
     if (on) {
-      const result = await subscribeToPush("family"); // asks the phone's permission: must follow the tap
+      const result = await askNotifications(); // asks the phone's permission (the app says why first): must follow the tap
+      if (!result) return; // "Not now"
       pushToast(result);
     } else {
       await unsubscribeFromPush("family");
@@ -135,10 +143,13 @@ function AlertToggles() {
   return (
     <>
       {rows.map(([title, sub, key]) => (
-        <div className="row" key={key}>
-          <div className="grow"><div style={{ fontWeight: 800, fontSize: 18 }}>{title}</div><p className="sm">{key === "alertNotify" && status ? status : sub}</p></div>
-          <Toggle on={data.me[key]} label={title} onChange={(v) => (key === "alertNotify" ? void onNotify(v) : save.mutate({ [key]: v }))} />
-        </div>
+        <Fragment key={key}>
+          <div className="row">
+            <div className="grow"><div style={{ fontWeight: 800, fontSize: 18 }}>{title}</div><p className="sm">{key === "alertNotify" && status ? status : sub}</p></div>
+            <Toggle on={data.me[key]} label={title} onChange={(v) => (key === "alertNotify" ? void onNotify(v) : save.mutate({ [key]: v }))} />
+          </div>
+          {key === "alertNotify" && <NativeNotificationsBanner />}
+        </Fragment>
       ))}
     </>
   );
@@ -151,19 +162,24 @@ const notFramed = () => false;
 
 /**
  * Until this phone allows notifications, alerts reach it only while the app is
- * open: the home screen says so and offers the one tap that fixes it. Hidden in
- * the demo panel's frames, where the phones are simulated.
+ * open: the home screen says so and offers the one tap that fixes it (in the
+ * Android app, the app's own banner). Hidden in the demo panel's frames, where
+ * the phones are simulated.
  */
 function PushHint() {
   const { data } = useFamily();
   const pushToast = usePushToast();
-  const permission = useSyncExternalStore(noSubscribe, pushPermissionNow, pushPermissionServer);
+  const askNotifications = useAskNotifications("family");
+  const permission = useSyncExternalStore(subscribePushPermission, pushPermissionNow, pushPermissionServer);
   const framed = useSyncExternalStore(noSubscribe, inFrameNow, notFramed);
+  const native = useClientValue(isNativeApp, false);
   const [, bump] = useState(0);
+  if (native) return <NativeNotificationsBanner />;
   if (!data || !data.me.alertNotify || framed) return null;
   if (permission !== "default" && permission !== "denied" && permission !== "needs-install") return null;
   async function turnOn() {
-    pushToast(await subscribeToPush("family"));
+    const result = await askNotifications();
+    if (result) pushToast(result);
     bump((n) => n + 1); // re-read the permission
   }
   const copy =
@@ -199,12 +215,13 @@ export function AlertsSetupScreen() {
   const queryClient = useQueryClient();
   const test = useTestAlert();
   const pushToast = usePushToast();
+  const askNotifications = useAskNotifications("family");
   const { data } = useFamily();
   async function done() {
-    // "Done" is the tap that lets us ask for notification permission.
+    // "Done" is the tap that lets us ask for notification permission ("Not now" in the app still finishes).
     if (data?.me.alertNotify ?? true) {
-      const result = await subscribeToPush("family");
-      if (result !== "subscribed") pushToast(result);
+      const result = await askNotifications();
+      if (result && result !== "subscribed") pushToast(result);
     }
     await api("/api/family/settings", { method: "PATCH", body: { alertsReady: true } });
     await queryClient.invalidateQueries({ queryKey: ["family-state"] });

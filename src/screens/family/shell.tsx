@@ -2,8 +2,9 @@
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { Icon } from "@/components/icons";
+import { NativeNotificationsProvider } from "@/components/native-notifications";
 import { PhoneFrame, ToastProvider, useToast } from "@/components/ui";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
 import { takePendingOpen } from "@/lib/client/pending-open";
@@ -59,12 +60,29 @@ function FamilyShellInner({ children }: { children: React.ReactNode }) {
   const offline = q.error instanceof ApiError && q.error.status === 0;
   const wasOffline = useRef(false);
 
-  // Alerts while the app is closed: install the service worker now, and re-register
-  // this phone for the person signed in if it already has permission (endpoints
-  // change, keys rotate, someone else may have signed out on this phone).
+  // Alerts while the app is closed: install the service worker now (the Android
+  // app needs none), and re-register this phone for the person signed in if it
+  // already has permission (endpoints and FCM tokens change, keys rotate,
+  // someone else may have signed out on this phone).
   useEffect(() => {
     void registerServiceWorker().then(() => resyncPush("family"));
   }, []);
+
+  // In the Android app: why we ask before Android's notification prompt, and what to do when they are off.
+  const people = q.data?.people;
+  const callName = people?.length === 1 ? people[0].callName : null;
+  const notifications = useMemo(
+    () => ({
+      why: callName ? `So you hear the moment ${callName} needs you` : "So you hear the moment someone you protect needs you",
+      whySub: "Android will ask if Pause Button may show notifications. Allow it, so a scam alert reaches you even when the app is closed or your phone is locked.",
+      continue: "Continue",
+      notNow: "Not now",
+      off: "Notifications are off for Pause Button",
+      offSub: "Alerts reach you only while the app is open. Turn them on in your phone's settings.",
+      openSettings: "Turn on in Settings",
+    }),
+    [callName],
+  );
 
   // A notification tapped while signed out: now that they are signed in, go where it pointed.
   useEffect(() => {
@@ -148,7 +166,7 @@ function FamilyShellInner({ children }: { children: React.ReactNode }) {
           )
         }
       >
-        {children}
+        <NativeNotificationsProvider app="family" copy={notifications} wanted={q.data?.me.alertNotify ?? false}>{children}</NativeNotificationsProvider>
       </PhoneFrame>
     </FamilyContext.Provider>
   );
