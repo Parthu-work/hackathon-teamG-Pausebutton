@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Icon } from "@/components/icons";
 import { Avatar, LoadingScreen, Screen, Sheet, TitleRow, Toggle, useToast } from "@/components/ui";
 import { api, post } from "@/lib/client/api";
+import { isNativeApp } from "@/lib/client/native";
 import type { PersonView } from "@/lib/views";
 import { useRao } from "./shell";
 
@@ -160,35 +161,74 @@ export function PersonFormScreen() {
   );
 }
 
+/** Copies text; Android's WebView can refuse the Clipboard API, so the old way is tried too. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand("copy");
+      area.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
 /** B3 · Send a separate invite code to each person (step 2 of 3) */
 export function InvitesScreen() {
   const router = useRouter();
   const toast = useToast();
+  const queryClient = useQueryClient();
   const { data } = useRao();
+  // A code past its 24 hours cannot be used: a new one replaces it.
+  const renew = useMutation({
+    mutationFn: (p: PersonView) => post(`/api/me/people/${p.id}/resend`).then(() => p),
+    onSuccess: async (p) => {
+      await queryClient.invalidateQueries({ queryKey: ["rao-state"] });
+      toast({ title: `New code for ${p.name}`, sub: "Send it to them now", icon: "check" });
+    },
+    onError: (e) => toast({ title: "Could not make a new code", sub: e.message, icon: "warn", tone: "red" }),
+  });
   if (!data) return <LoadingScreen />;
   const anyLinked = data.people.some((p) => p.status === "linked");
   const inviteText = (p: PersonView) =>
-    `${data.me.name} added you as a trusted person on Pause Button (demo). Open the app, choose "I protect someone" and enter code ${p.inviteCode}. It works once and ends in 24 hours.`;
+    `${data.me.name} added you as a trusted person on Pause Button (demo). Open ${window.location.origin}, choose "I protect someone" and enter code ${p.inviteCode}. It works once and ends in 24 hours.`;
 
   async function copy(p: PersonView) {
-    try {
-      await navigator.clipboard.writeText(p.inviteCode);
-    } catch {
-      /* clipboard blocked: the code is on screen */
-    }
-    toast({ title: "Invite code copied", sub: `Share it with ${p.name}`, icon: "check" });
+    if (await copyText(inviteText(p))) toast({ title: "Invite copied", sub: `Paste it to ${p.name} in any app`, icon: "check" });
+    else toast({ title: "Could not copy", sub: `Tell ${p.name} the code on screen: ${p.inviteCode}`, icon: "warn" });
   }
 
   async function share(list: PersonView[]) {
     const text = list.map(inviteText).join("\n\n");
-    if (navigator.share) {
-      await navigator.share({ text }).catch(() => {});
-    } else {
-      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+    const whatsapp = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    // In the Android app there is no share sheet and no new windows: leaving the
+    // page for wa.me hands the link to WhatsApp, as a tel: link goes to the dialer.
+    if (isNativeApp()) {
+      window.location.assign(whatsapp);
+      return;
     }
+    if (navigator.share) {
+      try {
+        await navigator.share({ text });
+        return;
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return; // closed the share sheet
+      }
+    }
+    window.open(whatsapp, "_blank", "noopener");
   }
 
-  const waiting = data.people.filter((p) => p.status === "waiting");
+  const waiting = data.people.filter((p) => p.status === "waiting" && !p.codeExpired);
   return (
     <Screen>
       <div className="prog"><b className="on" /><b className="on" /><b /></div>
@@ -205,18 +245,24 @@ export function InvitesScreen() {
           <div className="mono center-text" style={{ fontSize: 30, opacity: p.status === "linked" ? 0.4 : 1 }}>{p.inviteCode}</div>
           {p.status === "linked" ? (
             <p className="sm center-text">{p.name} has joined.</p>
+          ) : p.codeExpired ? (
+            <button className="btn amber sm-btn" disabled={renew.isPending} onClick={() => renew.mutate(p)}>
+              {renew.isPending && renew.variables?.id === p.id ? "Making a new code…" : "Get a new code"}
+            </button>
           ) : (
             <div className="row" style={{ gap: 10 }}>
               <button className="btn green sm-btn" onClick={() => share([p])}><Icon name="msg" />WhatsApp</button>
-              <button className="btn line sm-btn" onClick={() => copy(p)}>Copy code</button>
+              <button className="btn line sm-btn" onClick={() => copy(p)}>Copy invite</button>
             </div>
           )}
         </div>
       ))}
       {waiting.length > 1 && <button className="btn green" onClick={() => share(waiting)}><Icon name="msg" />Share every invite</button>}
       <div className="spacer" />
-      <button className={`btn ${anyLinked ? "amber" : "off"}`} disabled={!anyLinked} onClick={() => router.push("/")}>Start checking messages</button>
-      <p className="sm center-text">{anyLinked ? "You can add more people later in Settings." : "You can start once one person has joined."}</p>
+      <button className={`btn ${anyLinked ? "amber" : "line"}`} onClick={() => router.push("/")}>Start checking messages</button>
+      <p className="sm center-text">
+        {anyLinked ? "You can add more people later in Settings." : "Messages are checked from now on. Your people get alerts once they join."}
+      </p>
     </Screen>
   );
 }
