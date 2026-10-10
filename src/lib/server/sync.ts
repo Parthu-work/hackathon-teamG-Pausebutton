@@ -36,6 +36,8 @@ const LEASE_MINUTES = 15;
 const STUCK_MINUTES = 10;
 /** No finished run for this long: the schedule is not calling us. */
 const OVERDUE_MINUTES = 45;
+/** Each check can wait on the AI: a run stops starting new ones after this long, well inside the lease and the caller's timeout; the rest wait for the next run. */
+const RECHECK_BUDGET_MS = 90_000;
 const BATCH = 100;
 /** The advisory lock that makes claiming a run one at a time ("SYNC"). */
 const SYNC_LOCK = 0x53594e43;
@@ -114,7 +116,9 @@ async function recheckMessages(db: Db, now: Date) {
   const owners = rows.length ? await db.query.users.findMany({ where: inArray(schema.users.id, [...new Set(rows.map((r) => r.userId))]) }) : [];
   let rechecked = 0;
   let recheckFailed = 0;
+  const until = Date.now() + RECHECK_BUDGET_MS;
   for (const row of rows) {
+    if (Date.now() > until) break;
     const owner = owners.find((u) => u.id === row.userId);
     if (!owner) continue;
     try {
