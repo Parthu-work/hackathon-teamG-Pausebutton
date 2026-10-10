@@ -75,8 +75,9 @@ export async function requireAnyUser() {
 }
 
 /**
- * Demo sign-in: the "Continue as …" buttons and the fixed 1234 code. Anyone
- * can use them to become Mr Rao, so a public deploy keeps them off.
+ * Demo sign-in: the "Continue as …" buttons, and sign-in codes shown on
+ * screen instead of sent by SMS (OTP_PROVIDER=demo). Anyone can use them to
+ * become Mr Rao, so a public deploy keeps them off.
  * DEMO_SIGNIN=on or off decides; unset, it is on for a laptop or CI and off
  * on a deployment (Vercel, Railway, Render, Fly.io, Cloud Run, DEPLOYED=1).
  */

@@ -2,11 +2,20 @@ import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { personaUser } from "@/lib/server/demo";
 import { readBody, route } from "@/lib/server/http";
+import { otpSender } from "@/lib/server/otp";
 import { rateLimit } from "@/lib/server/ratelimit";
 import { demoSignInOpen, requireDemoSignIn, setSession } from "@/lib/server/session";
 
-/** Whether the sign-in screen offers sign-in at all (DEMO_SIGNIN). */
-export const GET = route(async () => ({ open: demoSignInOpen() }));
+/**
+ * What the sign-in screen offers. open: the demo buttons (DEMO_SIGNIN).
+ * codes: how a sign-in code arrives: "screen" (the demo sender, while demo
+ * sign-in is on), "sms" (OTP_PROVIDER=sms), or "off" (no way in yet).
+ */
+export const GET = route(async () => {
+  const open = demoSignInOpen();
+  const codes = otpSender().name === "sms" ? "sms" : open ? "screen" : "off";
+  return { open, codes };
+});
 
 /** A1 "Continue as Mr Rao / Mrs Rao / Arjun / Meera (demo)". */
 export const POST = route(async (req) => {

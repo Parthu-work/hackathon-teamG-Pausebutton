@@ -1,14 +1,13 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/lib/db";
-import { displayName } from "@/lib/display-name";
 import { formatPhone } from "@/lib/phone";
 import { readBody, route } from "@/lib/server/http";
 import { otpSender, verifyCode } from "@/lib/server/otp";
 import { rateLimit } from "@/lib/server/ratelimit";
 import { HttpError, requireDemoSignIn, setSession } from "@/lib/server/session";
 
-/** A1 step 2: the mobile number and the code from /api/auth/code. */
+/** A1 step 2: the mobile number and the code from /api/auth/code. A new number goes on to /role. */
 export const POST = route(async (req) => {
   if (otpSender().name === "demo") requireDemoSignIn();
   const db = await getDb();
@@ -31,5 +30,5 @@ export const POST = route(async (req) => {
     return { redirect: "/family" };
   }
   await setSession("pending", user.id);
-  return { redirect: "/role", suggestedName: displayName(user.name, { full: true }) };
+  return { redirect: "/role" };
 });
