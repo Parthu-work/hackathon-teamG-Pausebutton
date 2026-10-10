@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Icon } from "@/components/icons";
 import { clockTime, Screen, Sheet, TitleRow, useToast, VerdictPill } from "@/components/ui";
-import { api, post } from "@/lib/client/api";
+import { api, ApiError, post } from "@/lib/client/api";
 import type { SimMessageView, SimStatus } from "@/lib/views";
 import { useT } from "./shell";
 
@@ -22,7 +22,7 @@ export function InboxScreen() {
     onSuccess: () => queryClient.invalidateQueries(),
     onError: (e) => toast({ title: t("inbox.couldNotDeliver"), sub: e.message, icon: "warn", tone: "red" }),
   });
-  // "We could not check this message": the same check again, once per tap.
+  // "We could not check this message": the same check again, one try at a time.
   const retry = useMutation({
     mutationFn: (id: string) => post<{ id: string; checkId: string | null; status: SimStatus }>(`/api/me/inbox/${id}/retry`),
     onSuccess: (r) => {
@@ -30,14 +30,19 @@ export function InboxScreen() {
       if (r.checkId) router.push(`/check/${r.checkId}`);
       else if (r.status === "failed") toast({ title: t("inbox.retryFailed"), icon: "warn", tone: "red" });
     },
-    onError: () => toast({ title: t("inbox.retryFailed"), icon: "warn", tone: "red" }),
+    onError: (e) => {
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      // 410: its text is gone (24 hours), so nobody can check it again.
+      if (e instanceof ApiError && e.status === 410) toast({ title: t("inbox.couldNotCheck"), sub: t("inbox.textNotKept"), icon: "info" });
+      else toast({ title: t("inbox.retryFailed"), icon: "warn", tone: "red" });
+    },
   });
 
   function open(m: SimMessageView) {
     if (m.checkId) router.push(`/check/${m.checkId}`);
     else if (m.status === "failed") {
-      if (m.canRetry) retry.mutate(m.id);
-      else toast({ title: t("inbox.couldNotCheck"), sub: t("inbox.textNotKept"), icon: "info" });
+      if (!m.canRetry) toast({ title: t("inbox.couldNotCheck"), sub: t("inbox.textNotKept"), icon: "info" });
+      else if (!retry.isPending) retry.mutate(m.id); // a second tap waits for the first try
     } else if (m.status === "received") toast({ title: t("inbox.checking"), icon: "info" });
     else toast({ title: m.fromContact ? t("inbox.notChecked") : t("inbox.notWatched"), sub: m.fromContact ? t("inbox.contactsNotChecked") : t("inbox.watchingOff"), icon: "info" });
   }

@@ -28,9 +28,12 @@ jobs:
   sync:
     name: Run the sync job
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Three tries of at most 2 minutes each, 10 s apart.
+    timeout-minutes: 8
     steps:
       - name: Run the sync job
+        # bash, not the default shell: with pipefail a failed curl fails the step, though tee succeeds.
+        shell: bash
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |

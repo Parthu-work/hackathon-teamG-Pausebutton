@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { SHARE_TEXT_HOURS } from "@/lib/check/config";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
@@ -102,6 +102,14 @@ async function claimRun(db: Db, now: Date): Promise<SyncRun | null> {
 async function recheckMessages(db: Db, now: Date) {
   const m = schema.simMessages;
   const stuck = new Date(now.getTime() - STUCK_MINUTES * 60_000);
+  // A last try that was cut off is not tried again here: the message reads
+  // "could not check" (not "Checking…" for a day), so Mr Rao can still tap it.
+  const interrupted = await db
+    .update(m)
+    .set({ status: "failed", error: "interrupted" })
+    .where(and(eq(m.status, "received"), isNull(m.checkId), gte(m.attempts, MAX_ATTEMPTS), lt(m.lastTriedAt, stuck)))
+    .returning({ id: m.id });
+  for (const row of interrupted) log.info("sync_recheck", { simMessageId: row.id, status: "failed", error: "interrupted" });
   const rows = await db.query.simMessages.findMany({
     where: and(
       isNull(m.checkId),

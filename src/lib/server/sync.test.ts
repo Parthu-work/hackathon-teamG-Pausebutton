@@ -335,6 +335,22 @@ describe("the 30-minute sync job", () => {
     expect(await rowById(old.id)).toMatchObject({ status: "failed", attempts: 1 });
   });
 
+  it("a last try cut off half-way is not tried again, but reads \"could not check\" so Mr Rao can tap it", async () => {
+    const { papa } = await household();
+    const cutOff = { userId: papa.id, channel: "sms" as const, sender: SENDER, text: text("lottery"), status: "received" as const, attempts: MAX_ATTEMPTS };
+    const [stuck] = await db.insert(schema.simMessages).values({ ...cutOff, lastTriedAt: new Date(Date.now() - 15 * MINUTE) }).returning();
+    const [busy] = await db.insert(schema.simMessages).values({ ...cutOff, lastTriedAt: new Date() }).returning();
+    await runSync(db);
+    expect(await rowById(stuck.id)).toMatchObject({ status: "failed", error: "interrupted", attempts: MAX_ATTEMPTS, checkId: null, text: text("lottery") });
+    expect(await rowById(busy.id)).toMatchObject({ status: "received", attempts: MAX_ATTEMPTS });
+    expect(await checksOf(papa.id)).toEqual([]);
+    expect((await listInbox(db, papa.id)).find((m) => m.id === stuck.id)).toMatchObject({ status: "failed", canRetry: true });
+
+    const tapped = await retryMessage(db, papa, stuck.id);
+    expect(tapped).toMatchObject({ status: "checked", duplicate: false });
+    expect(await rowById(stuck.id)).toMatchObject({ status: "checked", checkId: tapped.checkId, error: null, text: null });
+  });
+
   it("two runs at once: one works, the other stops; a run that crashed is taken over", async () => {
     checker.delayMs = 50; // give the first run something to do while the second asks
     const { token } = await household();
@@ -354,7 +370,7 @@ describe("the 30-minute sync job", () => {
   });
 
   it("pushes a scam alert once more when no phone confirmed it, and never one that was confirmed or opened", async () => {
-    const { papa, son, daughter, token } = await household();
+    const { son, daughter, token } = await household();
     const first = (await watcherPost(token, { text: text("cbi") }, crypto.randomUUID())).body;
     const second = (await watcherPost(token, { text: text("kyc") }, crypto.randomUUID())).body;
     const alerts = await alertsOn([first.checkId!, second.checkId!]);
@@ -379,7 +395,6 @@ describe("the 30-minute sync job", () => {
     sendNotification.mockClear();
     expect(await runSync(db)).toMatchObject({ repushed: 0 });
     expect(sendNotification).not.toHaveBeenCalled();
-    expect(papa).toBeTruthy();
   });
 
   it("flags a phone silent for over an hour, once, and clears it when the phone is heard from", async () => {
