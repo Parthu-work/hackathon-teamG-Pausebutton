@@ -1,16 +1,20 @@
 "use client";
 
+import type { PluginListenerHandle } from "@capacitor/core";
 import { api, post } from "./api";
+import { isNativeApp, nativeBridge, onAppResume, type NativePermission, type NotificationStatus } from "./native";
 
-// Alerts while the app is closed: the phone registers a service worker and a
-// Web Push subscription, which the server uses when an alert is created.
-// Android Chrome: works from the browser (and inside the Android app, which
-// opens the site in Chrome). iPhone: only once the app is installed to the
-// home screen (iOS 16.4+).
+// Alerts while the app is closed.
+// - In a browser: a service worker and a Web Push subscription, which the
+//   server uses when an alert is created. Android Chrome: works from the
+//   browser. iPhone: only once the app is installed to the home screen
+//   (iOS 16.4+).
+// - In the Android app: Android's own notification permission and an FCM
+//   token; the app shows the notification itself (no service worker).
 //
-// One subscription per browser. It is re-sent to the server on every app
-// start, so the phone always belongs to the person who is signed in, and it
-// is replaced when the server's key changed. Sign-out forgets it.
+// One registration per phone. It is re-sent to the server on every app start,
+// so the phone always belongs to the person who is signed in, and it is
+// replaced when the server's key (or the FCM token) changed. Sign-out forgets it.
 
 export type PushApp = "rao" | "family";
 export type PushStatus = "subscribed" | "denied" | "unsupported" | "needs-install" | "off" | "error";
@@ -29,15 +33,19 @@ export function needsInstall() {
   return ios && !standalone;
 }
 
+const FROM_NATIVE: Record<NativePermission, PushPermission> = { granted: "granted", prompt: "default", denied: "denied" };
+
 /** What this phone can do right now: the settings and the home screen hint read this. */
 export function pushPermission(): PushPermission {
   if (typeof window === "undefined") return "unsupported";
+  if (isNativeApp()) return FROM_NATIVE[nativeStatus?.permission ?? "prompt"];
   if (!pushSupported()) return needsInstall() ? "needs-install" : "unsupported";
   return Notification.permission;
 }
 
 export async function registerServiceWorker() {
-  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
+  // The Android app shows its own notifications: no service worker there.
+  if (typeof window === "undefined" || !("serviceWorker" in navigator) || isNativeApp()) return null;
   try {
     // updateViaCache "none": a new sw.js reaches phones on the next start, not after the HTTP cache expires.
     return await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
@@ -96,8 +104,14 @@ export function inFrame() {
   }
 }
 
-/** Asks for permission (must follow a tap) and registers this phone with the server for the signed-in person. */
+/**
+ * Asks for permission (must follow a tap) and registers this phone with the
+ * server for the signed-in person. In the Android app, show the explanation
+ * first (NativeNotificationsProvider's ask does): this one goes straight to
+ * Android's prompt.
+ */
 export async function subscribeToPush(app: PushApp): Promise<PushStatus> {
+  if (isNativeApp()) return subscribeNative(app);
   if (!pushSupported()) return needsInstall() ? "needs-install" : "unsupported";
   if (inFrame()) return "unsupported";
   const { publicKey } = await api<{ publicKey: string | null }>("/api/push/key");
@@ -118,6 +132,13 @@ export async function subscribeToPush(app: PushApp): Promise<PushStatus> {
 
 /** "Notifications" off: the server forgets this phone for this person, then the phone drops the subscription. */
 export async function unsubscribeFromPush(app: PushApp) {
+  if (isNativeApp()) {
+    const token = fcmToken();
+    if (!token) return;
+    await api("/api/push/subscribe", { method: "DELETE", body: { endpoint: fcmEndpoint(token), app } }).catch(() => {});
+    await dropFcmToken();
+    return;
+  }
   if (!pushSupported()) return;
   const reg = await navigator.serviceWorker.getRegistration();
   const sub = await reg?.pushManager.getSubscription();
@@ -132,6 +153,13 @@ export async function unsubscribeFromPush(app: PushApp) {
  * rotate, another person may have signed out on this phone). Never prompts.
  */
 export async function resyncPush(app: PushApp) {
+  if (isNativeApp()) {
+    resyncApp = app;
+    watchNativeStatus();
+    const status = await refreshNativeStatus();
+    if (status?.permission === "granted") await registerNative(app).catch((error) => console.warn("[push] resync:", error));
+    return;
+  }
   if (!pushSupported() || Notification.permission !== "granted" || inFrame()) return;
   try {
     const reg = await registerServiceWorker();
@@ -147,6 +175,10 @@ export async function resyncPush(app: PushApp) {
 
 /** This phone's push endpoint, so sign-out can tell the server which phone to forget. */
 export async function currentPushEndpoint(): Promise<string | null> {
+  if (isNativeApp()) {
+    const token = fcmToken();
+    return token ? fcmEndpoint(token) : null;
+  }
   if (!pushSupported()) return null;
   try {
     const reg = await navigator.serviceWorker.getRegistration();
@@ -159,6 +191,7 @@ export async function currentPushEndpoint(): Promise<string | null> {
 
 /** Drops the phone's subscription (after sign-out). The next sign-in makes a fresh one without asking again. */
 export async function dropPushSubscription() {
+  if (isNativeApp()) return dropFcmToken();
   if (!pushSupported()) return;
   try {
     const reg = await navigator.serviceWorker.getRegistration();
@@ -171,6 +204,17 @@ export async function dropPushSubscription() {
 
 /** Closes the system notifications whose tag matches: an alert that was opened or handled in the app needs no reminder. */
 export async function closeNotifications(match: (tag: string) => boolean) {
+  if (isNativeApp()) {
+    try {
+      const { PushNotifications } = await import("@capacitor/push-notifications");
+      const { notifications } = await PushNotifications.getDeliveredNotifications();
+      const done = notifications.filter((n) => n.tag && match(n.tag));
+      if (done.length) await PushNotifications.removeDeliveredNotifications({ notifications: done });
+    } catch {
+      /* nothing to close */
+    }
+    return;
+  }
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
   try {
     const reg = await navigator.serviceWorker.getRegistration();
@@ -183,8 +227,174 @@ export async function closeNotifications(match: (tag: string) => boolean) {
 
 /** What the settings screen says under the Notifications toggle. */
 export function pushStatusText(): string {
+  if (isNativeApp()) {
+    const permission = pushPermission();
+    if (permission === "granted") return "Alerts reach this phone even when the app is closed.";
+    if (permission === "denied") return "Notifications are off for Pause Button in your phone's settings.";
+    return "Turn on Notifications so alerts reach you when the app is closed.";
+  }
   if (!pushSupported()) return needsInstall() ? "Install the app on your home screen to get alerts when it is closed." : "This browser cannot show alerts when the app is closed.";
   if (Notification.permission === "granted") return "Alerts reach this phone even when the app is closed.";
   if (Notification.permission === "denied") return "Alerts are blocked in your phone's settings for this site.";
   return "Turn on Notifications so alerts reach you when the app is closed.";
+}
+
+// ---------------- the Android app ----------------
+//
+// Android decides the permission. It is read when the app starts and each time
+// it comes back to the front (the person may have changed it in Android's
+// settings), and kept here, so screens read it synchronously, as they read
+// Notification.permission in a browser, and re-render when it changes
+// (subscribePushPermission, for useSyncExternalStore).
+
+let nativeStatus: NotificationStatus | null = null;
+const permissionListeners = new Set<() => void>();
+let watching = false;
+/** The app that last re-registered this phone, so a permission given in Android's settings registers it at once. */
+let resyncApp: PushApp | null = null;
+
+function setNativeStatus(next: NotificationStatus) {
+  if (nativeStatus?.permission === next.permission && nativeStatus.canAskAgain === next.canAskAgain) return;
+  nativeStatus = { permission: next.permission, canAskAgain: next.canAskAgain };
+  for (const fn of permissionListeners) fn();
+}
+
+async function refreshNativeStatus(): Promise<NotificationStatus | null> {
+  const bridge = nativeBridge();
+  if (!bridge) return null;
+  try {
+    setNativeStatus(await bridge.notificationStatus());
+  } catch (error) {
+    console.warn("[push] notification status:", error);
+  }
+  return nativeStatus;
+}
+
+function watchNativeStatus() {
+  if (watching || !isNativeApp()) return;
+  watching = true;
+  void refreshNativeStatus();
+  onAppResume(() => {
+    const before = nativeStatus?.permission;
+    void refreshNativeStatus().then((now) => {
+      if (before !== "granted" && now?.permission === "granted" && resyncApp) void resyncPush(resyncApp);
+    });
+  });
+}
+
+/** For useSyncExternalStore: re-renders when the Android app's notification permission changes. Nothing to watch in a browser. */
+export function subscribePushPermission(onChange: () => void) {
+  if (!isNativeApp()) return () => {};
+  watchNativeStatus();
+  permissionListeners.add(onChange);
+  return () => {
+    permissionListeners.delete(onChange);
+  };
+}
+
+/** In the Android app: the notification permission as last read (null before the first read, and in a browser). */
+export function nativeNotificationStatus(): NotificationStatus | null {
+  return nativeStatus;
+}
+
+/** A second tap while Android's prompt is up gets the first tap's answer, not a second prompt. */
+let subscribing: Promise<PushStatus> | null = null;
+
+function subscribeNative(app: PushApp): Promise<PushStatus> {
+  subscribing ??= askAndRegister(app).finally(() => (subscribing = null));
+  return subscribing;
+}
+
+async function askAndRegister(app: PushApp): Promise<PushStatus> {
+  const bridge = nativeBridge()!;
+  try {
+    let status = await bridge.notificationStatus();
+    // "Don't allow" for good: Android would not ask again, so neither do we (the screens offer its settings).
+    if (status.permission === "denied" && !status.canAskAgain) {
+      setNativeStatus(status);
+      return "denied";
+    }
+    if (status.permission !== "granted") status = await bridge.requestNotifications();
+    setNativeStatus(status);
+    if (status.permission !== "granted") return "denied";
+    return await registerNative(app);
+  } catch (error) {
+    console.warn("[push] subscribe:", error);
+    return "error";
+  }
+}
+
+/** Sends this phone's FCM token to the server for the signed-in person. "off" when this build or the server has no FCM. */
+async function registerNative(app: PushApp): Promise<PushStatus> {
+  const [{ available }, { fcm }] = await Promise.all([nativeBridge()!.pushAvailable(), api<{ fcm?: boolean }>("/api/push/key")]);
+  if (!available || !fcm) return "off";
+  const token = await askFcmToken();
+  await post("/api/push/subscribe", { fcmToken: token, app });
+  storeFcmToken(token);
+  return "subscribed";
+}
+
+const TOKEN_KEY = "pb-fcm-token";
+const TOKEN_WAIT_MS = 10_000;
+let lastToken: string | null = null;
+let asking: Promise<string> | null = null;
+
+const fcmEndpoint = (token: string) => `fcm:${token}`;
+
+/** The FCM token this phone last registered, so sign-out and "Notifications off" can name it. */
+function fcmToken(): string | null {
+  if (lastToken) return lastToken;
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeFcmToken(token: string | null) {
+  lastToken = token;
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* kept in memory only */
+  }
+}
+
+/** Firebase's token for this phone, through the push plugin: register, then wait for its answer. */
+function askFcmToken(): Promise<string> {
+  asking ??= (async () => {
+    const { PushNotifications } = await import("@capacitor/push-notifications");
+    const handles: Promise<PluginListenerHandle>[] = [];
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("no FCM token")), TOKEN_WAIT_MS);
+        const settle = (fn: () => void) => {
+          clearTimeout(timer);
+          fn();
+        };
+        handles.push(PushNotifications.addListener("registration", (t) => settle(() => resolve(t.value))));
+        handles.push(PushNotifications.addListener("registrationError", (e) => settle(() => reject(new Error(e.error)))));
+        // Listening first: the answer can come at once.
+        Promise.all(handles)
+          .then(() => PushNotifications.register())
+          .catch((error) => settle(() => reject(error)));
+      });
+    } finally {
+      for (const h of handles) void h.then((x) => x.remove()).catch(() => {});
+    }
+  })().finally(() => (asking = null));
+  return asking;
+}
+
+/** Deletes this phone's FCM token (the next registration gets a new one). Only when one was registered: a build without Firebase has none. */
+async function dropFcmToken() {
+  if (!fcmToken()) return;
+  storeFcmToken(null);
+  try {
+    const { PushNotifications } = await import("@capacitor/push-notifications");
+    await PushNotifications.unregister();
+  } catch {
+    /* nothing to drop */
+  }
 }

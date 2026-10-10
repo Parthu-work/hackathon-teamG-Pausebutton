@@ -2,6 +2,7 @@ package ai.apty.pausebutton;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -10,12 +11,16 @@ import android.content.Intent;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.work.Configuration;
+import androidx.work.testing.SynchronousExecutor;
+import androidx.work.testing.WorkManagerTestInitHelper;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 
 import org.json.JSONObject;
@@ -26,9 +31,10 @@ import org.junit.runner.RunWith;
 
 /**
  * The message watcher on a real Android device (CI runs it on an emulator):
- * dedup and the offline queue across a restart, pairing, and both ways of
- * being disconnected. The notification listener itself needs a person to
- * allow access, so these drive the {@link Watcher} it hands messages to.
+ * dedup and the offline queue across a restart, the Idempotency-Key on every
+ * try, pairing, and both ways of being disconnected. The notification
+ * listener itself needs a person to allow access, so these drive the
+ * {@link Watcher} it hands messages to.
  */
 @RunWith(AndroidJUnit4.class)
 public class WatcherDeviceTest {
@@ -37,18 +43,28 @@ public class WatcherDeviceTest {
     private StubServer server;
     private Watcher watcher;
 
-    @Before
-    public void setUp() throws Exception {
-        ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    /**
+     * A connected phone that agreed, talking to {@code server}, with nothing
+     * left from an earlier test, and a test WorkManager: the 30-minute sync
+     * runs only when a test says so.
+     */
+    static Watcher fresh(Context ctx, StubServer server) {
+        WorkManagerTestInitHelper.initializeTestWorkManager(ctx, new Configuration.Builder().setExecutor(new SynchronousExecutor()).build());
         Watcher.restart(ctx); // stops the previous test's watcher before its files go
         ctx.getSharedPreferences("pause_button", Context.MODE_PRIVATE).edit().clear().commit();
         new File(ctx.getNoBackupFilesDir(), "outbox.json").delete();
         new File(ctx.getNoBackupFilesDir(), "seen.json").delete();
-        server = new StubServer();
         Prefs.setHost(ctx, server.url());
         Prefs.setConsent(ctx, System.currentTimeMillis());
         Prefs.setPaired(ctx, "token-1", "Mr Rao");
-        watcher = Watcher.restart(ctx);
+        return Watcher.restart(ctx);
+    }
+
+    @Before
+    public void setUp() throws Exception {
+        ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        server = new StubServer();
+        watcher = fresh(ctx, server);
     }
 
     @After
@@ -68,7 +84,7 @@ public class WatcherDeviceTest {
     }
 
     @Test
-    public void aMessageGoesToTheServerWithTheToken() throws Exception {
+    public void aMessageGoesToTheServerWithTheTokenAndItsOwnIdempotencyKey() throws Exception {
         message("+91 90000 00001", "Sir this is CBI Mumbai");
         List<StubServer.Request> sent = server.requests(INBOX);
         assertEquals(1, sent.size());
@@ -77,7 +93,33 @@ public class WatcherDeviceTest {
         assertEquals("whatsapp", body.getString("channel"));
         assertEquals("+91 90000 00001", body.getString("sender"));
         assertFalse(body.getBoolean("fromContact"));
+        assertNotNull(sent.get(0).idempotencyKey);
+        assertEquals(sent.get(0).idempotencyKey, body.getString("messageId"));
         assertEquals(1, Prefs.today(ctx).get(DayCounts.SENT));
+    }
+
+    @Test
+    public void aRetryCarriesTheSameIdempotencyKey_soTheServerChecksTheMessageOnce() throws Exception {
+        server.respond(INBOX, 503, "{\"error\":\"Something went wrong. Please try again.\"}");
+        message("+91 90000 00003", "Your KYC is expiring");
+        assertEquals(1, watcher.waiting());
+        watcher.kick(); // the network is back, or the app was opened
+        watcher.awaitIdle();
+        List<StubServer.Request> sent = server.requests(INBOX);
+        assertEquals(2, sent.size());
+        assertEquals(sent.get(0).idempotencyKey, sent.get(1).idempotencyKey);
+        assertEquals(0, watcher.waiting());
+    }
+
+    @Test
+    public void accepted202_theServerChecksItAgainItself_soThePhoneNeverResends() throws Exception {
+        server.respond(INBOX, 202, "{\"id\":\"m1\",\"checkId\":null,\"status\":\"failed\",\"settings\":{\"watchSms\":true,\"watchWhatsapp\":true,\"unknownOnly\":true}}");
+        message("+91 90000 00004", "Pay the electricity bill now or be cut off");
+        assertEquals(0, watcher.waiting());
+        assertEquals(1, Prefs.today(ctx).get(DayCounts.SENT));
+        watcher.kick();
+        watcher.awaitIdle();
+        assertEquals(1, server.requests(INBOX).size());
     }
 
     @Test
@@ -110,6 +152,10 @@ public class WatcherDeviceTest {
         assertEquals(Arrays.asList("first", "second", "third"), sentTexts());
         assertEquals(0, watcher.waiting());
         assertEquals(3, Prefs.today(ctx).get(DayCounts.SENT));
+        // Each message its own key, kept through the restart.
+        HashSet<String> keys = new HashSet<>();
+        for (StubServer.Request r : server.requests(INBOX)) keys.add(r.idempotencyKey);
+        assertEquals(3, keys.size());
     }
 
     @Test

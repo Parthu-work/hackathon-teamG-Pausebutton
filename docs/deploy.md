@@ -8,8 +8,8 @@
 | A real Postgres (`DATABASE_URL`) | The embedded PGlite writes to local disk, which hosts wipe on every deploy. Deployments refuse to start without it. | `src/lib/db/index.ts` |
 | Run migrations before the new version takes traffic | `pnpm db:migrate` applies `drizzle/*.sql` | `scripts/migrate.ts` |
 | HTTPS | Web Push, "Add to Home screen" and the Android app (`PB_HOST`) only work over HTTPS | `src/lib/server/push.ts`, `android/` |
-| Secrets: `SESSION_SECRET`, `FINGERPRINT_SECRET`, `OPERATOR_KEY`, `CRON_SECRET`, `VAPID_*` | Sign sessions, key fingerprints, lock `/demo` and `/tests`, unlock the hourly purge, send push | `.env.example` |
-| Nothing long-running | No queue, no WebSocket: phones poll every 2–5 s and push is sent inside the request. The one scheduled job, the hourly purge ([retention.md](retention.md)), is an HTTP call from GitHub Actions. Serverless works, and so does a server that sleeps. | `src/screens/rao/shell.tsx`, `src/lib/server/push.ts`, `src/lib/server/retention.ts` |
+| Secrets: `SESSION_SECRET`, `FINGERPRINT_SECRET`, `OPERATOR_KEY`, `CRON_SECRET`, `VAPID_*`, optionally `FCM_SERVICE_ACCOUNT` | Sign sessions, key fingerprints, lock `/demo` and `/tests`, unlock the scheduled purge and sync, send push (Web Push; FCM for the Android app) | `.env.example` |
+| Nothing long-running | No queue, no WebSocket: phones poll every 2–5 s and push is sent inside the request. The scheduled jobs, the hourly purge ([retention.md](retention.md)) and the 30-minute sync (`POST /api/cron/sync`), are HTTP calls from GitHub Actions. Serverless works, and so does a server that sleeps. | `src/screens/rao/shell.tsx`, `src/lib/server/push.ts`, `src/lib/server/retention.ts` |
 | Close to India | The users are in India: Singapore is the nearest region on every host | `vercel.json` (`sin1`) |
 
 ## Recommendation
@@ -51,7 +51,7 @@ Free-plan terms change often. These figures were checked in October 2026; confir
 
 1. vercel.com → **Add New → Project** → import `hackathon-teamG-Pausebutton`. Framework: Next.js (detected). Leave the build command alone: `vercel.json` runs `pnpm db:migrate && pnpm build` in `sin1`.
 2. **Settings → Environment Variables**, for Production and Preview:
-   `DATABASE_URL` (pooled), `SESSION_SECRET`, `FINGERPRINT_SECRET`, `OPERATOR_KEY`, `CRON_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT=mailto:<team email>`, `DEMO_RAO_PHONE`, `DEMO_MOM_PHONE`, `DEMO_ARJUN_PHONE`, `DEMO_MEERA_PHONE`, and optionally `ANTHROPIC_API_KEY`, `ANDROID_CERT_SHA256`.
+   `DATABASE_URL` (pooled), `SESSION_SECRET`, `FINGERPRINT_SECRET`, `OPERATOR_KEY`, `CRON_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT=mailto:<team email>`, `DEMO_RAO_PHONE`, `DEMO_MOM_PHONE`, `DEMO_ARJUN_PHONE`, `DEMO_MEERA_PHONE`, and optionally `ANTHROPIC_API_KEY`, `OTP_PROVIDER` (`demo`, the default, shows sign-in codes on screen while demo sign-in is on; `sms` is a placeholder until a provider is wired in) and `FCM_SERVICE_ACCOUNT` (push to the Android app, see "Android app: push with Firebase").
    - Optional: the **Neon integration** (Vercel Marketplace) gives every preview its own database branch, so previews don't share data with production.
 3. Deploy. Check `https://<project>.vercel.app/api/health` returns `{"ok":true}`.
 4. Set the GitHub repository variable `PB_HOST` to the production URL so the CI-built Android APK points at it.
@@ -75,10 +75,9 @@ Railway has deprecated `railway.json` (Config as Code), and new services ignore 
    - **Networking → Generate Domain** (gives `https://<name>.up.railway.app`).
    - **Serverless / App Sleeping:** on. The server stops after about 10 min without traffic and wakes on the next request in a few seconds. This stretches the free credit; push is sent inside the request, so nothing is lost while it sleeps.
 3. **Variables:** the same list as Vercel, with the **direct** Neon string as `DATABASE_URL`.
-   - `ANDROID_CERT_SHA256=E1:5A:42:AC:11:84:2D:CA:5A:4D:E0:CC:B5:2F:85:A5:A3:EA:4C:49:3C:12:90:40:8E:ED:D2:D0:E8:C7:63:B0` (the shared debug key in `android/debug.keystore`), so the Android app opens full screen.
    - Using Railway's own Postgres instead: **New → Database → PostgreSQL**, then set `DATABASE_URL=${{Postgres.DATABASE_URL}}`. Simpler, but it uses credit around the clock and doesn't sleep.
 4. Set the deploy settings in the table above, deploy, then open `/api/health`: it must answer `{"ok":true}`.
-5. Watch **Usage** in the Railway dashboard. When the trial credit runs out, either upgrade to Hobby ($5/month) or move to Option A; the database and secrets stay the same, so phones keep working once the URL changes on them (the Android app lets the person change the host).
+5. Watch **Usage** in the Railway dashboard. When the trial credit runs out, either upgrade to Hobby ($5/month) or move to Option A; the database and secrets stay the same, so phones keep working once they use the new URL (the Android app opens the address it was built for: set `PB_HOST` and publish it again, then install the new APK over the old one).
 
 ## Other hosts
 
@@ -88,11 +87,23 @@ The app checks for `VERCEL`, `RAILWAY_ENVIRONMENT_NAME`, `RENDER`, `FLY_APP_NAME
 
 ## Sharing the Android app with a QR code
 
+The Android app (`android/`, see its README) is a Capacitor app: it opens the deployed site full screen, with no browser bar, so the site needs nothing for it. `ANDROID_CERT_SHA256` and `/.well-known/assetlinks.json` were for the earlier Chrome-based app and are no longer needed (the route stays and answers an empty list without the variable).
+
 1. Optional: set the repository variable `PB_HOST` to the deployed URL (GitHub → Settings → Secrets and variables → Actions → Variables). Without it, the workflows use the Railway URL.
-2. **Publish APK to the website** builds the app for that address, signed with the shared debug key (`android/debug.keystore`, so updates install over older copies) and commits it as `public/pause-button.apk`; the host redeploys, and the workflow waits until the site serves that exact file. It runs by itself whenever `android/` changes on `main`. Run it by hand (Actions → Publish APK to the website → Run workflow) after changing the deployment address.
+2. **Publish APK to the website** builds the app for that address (`PB_HOST=… pnpm cap:sync`, then Gradle), signed with the shared debug key (`android/debug.keystore`, so updates install over older copies, the Chrome-based ones included) and commits it as `public/pause-button.apk`; the host redeploys, and the workflow waits until the site serves that exact file. It runs by itself whenever `android/`, `capacitor.config.ts`, `capacitor/` or `package.json` changes on `main`. Run it by hand (Actions → Publish APK to the website → Run workflow) after changing the deployment address, or after adding the Firebase secret below.
 3. Share `https://<your-site>/download/qr` (print it, or put it on a slide), or the poster in `share/`. Scanning it opens `/download`, which has the download button and install steps.
 
 The QR encodes whatever address the site is opened on, so it needs no setup and stays right if the URL changes.
+
+## Android app: push with Firebase
+
+Browsers and iPhones get alerts by Web Push (the `VAPID_*` keys). The Android app gets them through Firebase Cloud Messaging, so they arrive with the app closed and the phone locked. Without this setup the app still works, but alerts reach it only while it is open (the APK build warns).
+
+1. [Firebase console](https://console.firebase.google.com) → **Add project** (Google Analytics is not needed).
+2. In the project: **Add app → Android**, package name `ai.apty.pausebutton` (exactly), any nickname; skip the SHA-1. Download **`google-services.json`**.
+3. GitHub → Settings → Secrets and variables → Actions → **New repository secret** `GOOGLE_SERVICES_JSON`: the file's contents, as they are or base64-encoded (`base64 -w0 google-services.json`). The Android builds write it to `android/app/google-services.json` (Git ignores that path; for a local build, put the file there yourself).
+4. Firebase console → Project settings → **Service accounts** → **Generate new private key**. On the server (Railway or Vercel variables), set `FCM_SERVICE_ACCOUNT` to that JSON file's contents. Keep it secret: it can send push to every phone of the app.
+5. Run **Publish APK to the website** (Actions tab) so the published APK has Firebase in it, and install it over the old one. On a family member's phone: open the app, sign in, allow notifications when it asks, tap the alerts setup screen's "Send me a test alert", then close the app: the alert arrives as a notification.
 
 ## Keeping it live
 
@@ -100,7 +111,8 @@ The QR encodes whatever address the site is opened on, so it needs no setup and 
 - **Uptime check, every hour** (`.github/workflows/uptime.yml`): `scripts/check-site.sh` checks `/api/health` (server and database), `/download` and `/pause-button.apk` from outside, with three tries each so a redeploy is not an outage. On failure it opens one **"The live site is down"** issue (label `site-down`), which notifies everyone watching the repo; later failures comment on it, and the first good check closes it. GitHub also emails the person who last changed the workflow's schedule. Run it any time: Actions → Uptime → Run workflow, or locally `scripts/check-site.sh https://<your-site>`.
   - Hourly keeps it within a private repo's free Actions minutes (every run bills a minute). On a paid plan, tighten the `cron` line.
   - GitHub pauses scheduled workflows after 60 days without repository activity; re-enable it from the Actions tab.
-- **Scheduled purge, every hour** (same workflow): `POST /api/cron/purge` deletes message text past 24 hours and activity and push logs past 30 days ([retention.md](retention.md)). Set `CRON_SECRET` on the server and the repository secret `CRON_SECRET` (GitHub → Settings → Secrets and variables → Actions) to the same value; until both are set, the purge step fails and says why, and only checks themselves clear old text. The site-down issue is about the site only: a failed purge turns the run red without opening it.
+- **Scheduled purge, every hour** (same workflow): `POST /api/cron/purge` deletes message text past 24 hours, sign-in codes past a day, and activity, push and sync logs past 30 days ([retention.md](retention.md)). Set `CRON_SECRET` on the server and the repository secret `CRON_SECRET` (GitHub → Settings → Secrets and variables → Actions) to the same value; until both are set, the purge step fails and says why, and only checks themselves clear old text. The site-down issue is about the site only: a failed purge turns the run red without opening it.
+- **Sync, every 30 minutes** (`.github/workflows/sync.yml`): `POST /api/cron/sync` checks again the watcher messages whose check failed, pushes once more a scam alert no family phone confirmed, and flags an Android phone that has not reported for an hour (README, "The sync safety net"). It uses the same `CRON_SECRET` as the purge; `GET /api/ops/sync-health` (operator key) shows the runs and says "overdue" after 45 minutes without one. Every run bills about a minute of Actions time (some 1,500 a month): fine for a public repository; on a private one's free plan, call the same endpoint from a Railway cron instead.
 - **Recommended in Railway:** service → Settings → Source → **Wait for CI**, so a commit that fails CI is never deployed.
 - **Credit:** the free Railway credit runs out; watch Usage in the Railway dashboard.
 
@@ -110,6 +122,7 @@ The QR encodes whatever address the site is opened on, so it needs no setup and 
 - [ ] `/welcome` loads on a phone; "Add to Home screen" offers to install
 - [ ] Family phone: the alerts setup screen's "Send me a test alert" arrives as a push notification
 - [ ] `/demo` asks for the operator key
-- [ ] Android APK built with `PB_HOST` set to this URL
+- [ ] Android APK built with `PB_HOST` set to this URL; it opens the site with no browser bar
+- [ ] Android app with Firebase set up: a test alert arrives with the app closed
 - [ ] `/download` downloads the APK, and `/download/qr` scans to `/download`
 - [ ] Actions → Uptime → Run workflow passes

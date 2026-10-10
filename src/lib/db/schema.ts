@@ -1,5 +1,6 @@
-import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import type { AiStatus, CallAnswers, CheckSource, Evidence, HardRule, LinkInfo, ScamFamily, Verdict } from "../check/types";
+import type { SimStatus } from "../views";
 
 const id = () => text("id").primaryKey().$defaultFn(() => crypto.randomUUID());
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -21,6 +22,8 @@ export const users = pgTable("users", {
   watchWhatsapp: boolean("watch_whatsapp").notNull().default(true),
   unknownOnly: boolean("unknown_only").notNull().default(true),
   autoTellFamily: boolean("auto_tell_family").notNull().default(true),
+  /** How long a paused payment waits for family (one of HOLD_CHOICES, in minutes). Mr Rao or his family set it. */
+  holdMinutes: integer("hold_minutes").notNull().default(10),
   // Family member's alert settings (C2, J4)
   alertNotify: boolean("alert_notify").notNull().default(true),
   alertSound: boolean("alert_sound").notNull().default(true),
@@ -142,6 +145,8 @@ export const alerts = pgTable("alerts", {
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   openedAt: timestamp("opened_at", { withTimezone: true }),
   handledAt: timestamp("handled_at", { withTimezone: true }),
+  /** The 30-minute sync job pushed this alert a second time (no phone had confirmed the first): once only. */
+  repushedAt: timestamp("repushed_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -162,24 +167,42 @@ export const events = pgTable("events", {
  * text here. A real message keeps none: its check holds the text of a scam or
  * suspicious message for 24 hours, and a safe message's text is never stored.
  */
-export const simMessages = pgTable("sim_messages", {
-  id: id(),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  channel: text("channel").$type<"sms" | "whatsapp">().notNull(),
-  sender: text("sender").notNull(),
-  fromContact: boolean("from_contact").notNull().default(false),
-  text: text("text"),
-  /** A made-up message from the demo library (src/data/sim-messages.json), not one a phone received. */
-  synthetic: boolean("synthetic").notNull().default(false),
-  checkId: text("check_id").references(() => checks.id, { onDelete: "set null" }),
-  bannerSeenAt: timestamp("banner_seen_at", { withTimezone: true }),
-  createdAt: createdAt(),
-});
+export const simMessages = pgTable(
+  "sim_messages",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    channel: text("channel").$type<"sms" | "whatsapp">().notNull(),
+    sender: text("sender").notNull(),
+    fromContact: boolean("from_contact").notNull().default(false),
+    /**
+     * Only a made-up demo message keeps its text here, plus a real one whose
+     * check failed, for up to 24 hours, so the sync job can try it again.
+     */
+    text: text("text"),
+    /** A made-up message from the demo library (src/data/sim-messages.json), not one a phone received. */
+    synthetic: boolean("synthetic").notNull().default(false),
+    /** The phone's own id for a watcher message (its Idempotency-Key): a retried post never makes a second row. */
+    deviceMessageId: text("device_message_id"),
+    /** received: being checked · checked · skipped (not watched, or a saved contact) · failed: the check threw, the sync job retries. */
+    status: text("status").$type<SimStatus>().notNull().default("checked"),
+    /** Why the last check failed (an error name or code, never the text), and how often it was tried. */
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(0),
+    lastTriedAt: timestamp("last_tried_at", { withTimezone: true }),
+    checkId: text("check_id").references(() => checks.id, { onDelete: "set null" }),
+    bannerSeenAt: timestamp("banner_seen_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("sim_messages_device_message").on(t.userId, t.deviceMessageId)],
+);
 
 /** Web Push subscriptions: one row per phone (browser) that asked to be alerted while the app is closed. */
 export const pushSubscriptions = pgTable("push_subscriptions", {
   id: id(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** webpush: a browser (endpoint + keys). fcm: the Android app; its token is kept as endpoint "fcm:<token>" with empty keys. */
+  kind: text("kind").$type<"webpush" | "fcm">().notNull().default("webpush"),
   endpoint: text("endpoint").notNull().unique(),
   p256dh: text("p256dh").notNull(),
   auth: text("auth").notNull(),
@@ -240,6 +263,11 @@ export const devices = pgTable("devices", {
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
   listenerOn: boolean("listener_on").notNull().default(false),
   messagesSeen: integer("messages_seen").notNull().default(0),
+  /** Set by the 30-minute sync job once the phone has not reported for an hour; cleared the next time it is heard from. */
+  notSyncingSince: timestamp("not_syncing_since", { withTimezone: true }),
+  /** The phone's last 30-minute sync (its SyncWorker), and how many messages still waited in its outbox then. */
+  lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+  waiting: integer("waiting").notNull().default(0),
   createdAt: createdAt(),
 });
 
@@ -299,4 +327,37 @@ export const rateLimits = pgTable("rate_limits", {
   key: text("key").primaryKey(),
   windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
   count: integer("count").notNull().default(0),
+});
+
+/**
+ * Sign-in codes (A1). Only an HMAC of the code is stored. A code works once,
+ * for OTP_TTL_MINUTES, and stops after OTP_MAX_ATTEMPTS wrong tries; asking
+ * for a new one retires every older one for that number.
+ */
+export const otpCodes = pgTable(
+  "otp_codes",
+  {
+    id: id(),
+    phone: text("phone").notNull(),
+    codeHash: text("code_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
+    /** When the demo provider put the code on screen: it is shown that one time only. */
+    shownAt: timestamp("shown_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("otp_codes_phone").on(t.phone, t.createdAt)],
+);
+
+/** One run of the 30-minute sync job (POST /api/cron/sync): what it fixed, and whether it failed. */
+export const syncRuns = pgTable("sync_runs", {
+  id: id(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  rechecked: integer("rechecked").notNull().default(0),
+  recheckFailed: integer("recheck_failed").notNull().default(0),
+  repushed: integer("repushed").notNull().default(0),
+  quietDevices: integer("quiet_devices").notNull().default(0),
+  error: text("error"),
 });

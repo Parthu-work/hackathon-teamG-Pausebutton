@@ -5,8 +5,12 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.PowerManager;
+
+import androidx.core.app.NotificationManagerCompat;
 
 import java.io.File;
 import java.io.IOException;
@@ -22,16 +26,18 @@ import org.json.JSONObject;
 
 /**
  * The message watcher's working parts, one set per app process: the outbox,
- * what was already seen, the rate gate, and the courier that takes messages
- * to the server. Shared by the notification listener, the Connect screen and
- * the boot receiver. All file and network work runs on one background thread,
- * in the order it was asked for.
+ * what was already seen, the rate gate, the courier that takes messages to
+ * the server, and the 30-minute sync. Shared by the notification listener,
+ * the app (its Connect screen), the sync worker and the boot receiver. All
+ * file and network work runs on one background thread, in the order it was
+ * asked for.
  */
 final class Watcher {
     /** How old the person's watch settings may get before the phone asks again. */
     private static final long RULES_MAX_AGE_MS = 60 * 60 * 1000L;
     private static final String NOTICE_CHANNEL = "watcher";
     private static final int NOTICE_DISCONNECTED = 1;
+    private static final String STATUS = "/api/device/status";
 
     private static Watcher instance;
 
@@ -63,7 +69,9 @@ final class Watcher {
     final SeenStore seen;
     private final RateGate gate = new RateGate();
     private final Courier courier;
+    private final Sync sync;
     private final ScheduledExecutorService io = Executors.newSingleThreadScheduledExecutor();
+    private final Handler main = new Handler(Looper.getMainLooper());
     private ScheduledFuture<?> nextFlush;
 
     private Watcher(Context app) {
@@ -73,6 +81,7 @@ final class Watcher {
         outbox = new Outbox(new File(dir, "outbox.json"));
         seen = new SeenStore(new File(dir, "seen.json"), Prefs.seenSalt(app));
         courier = new Courier(outbox, this::send, events, new Random());
+        sync = new Sync(courier, outbox, status);
     }
 
     /**
@@ -125,23 +134,47 @@ final class Watcher {
     /** Tells the server whether notification access is on, and learns the person's watch settings. */
     void reportStatus(boolean listenerOn) {
         io.execute(() -> {
-            String token = Prefs.token(app);
-            if (token == null) return;
+            if (Prefs.token(app) == null) return;
             try {
-                Backend.Result r = Backend.post(Prefs.host(app), "/api/device/status", token, new JSONObject().put("listenerOn", listenerOn));
-                if (r.ok()) Prefs.saveWatchRules(app, r.body);
-                else if (r.status == 401) disconnected();
+                if (status.postStatus(new JSONObject().put("listenerOn", listenerOn)).status == 401) disconnected();
             } catch (IOException | JSONException e) {
-                // Best effort: the next kick or message tries again.
+                // Best effort: the next kick, message or sync tries again.
             }
         });
     }
 
     /**
+     * The 30-minute sync ({@link SyncWorker}): what waits goes out, the
+     * person's settings are fetched again, and the server hears the phone is
+     * alive. Runs on the watcher's thread like everything else, and waits.
+     */
+    Sync.Outcome syncNow(boolean listenerOn) {
+        try {
+            return io.submit(() -> {
+                revokePending();
+                if (Prefs.token(app) == null) {
+                    stopSyncing();
+                    return Sync.Outcome.UNPAIRED;
+                }
+                Sync.Outcome outcome = sync.run(listenerOn, System.currentTimeMillis());
+                if (outcome == Sync.Outcome.UNPAIRED) disconnected();
+                // What still waits goes out on the courier's own timer (its backoff).
+                schedule(courier.flush(System.currentTimeMillis()));
+                return outcome;
+            }).get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Sync.Outcome.OFFLINE;
+        } catch (ExecutionException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
      * "Connect" with the code from the web app. Runs on the caller's thread
-     * (the Connect screen's own); returns null when connected, else the
-     * reason in plain words. Whatever an earlier connection left waiting is
-     * dropped: it belongs to whoever connected before.
+     * (never the main thread); returns null when connected, else the reason
+     * in plain words. Whatever an earlier connection left waiting is dropped:
+     * it belongs to whoever connected before.
      */
     String pair(String host, String code, String deviceName) {
         try {
@@ -152,6 +185,7 @@ final class Watcher {
             Prefs.setHost(app, host);
             Prefs.setPaired(app, json.getString("token"), json.optString("userName", ""));
             outbox.clear();
+            startSyncing();
             return null;
         } catch (IOException | JSONException e) {
             return "Could not reach " + host + ": " + e.getMessage();
@@ -169,6 +203,7 @@ final class Watcher {
             Prefs.clearPairing(app);
             outbox.clear();
             seen.clear();
+            stopSyncing();
             if (token != null) Prefs.setPendingRevoke(app, token);
             revokePending();
             if (done != null) done.run();
@@ -188,6 +223,17 @@ final class Watcher {
         return outbox.size();
     }
 
+    /** Whether notification access is on for this app (Android's settings), whatever the person agreed to. */
+    static boolean listenerEnabled(Context c) {
+        return NotificationManagerCompat.getEnabledListenerPackages(c).contains(c.getPackageName());
+    }
+
+    /** Whether Android lets the watcher run in the background without battery restrictions. */
+    static boolean batteryUnrestricted(Context c) {
+        PowerManager pm = c.getSystemService(PowerManager.class);
+        return pm != null && pm.isIgnoringBatteryOptimizations(c.getPackageName());
+    }
+
     // ---------------------------------------------------------------- on the io thread
 
     private void schedule(long at) {
@@ -202,18 +248,38 @@ final class Watcher {
         String token = Prefs.token(app);
         if (token == null) return new Courier.Reply(401, "", -1);
         try {
-            Backend.Result r = Backend.post(Prefs.host(app), "/api/device/inbox", token, e.body());
+            Backend.Result r = Backend.post(Prefs.host(app), "/api/device/inbox", token, e.body(), e.headers());
             return new Courier.Reply(r.status, r.body, r.retryAfterMs);
         } catch (JSONException bad) {
             return new Courier.Reply(400, "", -1);
         }
     }
 
+    /** GET and POST /api/device/status; a 2xx answer carries the person's watch settings, which are kept. */
+    private final Sync.Server status = new Sync.Server() {
+        @Override
+        public Courier.Reply getStatus() throws IOException {
+            String token = Prefs.token(app);
+            if (token == null) return new Courier.Reply(401, "", -1);
+            return kept(Backend.get(Prefs.host(app), STATUS, token));
+        }
+
+        @Override
+        public Courier.Reply postStatus(JSONObject body) throws IOException {
+            String token = Prefs.token(app);
+            if (token == null) return new Courier.Reply(401, "", -1);
+            return kept(Backend.post(Prefs.host(app), STATUS, token, body));
+        }
+
+        private Courier.Reply kept(Backend.Result r) {
+            if (r.ok()) Prefs.saveWatchRules(app, r.body);
+            return new Courier.Reply(r.status, r.body, r.retryAfterMs);
+        }
+    };
+
     private void refreshRules() {
         try {
-            Backend.Result r = Backend.get(Prefs.host(app), "/api/device/status", Prefs.token(app));
-            if (r.ok()) Prefs.saveWatchRules(app, r.body);
-            else if (r.status == 401) disconnected();
+            if (status.getStatus().status == 401) disconnected();
         } catch (IOException e) {
             // Keep the last known settings.
         }
@@ -237,8 +303,23 @@ final class Watcher {
         Prefs.clearPairing(app);
         outbox.clear();
         seen.clear();
+        stopSyncing();
         Prefs.setLastError(app, "This phone was disconnected from Pause Button. Open the app to connect it again.");
         if (wasConnected) noticeDisconnected();
+    }
+
+    /**
+     * The 30-minute syncs start, or stop. Asked from the main thread, in
+     * order, never from the watcher's own: a running sync waits for that
+     * thread, and WorkManager may have to wait for the sync before it can
+     * stop it.
+     */
+    private void startSyncing() {
+        main.post(() -> SyncWorker.schedule(app));
+    }
+
+    private void stopSyncing() {
+        main.post(() -> SyncWorker.cancel(app));
     }
 
     private final Courier.Events events = new Courier.Events() {
@@ -271,15 +352,14 @@ final class Watcher {
         }
     };
 
-    /** A notification the person sees even with the app closed: the watcher stopped, and why. */
+    /** A notification the person sees even with the app closed: the watcher stopped, and why. A tap opens the Connect screen. */
     private void noticeDisconnected() {
         NotificationManager nm = app.getSystemService(NotificationManager.class);
         if (nm == null) return;
         nm.createNotificationChannel(new NotificationChannel(NOTICE_CHANNEL, "Message watcher", NotificationManager.IMPORTANCE_DEFAULT));
-        Intent open = new Intent(app, PairActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        PendingIntent tap = PendingIntent.getActivity(app, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent tap = Alerts.open(app, "/watch/connect", null, NOTICE_DISCONNECTED);
         Notification n = new Notification.Builder(app, NOTICE_CHANNEL)
-                .setSmallIcon(android.R.drawable.stat_notify_error)
+                .setSmallIcon(R.drawable.ic_stat_pause)
                 .setContentTitle("Pause Button stopped checking messages")
                 .setContentText("This phone was disconnected. Tap to connect it again.")
                 .setContentIntent(tap)

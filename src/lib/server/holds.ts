@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { HOLD_MINUTES, TWO_KEY_AMOUNT, TWO_KEY_HOLD_MINUTES } from "@/lib/check/config";
+import { DEFAULT_HOLD_MINUTES, HOLD_CHOICES, TWO_KEY_AMOUNT } from "@/lib/check/config";
 import { keyPhrases } from "@/lib/check/phrases";
 import { rupees } from "@/lib/check/copy";
 import type { Db } from "@/lib/db";
@@ -14,21 +14,30 @@ type Hold = typeof schema.holds.$inferSelect;
 type Check = typeof schema.checks.$inferSelect;
 type User = typeof schema.users.$inferSelect;
 
-/** Expired is derived: a pending hold past its time. Money stays held either way. */
 const joinNames = (names: string[]) =>
   names.length <= 1 ? names[0] ?? "" : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
 
+/** Expired is derived: a pending hold past its time. Money stays held either way. */
 export function holdStatus(h: Hold, now = Date.now()): HoldStatus {
   if (h.status === "pending" && h.expiresAt.getTime() <= now) return "expired";
   return h.status;
 }
 
-/** F13: large amounts get the long hold and two keys to release. */
+/** F13: large amounts need two keys (every trusted person) to release. */
 export const twoKeysFor = (amount: number) => amount > TWO_KEY_AMOUNT;
-export const holdMinutesFor = (amount: number) => (twoKeysFor(amount) ? TWO_KEY_HOLD_MINUTES : HOLD_MINUTES);
 
+/** The person's chosen hold time (Settings › Payment hold time); anything unexpected falls back to the default. */
+export const holdMinutesOf = (owner: Pick<User, "holdMinutes">) =>
+  (HOLD_CHOICES as readonly number[]).includes(owner.holdMinutes) ? owner.holdMinutes : DEFAULT_HOLD_MINUTES;
+
+/**
+ * Starts the countdown with the owner's hold time as it is now. The end time
+ * is stored and never recomputed: changing the setting later moves only the
+ * next hold, and a hold already running keeps its time.
+ */
 export async function createHold(db: Db, check: Check, owner: User) {
   const amount = check.amount ?? 0;
+  const now = Date.now();
   const [hold] = await db
     .insert(schema.holds)
     .values({
@@ -36,7 +45,9 @@ export async function createHold(db: Db, check: Check, owner: User) {
       userId: owner.id,
       payee: check.payee ?? "Unknown account",
       amount,
-      expiresAt: new Date(Date.now() + holdMinutesFor(amount) * 60_000),
+      // createdAt from the same clock, so the hold's length (HoldView.holdMinutes) reads back exactly.
+      createdAt: new Date(now),
+      expiresAt: new Date(now + holdMinutesOf(owner) * 60_000),
     })
     .returning();
   return hold;
@@ -124,7 +135,7 @@ export async function decideHold(db: Db, member: User, holdId: string, decision:
     const view = await toHoldView(db, hold);
     throw new HttpError(409, `${view.decidedByName ?? "Someone"} already ${hold.status} this payment.`);
   }
-  // Block still works after the 10 minutes. Approve does not: an expired hold never releases the money.
+  // Block still works after the time runs out. Approve does not: an expired hold never releases the money.
   if (decision === "approve" && holdStatus(hold) === "expired") {
     throw new HttpError(409, "Time ran out, so this payment can no longer be approved. You can still block it.");
   }

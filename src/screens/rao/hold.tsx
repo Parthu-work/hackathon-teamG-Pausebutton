@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
-import { clockTime, LoadingScreen, Marks, Ring, Screen, TitleRow, useCountdown, useLeaveIfGone } from "@/components/ui";
+import { clockTime, holdTotalMs, LoadingScreen, Marks, Ring, Screen, TitleRow, useCountdown, useLeaveIfGone } from "@/components/ui";
 import { rupees } from "@/lib/check/copy";
 import { api, ApiError, post } from "@/lib/client/api";
 import { closeNotifications } from "@/lib/client/push";
@@ -30,7 +30,7 @@ export function HoldScreen() {
   });
   useLeaveIfGone(q.error, "/");
   const hold = q.data?.hold;
-  const clock = useCountdown(hold?.expiresAt, q.data?.serverNow, (hold?.holdMinutes ?? 10) * 60_000);
+  const clock = useCountdown(hold?.expiresAt, q.data?.serverNow, holdTotalMs(hold));
   // He is looking at it: the "Payment cancelled" notification about this payment is no longer needed.
   useEffect(() => {
     void closeNotifications((tag) => tag === `hold-${id}`);
@@ -150,7 +150,7 @@ export function HoldScreen() {
       {hold.twoKeys && (
         <div className="card" style={{ border: "2px solid #14202B", gap: 4 }} data-testid="two-keys">
           <div className="row"><Icon name="people" /><b style={{ fontSize: 17 }}>{t("hold.twoKeys")}</b></div>
-          <p className="sm" style={{ color: "var(--text)" }}>{t("hold.twoKeysBody")}</p>
+          <p className="sm" style={{ color: "var(--text)" }}>{t("hold.twoKeysBody", { minutes: hold.holdMinutes })}</p>
         </div>
       )}
       <div className="card">

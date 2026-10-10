@@ -12,7 +12,7 @@ import examples from "@/data/examples.json";
 import { createCallCheck, describeCall } from "./calls";
 import { createCheck, getCheckView, setFamilyVerdict, sharedMessageFor } from "./checks";
 import { personaUser, resetDemo } from "./demo";
-import { decideHold, holdMinutesFor, twoKeysFor } from "./holds";
+import { decideHold, holdMinutesOf, twoKeysFor } from "./holds";
 import { familyLedger } from "./ledger";
 import { disagreementsView, familiesView, mapClaudeFamily, stageOf } from "./ops";
 import { liveBlockedDomains, listReports, reportDomain, reviewDomain } from "./reports";
@@ -48,19 +48,19 @@ describe("F1 · forward to Pause", () => {
 });
 
 describe("F13 · two keys for large amounts", () => {
-  it("holds above Rs 50,000 last an hour; smaller ones ten minutes", () => {
+  it("two keys above Rs 50,000; the timer is the person's setting whatever the amount", () => {
     expect(twoKeysFor(80_000)).toBe(true);
-    expect(holdMinutesFor(80_000)).toBe(60);
     expect(twoKeysFor(1_850)).toBe(false);
-    expect(holdMinutesFor(1_850)).toBe(10);
+    expect(holdMinutesOf({ holdMinutes: 30 })).toBe(30);
+    expect(holdMinutesOf({ holdMinutes: 7 })).toBe(10);
   });
 
-  it("the Rs 80,000 hold carries twoKeys and a 60-minute window; one Block still stops it", async () => {
+  it("the Rs 80,000 hold carries twoKeys and the default 10-minute window; one Block still stops it", async () => {
     await resetDemo(db);
     const { rao, arjun } = await users();
     const { checkId, holdId } = await createCheck(db, rao, { text: text("cbi"), source: "paste" });
     const view = await getCheckView(db, checkId, { ownerId: rao.id });
-    expect(view.hold).toMatchObject({ twoKeys: true, holdMinutes: 60 });
+    expect(view.hold).toMatchObject({ twoKeys: true, holdMinutes: 10 });
     const blocked = await decideHold(db, arjun, holdId!, "block", false);
     expect(blocked.status).toBe("blocked");
   });

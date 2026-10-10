@@ -7,6 +7,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 
@@ -22,11 +23,16 @@ public class CourierTest {
     /** Scripted answers; null means "no network". */
     private final ArrayDeque<Courier.Reply> replies = new ArrayDeque<>();
     private final List<String> sent = new ArrayList<>();
+    /** Every try, whether or not the server answered. */
+    private final List<Outbox.Entry> tries = new ArrayList<>();
     private final List<String> log = new ArrayList<>();
+    /** Jitter fixed at its middle: backoff is exactly 15 s, 30 s, 1 min … */
+    private final Random middle = new Random() { @Override public double nextDouble() { return 0.5; } };
     private Outbox outbox;
     private Courier courier;
 
     private final Courier.Transport transport = message -> {
+        tries.add(message);
         Courier.Reply r = replies.poll();
         if (r == null) throw new IOException("offline");
         sent.add(message.text);
@@ -46,8 +52,6 @@ public class CourierTest {
     @Before
     public void setUp() {
         outbox = new Outbox(new File(tmp.getRoot(), "outbox.json"));
-        // Jitter fixed at its middle: backoff is exactly 15 s, 30 s, 1 min …
-        Random middle = new Random() { @Override public double nextDouble() { return 0.5; } };
         courier = new Courier(outbox, transport, events, middle);
         outbox.add("sms", "a", false, "one", 0);
         outbox.add("sms", "b", false, "two", 1);
@@ -114,6 +118,37 @@ public class CourierTest {
         assertEquals(0, outbox.size());
         assertEquals(List.of("unpaired"), log);
         assertEquals(List.of("one"), sent);
+    }
+
+    @Test
+    public void accepted202_theServerKeptItAndChecksItItself_isDeliveredAndNeverSentAgain() {
+        replies.add(status(202)); replies.add(status(200)); replies.add(status(200));
+        assertEquals(-1, courier.flush(10));
+        assertEquals(List.of("delivered one", "delivered two", "delivered three"), log);
+        assertEquals(0, outbox.size());
+        assertEquals(-1, courier.retryNow(20));
+        assertEquals(3, tries.size());
+    }
+
+    @Test
+    public void everyTryOfAMessageCarriesTheSameIdempotencyKeyThroughRetriesAndARestart() throws Exception {
+        String id = outbox.head().id;
+        long next = courier.flush(10); // no network
+        replies.add(status(503));
+        next = courier.flush(next); // the server had a problem
+        // The app is killed and starts again: the outbox is read back from its file.
+        Outbox reloaded = new Outbox(new File(tmp.getRoot(), "outbox.json"));
+        Courier again = new Courier(reloaded, transport, events, middle);
+        replies.add(status(200)); replies.add(status(200)); replies.add(status(200));
+        assertEquals(-1, again.flush(next));
+
+        List<String> keys = new ArrayList<>();
+        for (Outbox.Entry e : tries) if (e.text.equals("one")) keys.add(e.headers().get("Idempotency-Key"));
+        assertEquals(List.of(id, id, id), keys);
+        // The body says the same, for a server that reads it there.
+        assertEquals(id, tries.get(tries.size() - 3).body().getString("messageId"));
+        // Each message has its own key.
+        assertEquals(3, new HashSet<>(List.of(tries.get(2).id, tries.get(3).id, tries.get(4).id)).size());
     }
 
     @Test

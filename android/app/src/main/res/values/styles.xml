@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The native screens (Connect this phone, the consent screen). -->
+    <style name="Theme.PauseButton" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/ink</item>
+        <item name="android:colorAccent">@color/amber</item>
+        <item name="android:statusBarColor">@color/ink</item>
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+
+    <!-- The app itself: the hosted site in Capacitor's WebView (BridgeActivity applies this
+         theme by name). Plain ink while it starts (Android 12+ shows the launcher icon on it)
+         and behind the system bars. -->
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/ink</item>
+        <item name="colorPrimaryDark">@color/ink</item>
+        <item name="colorAccent">@color/amber</item>
+        <item name="android:statusBarColor">@color/ink</item>
+        <item name="android:navigationBarColor">@color/ink</item>
+        <item name="android:windowBackground">@color/ink</item>
+    </style>
+</resources>

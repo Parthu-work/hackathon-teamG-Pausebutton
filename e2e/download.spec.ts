@@ -6,6 +6,9 @@ test("the download page offers the Android app and shows a QR for itself", async
   await page.goto("/download");
   await expect(page.getByRole("heading", { name: "Get Pause Button" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Download for Android" })).toHaveAttribute("href", "/pause-button.apk");
+  // The app installs over an earlier one, and asks for notifications itself.
+  await expect(page.getByText("Install this one over it.")).toBeVisible();
+  await expect(page.getByText("When it asks, allow notifications")).toBeVisible();
   await expect(page.getByRole("img", { name: "QR code for this page" })).toBeVisible();
 
   const qr = await request.get("/download/qr", { headers: { "x-forwarded-host": "example.up.railway.app", "x-forwarded-proto": "https" } });

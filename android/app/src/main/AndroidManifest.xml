@@ -1,83 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Urgent family alerts vibrate. -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Android 13+: asked inside the app, only after the web app explains why. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- The message watcher: send what waited once the network is back, and come back after a reboot. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Never SMS or contacts permissions: the watcher reads notifications, once the person agreed. -->
 
-    <!-- So the app can find a browser that supports Trusted Web Activities (Chrome). -->
-    <queries>
-        <intent>
-            <action android:name="android.support.customtabs.action.CustomTabsService" />
-        </intent>
-    </queries>
-
+    <!-- allowBackup: message text and the phone's token must not leave through a backup.
+         Debug builds may talk plain http to a laptop (app/build.gradle, cleartext); release builds never.
+         tools:replace: these two are the app's to decide, whatever a library says. -->
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.PauseButton"
-        android:usesCleartextTraffic="${cleartext}">
+        android:usesCleartextTraffic="${cleartext}"
+        tools:replace="android:allowBackup,android:usesCleartextTraffic">
 
-        <!-- Digital Asset Links statement (see app/build.gradle). -->
-        <meta-data
-            android:name="asset_statements"
-            android:resource="@string/asset_statements" />
-
-        <!-- The web app, opened as a Trusted Web Activity. -->
+        <!-- The app: the hosted site in a WebView (Capacitor), full screen, no browser bar.
+             Not exported: only this app's own notifications and Share sheet open it on a page. -->
         <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:theme="@style/AppTheme.NoActionBar" />
+
+        <!-- The launcher icon. It keeps the name of the 0.2 app's launcher (the Chrome-based
+             LauncherActivity, now gone), so a Pause Button icon already on the home screen
+             still opens the app after this version installs over that one. -->
+        <activity-alias
             android:name=".LauncherActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.PauseButton.Launcher">
-            <meta-data
-                android:name="android.support.customtabs.trusted.DEFAULT_URL"
-                android:value="@string/default_host" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
-                android:resource="@color/ink" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR"
-                android:resource="@color/bg" />
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
-
-        <!--
-          Notification delegation: the web app's push notifications (alerts, family
-          answers) show as Pause Button notifications, and a tap opens this app on
-          the alert instead of opening Chrome. On Android 13+ the web app's
-          "Turn on notifications" asks through the activity below.
-          (Carried over from the claude/stoic-keller-9l64vw branch.)
-        -->
-        <service
-            android:name="com.google.androidbrowserhelper.trusted.DelegationService"
-            android:enabled="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </service>
-        <activity
-            android:name="com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity"
-            android:exported="false" />
-
-        <!-- Required by the launcher library: "Manage site data" entry in Android's app settings. -->
-        <activity
-            android:name="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
-            android:exported="false">
-            <meta-data
-                android:name="android.support.customtabs.trusted.MANAGE_SPACE_URL"
-                android:value="@string/default_host" />
-        </activity>
+        </activity-alias>
 
         <!-- F1 · "Forward to Pause": Pause Button in the Share sheet of WhatsApp, Messages and any text app. -->
         <activity
@@ -93,7 +63,7 @@
             </intent-filter>
         </activity>
 
-        <!-- "Connect this phone": receives pausebutton://pair?code=…&host=… from the web app. -->
+        <!-- "Connect this phone" from a link opened outside the app: pausebutton://pair?code=…&host=… -->
         <activity
             android:name=".PairActivity"
             android:exported="true"
@@ -122,6 +92,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- F2 · Block payment from the lock screen. -->
+        <receiver
+            android:name=".NotificationActionReceiver"
+            android:exported="false" />
+
         <!-- Reads new SMS and WhatsApp notifications once the person agreed and allowed notification access. -->
         <service
             android:name=".MessageWatcherService"
@@ -132,5 +107,28 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- Push (Firebase Cloud Messaging): this app shows every alert itself, so the plugin's own service goes. -->
+        <service
+            android:name=".PauseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+            tools:node="remove" />
+
+        <!-- Capacitor's WebView: a photo taken for a file input is handed over through this. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

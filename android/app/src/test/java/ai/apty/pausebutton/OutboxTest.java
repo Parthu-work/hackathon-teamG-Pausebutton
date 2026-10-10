@@ -29,10 +29,15 @@ public class OutboxTest {
         Outbox o = new Outbox(f);
         o.add("sms", "+91 98765 43210", false, "first", 1_000);
         o.add("whatsapp", "~Ravi", false, "second", 2_000);
-        o.retryAt(o.head().id, 60_000);
+        String id = o.head().id;
+        o.retryAt(id, 60_000);
 
         Outbox again = new Outbox(f);
         assertEquals(List.of("first", "second"), texts(again));
+        // The same id after a retry and a restart: the server's Idempotency-Key for this message.
+        assertEquals(id, again.head().id);
+        assertEquals(id, again.head().headers().get("Idempotency-Key"));
+        assertEquals(id, again.head().body().getString("messageId"));
         assertEquals(1, again.head().attempts);
         assertEquals(60_000, again.head().nextAttemptAt);
         assertEquals("sms", again.head().body().getString("channel"));

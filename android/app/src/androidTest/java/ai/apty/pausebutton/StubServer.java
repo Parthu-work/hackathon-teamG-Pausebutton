@@ -27,12 +27,15 @@ final class StubServer implements Closeable {
         final String method;
         final String path;
         final String authorization;
+        /** The Idempotency-Key header, or null. */
+        final String idempotencyKey;
         final String body;
 
-        Request(String method, String path, String authorization, String body) {
+        Request(String method, String path, String authorization, String idempotencyKey, String body) {
             this.method = method;
             this.path = path;
             this.authorization = authorization;
+            this.idempotencyKey = idempotencyKey;
             this.body = body;
         }
     }
@@ -64,6 +67,24 @@ final class StubServer implements Closeable {
         return out;
     }
 
+    /** Every request so far, in order, as "POST /api/device/inbox". */
+    synchronized List<String> calls() {
+        List<String> out = new ArrayList<>();
+        for (Request r : requests) out.add(r.method + " " + r.path);
+        return out;
+    }
+
+    /** Waits (at most 10 s) until {@code call} ("GET /api/device/status") has been made {@code times} times. */
+    void await(String call, int times) throws InterruptedException {
+        long until = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < until) {
+            int n = 0;
+            for (String c : calls()) if (c.equals(call)) n++;
+            if (n >= times) return;
+            Thread.sleep(20);
+        }
+    }
+
     /** An address where nothing listens: the phone sees "no network" there. */
     static String deadUrl() throws IOException {
         try (ServerSocket s = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
@@ -91,10 +112,12 @@ final class StubServer implements Closeable {
         String[] line = in.readLine().split(" ");
         int length = 0;
         String authorization = null;
+        String idempotencyKey = null;
         for (String h; (h = in.readLine()) != null && !h.isEmpty(); ) {
             String lower = h.toLowerCase(Locale.ROOT);
             if (lower.startsWith("content-length:")) length = Integer.parseInt(h.substring(15).trim());
             if (lower.startsWith("authorization:")) authorization = h.substring(14).trim();
+            if (lower.startsWith("idempotency-key:")) idempotencyKey = h.substring(16).trim();
         }
         char[] body = new char[length];
         int read = 0;
@@ -105,7 +128,7 @@ final class StubServer implements Closeable {
         }
         String[] answer;
         synchronized (this) {
-            requests.add(new Request(line[0], line[1], authorization, new String(body, 0, read)));
+            requests.add(new Request(line[0], line[1], authorization, idempotencyKey, new String(body, 0, read)));
             ArrayDeque<String[]> q = scripted.get(line[1]);
             answer = q == null || q.isEmpty() ? new String[] {"200", "{}"} : q.poll();
         }

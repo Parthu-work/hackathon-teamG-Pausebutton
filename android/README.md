@@ -1,66 +1,116 @@
 # Pause Button for Android
 
-A small native app around the web app:
+An app around the web app: **Capacitor** shows the hosted site (`PB_HOST`) in a WebView, full screen, with no address bar and no browser around it. Next.js keeps running on the server, so every screen works as on the web; the app adds what only a phone can do:
 
-- **`LauncherActivity`** opens the web app as a *Trusted Web Activity*: full screen inside Chrome, so everything the web app does (push notifications, the dialer, vibration, the family screens) works unchanged. No Firebase and no WebView quirks.
-- **`MessageWatcherService`** is the real version of the simulated inbox (screens M1–M4): once the person agreed and allowed notification access, it reads new SMS and WhatsApp notifications and hands them to the **`Watcher`**, which posts their text to `POST /api/device/inbox` (where the same check runs and the family gets its heads-up) and gets them there through a network outage or a restart. See "The message watcher in the real world" below.
-- **`ConsentActivity`** says what is read, what leaves the phone and what is kept, before notification access is turned on. Until the person taps "I agree", the watcher reads nothing.
-- **`PairActivity`** ("Connect this phone") connects the phone to the person's account with a short code from the web app (`Settings › Watch my messages › Connect this phone`), helps with the two Android permissions (notification access, battery), shows **what we saw today**, and disconnects the phone here and on the web app at once.
-- **`BootReceiver`** asks Android to bind the watcher again after a reboot or an app update.
-- **`ShareActivity`** (F1 · Forward to Pause) puts "Pause Button" in the Share sheet of WhatsApp, Messages and any app that shares text. The shared text is handed to the web app's `/share` page, which checks it at once; the verdict says which app it came from.
+| Native piece | What it does |
+|---|---|
+| **`MainActivity`** | The app (Capacitor's `BridgeActivity`). Loads the site from `capacitor.config.ts` (`server.url`). A notification or the Share sheet opens it on a page of that site (intent extra `pb_url`, a path such as `/open/<alertId>`; nothing else is ever loaded). Schedules the 30-minute sync when the phone is connected. The launcher icon is an alias that keeps the 0.2 app's name (`LauncherActivity`), so an icon already on the home screen still works after the update. |
+| **`PauseButtonNativePlugin`** | What the web app can ask of the phone (`registerPlugin("PauseButtonNative")`, wrapped in `src/lib/client/native.ts`): `pair`, `watcherStatus`, `openListenerSettings`, `openBatterySettings`, `disconnect`, `notificationStatus`, `requestNotifications`, `openNotificationSettings`, `pushAvailable`. The web app uses it on the Connect screen and wherever it asks for notifications. |
+| **`MessageWatcherService`** | The real version of the simulated inbox (screens M1–M4): once the person agreed and allowed notification access, it reads new SMS and WhatsApp notifications and hands them to the **`Watcher`**, which posts them to `POST /api/device/inbox` and gets them there through an outage or a restart. See "The message watcher in the real world". |
+| **`ConsentActivity`** | What is read, what leaves the phone and what is kept, before notification access is turned on. Until the person taps "I agree", the watcher reads nothing. |
+| **`SyncWorker`** | The safety net, every 30 minutes with a network, even with the app closed: sends what waits, fetches the person's watch settings, and tells the server the phone is alive. See "The 30-minute sync". |
+| **`PauseMessagingService`**, **`Alerts`**, **`NotificationActionReceiver`** | Push through Firebase Cloud Messaging, with the app closed too: shows each alert as a notification, with **Block payment** and **It's fine** on a paused payment (Block works from the lock screen), and confirms delivery to the server. See "Push". |
+| **`ShareActivity`** | F1 · Forward to Pause: "Pause Button" in the Share sheet of WhatsApp, Messages and any app that shares text. Opens the app on `/share`, which checks the text at once; the verdict says which app it came from. A very long message is shortened to fit the page's address: an English one stays whole (up to the 4,000 letters the server checks), one in Hindi or Telugu keeps about its first 900 letters. |
+| **`PairActivity`** | "Connect this phone" for a `pausebutton://pair?code=…&host=…` link opened outside the app (a browser, a QR). Inside the app, the web app's own Connect screen does the same through the plugin. Anyone can send such a link, so it only fills in the code and the person taps Connect: it never replaces a connection, and the screen warns when the link names another server than the app's own site. |
+| **`BootReceiver`** | After a reboot or an update: asks Android to bind the watcher again and makes sure the sync is scheduled. |
 
-The web app's address is baked in at build time (`PB_HOST`) and can be changed on the Connect screen.
-
-Phase 2 features that need nothing native, and so work in this app as they do in the browser: lock-screen notifications with **Block payment** built in (F2, Web Push actions handled by `public/sw.js`), the live-call guard (F6), reading aloud and speaking (F10, Chrome's Web Speech), Hindi and Telugu (F5).
-
-**Push notifications** need nothing native either. Because the web app runs inside Chrome, Chrome asks for the notification permission (the app's "Notifications" toggle), shows the system notifications while the app is in the background, closed or the phone locked, and a tap opens the app straight on the alert (`/open/<alertId>` on a family phone, `/check/<id>` or `/hold/<id>` on the protected person's phone). With the site's `/.well-known/assetlinks.json` verified for this app's signing key, the tap opens full screen inside the app; otherwise it opens in Chrome. The app also declares the Trusted Web Activity **notification delegation** service (`DelegationService` and `NotificationPermissionRequestActivity` in the manifest), so with a verified site the notifications show as Pause Button's own and Android 13+ asks for the permission through the app. The message watcher's own uploads (`POST /api/device/inbox`) are what trigger the "Possible scam from …" notification on the protected person's phone and the heads-up on the family's. There is no Firebase and no FCM: see the main README, "Push notifications".
+The plain-Java parts (`Outbox`, `Courier`, `Sync`, `SeenStore`, `RateGate`, `WatchRules`, `DayCounts`, `PushAlert`) hold the rules and are tested on the JVM.
 
 ## Build
 
-Needs Android Studio (for its JDK and SDK) or any JDK 17+ plus the SDK packages `platforms;android-37.2`, `build-tools;36.0.0`, `platform-tools`.
+Needs Node 24 with pnpm, JDK 21 (Android Studio's own works), and the Android SDK with `platforms;android-36` and build tools 35/36 (Gradle fetches what is missing once the SDK licences are accepted).
+
+```bash
+pnpm install
+PB_HOST=https://your-deployment.example pnpm cap:sync   # the site the app opens, into the Android project
+cd android
+./gradlew assembleDebug                                  # → app/build/outputs/apk/debug/app-debug.apk
+```
+
+- **`PB_HOST`** is where the web app is deployed (default: the Railway URL). `pnpm cap:sync` writes it into the Android project (`app/src/main/assets/capacitor.config.json`, with the other generated files Git ignores), and the Gradle build reads it from there, so the WebView and the native code always use the same site. `-PPB_HOST=…` on Gradle must say the same, or the build stops and says so. Run `pnpm cap:sync` again after changing `PB_HOST`, `capacitor.config.ts` or a Capacitor version.
+- **A laptop instead** (debug builds only): `PB_HOST=http://10.0.2.2:3000 PB_CLEARTEXT=1 pnpm cap:sync` for the emulator and `pnpm dev`, or the laptop's LAN address for a phone on the same Wi‑Fi. Release builds never allow plain http.
+- `pnpm android:build` runs the sync and the debug build in one go.
+- **Signing:** every build, on any laptop or in CI, signs with the shared debug key committed as `android/debug.keystore` (password `android`, alias `androiddebugkey`). The application id is still `ai.apty.pausebutton`, so this version (0.3) installs over the earlier ones (0.2, which opened the site in Chrome) and keeps the phone's connection to the watcher. Anyone with the repository can sign with this key: for a public release use your own (`./gradlew assembleRelease` with `PB_KEYSTORE`, `PB_KEYSTORE_PASSWORD`, `PB_KEY_ALIAS`, `PB_KEY_PASSWORD` as `-P…` or in `~/.gradle/gradle.properties`; without them the release build uses the debug key too).
+- **CI** (`.github/workflows/ci.yml`, job "Android APK") syncs, runs the unit tests and builds both APKs on every push, and attaches the debug APK as **pause-button-debug-apk**. When the app changes on `main`, **Publish APK to the website** builds it for the live site and publishes it at `/pause-button.apk` (the QR code's download). Set the repository variable `PB_HOST` to point both at another deployment.
+
+## Push (Firebase Cloud Messaging)
+
+Browsers and iPhones get Web Push (`public/sw.js`). The Android app gets the same alerts through Firebase:
+
+- The web app asks `pushAvailable()`; when Firebase is there it registers with `@capacitor/push-notifications` and sends the token to `POST /api/push/subscribe` (`{ fcmToken, app }`), where it is kept as a subscription of kind `fcm`. Signing out, or turning notifications off, forgets it.
+- The server sends **data-only** messages (title, body, url, tag, urgent, kind, alertId, checkId, holdId, who, at, receipt, actions, all strings), so Android never shows anything by itself and the app always builds the notification: `PauseMessagingService` → `PushAlert` (the rules, the same as `public/sw.js`) → `Alerts`.
+- Urgent alerts use the channel **Urgent alerts** (loud, vibrating, on the lock screen); everything else **Alerts**. A newer notification about the same message replaces the older one. A tap opens the app on the alert. **Block payment** blocks it straight from the notification, signed in as the family member through the app's own cookie, then shows "You blocked it" (or why not); **It's fine** opens the approve step, which always needs a second confirm.
+- Each push is confirmed to the server (`POST /api/push/receipt`, shown or not and why), as the browser does, so a push that reaches no one is noticed.
+
+**Setting it up:** see `docs/deploy.md`, "Android app: push with Firebase": a Firebase project with the Android app `ai.apty.pausebutton`, its `google-services.json` as the repository secret `GOOGLE_SERVICES_JSON` (CI writes it to `android/app/google-services.json`; for a local build put the file there yourself, Git ignores it), and a service account as `FCM_SERVICE_ACCOUNT` on the server. Without `google-services.json` the app builds and works, `pushAvailable()` says no, and alerts reach the phone only while the app is open (CI warns).
+
+## Permissions, and how the app asks
+
+Every permission is explained by the web app first, on its own screen; the native call comes after. Saying no always leaves the app usable.
+
+| What | How it is asked | If the person says no |
+|---|---|---|
+| Notifications (Android 13+) | `requestNotifications()`: Android's own prompt, after the web app's explanation | The app works; alerts show inside it. After a refusal for good ("Don't allow" twice), the app never prompts again and offers `openNotificationSettings()` instead. Below Android 13 there is no prompt, only the switch in Android's settings. |
+| Notification access (the message watcher) | `openListenerSettings()`: the consent screen first, then Android's list | Nothing is read; messages can still be pasted or shared in. |
+| Running in the background | `openBatterySettings()`: Android's "Allow to always run in the background?" | The watcher works but the phone may pause it; the sync catches up. |
+
+The app never asks for SMS or contacts permissions: it reads notifications, once the person agreed.
+
+## The 30-minute sync
+
+`SyncWorker` is a WorkManager periodic job (unique name `pb-sync`, every 30 minutes, only with a network, an existing schedule is kept). It runs `Watcher.syncNow`, on the watcher's own thread:
+
+1. send what waits in the outbox, even a message still waiting out its backoff;
+2. `GET /api/device/status`: the person's watch settings;
+3. `POST /api/device/status {listenerOn, waiting, sync: true}`: the phone is alive, and this many messages still wait.
+
+It is scheduled when the phone is connected, after a reboot and whenever the app starts; cancelled when the phone is disconnected here or removed on the web app (a 401). With no network it is retried by WorkManager. The server runs its own sync every 30 minutes too, re-checks what failed, and marks a phone it has not heard from in an hour as "not syncing".
+
+## The message watcher in the real world
+
+| What happens | What the watcher does | Where |
+|---|---|---|
+| No network, or the server is down | The message waits in an **outbox** file in the app's private, not-backed-up storage. It goes out **oldest first** once the network is back, or after a backoff (15 s, 30 s, 1 min … up to 15 min), or with the next sync. At most 50 wait (the oldest is dropped beyond that), and none longer than a day. | `Outbox`, `Courier`, `Watcher` |
+| The same message is sent twice (a retry after a timeout, a restart) | Each message keeps one id from the moment it is seen; every try sends it as `Idempotency-Key` (and `messageId`), so the server checks it once. | `Outbox`, `Watcher` |
+| The server answers 5xx or times out | Same as no network: retried later, the backoff growing. | `Courier` |
+| The server answers 202 (it kept the message but its own check failed) | Delivered: the phone does not send it again; the server's sync checks it again. | `Courier` |
+| The server answers 429 | Waits as long as its `Retry-After` says. A new message does not cut that wait short. | `Courier` |
+| The server answers 401 | The phone was removed on the web app. It unpairs, drops what waits, stops the sync, and shows "Pause Button stopped checking messages". It does not retry. | `Courier`, `Watcher` |
+| The server refuses one message (another 4xx) | That message is dropped and the rest go on. | `Courier` |
+| The app is killed, the phone restarts | The outbox and the list of messages already sent are files, so nothing is lost and nothing is sent twice. After a reboot or an update, `BootReceiver` asks Android to rebind the listener, which then sends what waited. When the listener is cut off, it asks to be rebound. | `Outbox`, `SeenStore`, `BootReceiver`, `MessageWatcherService` |
+| The same message again (chat apps re-post notifications) | Not sent again within 10 minutes. Only a salted hash of each message is kept, never its text. | `SeenStore` |
+| A busy group chat | At most 4 a minute from one chat, 12 a minute in all, 300 a day. Beyond that, messages are skipped and counted, not queued. A stranger's message still gets through while a group is busy. | `RateGate` |
+| A message from a saved contact, or from an app the person does not watch | Stays on the phone. The phone learns the person's choices (Settings › Watch my messages) from the server and applies them before sending. An SMS header such as `VM-HDFCBK` is a business, never a contact, so a bank lookalike is always checked. | `WatchRules` |
+| "Disconnect this phone" | Forgets the connection and what waits at once, stops the sync, and tells the server (`POST /api/device/disconnect`), now or once the network is back, so the web app forgets the phone too. | `Watcher` |
+
+**What we saw today** (`watcherStatus().today`, on the Connect screen): how many messages were read, sent, waiting, kept on the phone (contacts, apps not watched), repeats, skipped as too many, and dropped. Counts only, never senders or text.
+
+## Tests
 
 ```bash
 cd android
-export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"   # macOS; or any JDK 17+
-export ANDROID_HOME="$HOME/Library/Android/sdk"
-./gradlew assembleDebug -PPB_HOST=https://your-deployment.vercel.app
-# → app/build/outputs/apk/debug/app-debug.apk
+./gradlew testDebugUnitTest            # on the JVM (src/test): outbox, Idempotency-Key through retries and a restart,
+                                       # 202, the sync's order, dedup, retries, rate cap, contacts, push rules,
+                                       # the shared text's page, which pairing links name another server
+./gradlew :app:connectedDebugAndroidTest    # on a device or emulator (src/androidTest): dedup and the outbox across a restart,
+                                       # the Idempotency-Key, pairing, removal on the web app, disconnect on the phone,
+                                       # and the 30-minute sync through WorkManager's test driver
 ```
 
-- `PB_HOST` is where the web app is deployed. For the emulator use `http://10.0.2.2:3000` (the host machine's `pnpm dev`); for a phone on the same Wi‑Fi use the laptop's address, e.g. `http://192.168.1.20:3000`; for anyone anywhere, the Vercel URL or a `pnpm share` tunnel link.
-- **Signing:** every build, on any laptop or in CI, signs with the shared debug key committed as `android/debug.keystore` (password `android`, alias `androiddebugkey`), not your machine's own `~/.android/debug.keystore`. So a newer APK installs over an older one, and the site can vouch for the key (see "Full screen"). Anyone with the repository can sign with it: for a public release use your own key (`PB_KEYSTORE`, below).
-- `./gradlew assembleRelease` signs with the debug key unless `PB_KEYSTORE`, `PB_KEYSTORE_PASSWORD`, `PB_KEY_ALIAS` and `PB_KEY_PASSWORD` are given (`-P…` or in `~/.gradle/gradle.properties`).
-- CI builds the debug APK on every push and attaches it to the workflow run as **pause-button-debug-apk** (job "Android APK (debug)" in `.github/workflows/ci.yml`). When `android/` changes on `main`, **Publish APK to the website** rebuilds it for the live site and publishes it at `/pause-button.apk` (the QR code's download). Set the repository variable `PB_HOST` to point it at another deployment.
+Run `pnpm cap:sync` first (both need the generated Capacitor files). CI runs both: the unit tests in "Android APK", the device tests on an Android 14 emulator in "Android message watcher on an emulator".
 
 ## Install on a phone
 
-1. Copy `app-debug.apk` to the phone (WhatsApp to yourself, Google Drive, USB, or `adb install app-debug.apk`).
-2. Open it. Android asks to allow installing from this source once; allow it.
-   If Android says "App not installed", an APK signed with a different key is already on the phone (builds before the shared key, or one built with another key): uninstall it, then install again.
-3. Follow the user manual (`docs/user-manual` artifact, linked from the main README).
+1. Copy `app-debug.apk` to the phone (WhatsApp to yourself, Google Drive, USB, or `adb install -r app-debug.apk`), or open `<site>/download`.
+2. Open it. Android asks to allow installing from this source once; allow it. Over an earlier Pause Button it installs as an update; the first time the new one opens, sign in again (it no longer opens through Chrome).
+   If Android says "App not installed", an APK signed with a different key is already on the phone (builds before the shared key): uninstall it, then install again.
 
-## Full screen (no Chrome bar)
-
-Chrome shows the site full screen only when the site vouches for the app: `https://<host>/.well-known/assetlinks.json` must list the app's package and signing fingerprint. The web app serves that file from the `ANDROID_CERT_SHA256` environment variable (comma-separated fingerprints), read on every request. For the shared debug key it is:
-
-```
-E1:5A:42:AC:11:84:2D:CA:5A:4D:E0:CC:B5:2F:85:A5:A3:EA:4C:49:3C:12:90:40:8E:ED:D2:D0:E8:C7:63:B0
-```
-
-(set on the Railway deployment). For another key, get its fingerprint with:
+On the emulator:
 
 ```bash
-keytool -list -v -keystore android/debug.keystore -storepass android -alias androiddebugkey | grep SHA256
-```
-
-Without it the app still works; Chrome just shows its address bar.
-
-## Testing on the emulator
-
-```bash
-emulator -avd pb_pixel &                                   # created by the setup; any Play-Store image works
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell cmd notification allow_listener ai.apty.pausebutton/.MessageWatcherService
+# fills in the code; then tap Connect (a build for another PB_HOST warns about this address):
 adb shell am start -a android.intent.action.VIEW -d "pausebutton://pair?code=XXXXXX&host=http://10.0.2.2:3000"
 # a fake incoming SMS (debug builds accept notifications from the shell):
 adb shell cmd notification post -S bigtext -t "+91 9XXXX XXXXX" demo "Sir this is CBI Mumbai. Stay on the call, tell no one, and transfer Rs 80,000."
@@ -68,43 +118,20 @@ adb shell cmd notification post -S bigtext -t "+91 9XXXX XXXXX" demo "Sir this i
 adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "Sir this is CBI Mumbai. Stay on the call, tell no one, and transfer Rs 80,000." -n ai.apty.pausebutton/.ShareActivity
 ```
 
-The message appears on Mr Rao's phone (My checks, the inbox) and the family phones get the heads-up.
+## On a real phone, before a release
 
-## The message watcher in the real world
+Things an emulator test cannot do. Use two phones: Mr Rao's (the watcher) and a family member's.
 
-| What happens | What the watcher does | Where |
-|---|---|---|
-| No network, or the server is down | The message waits in an **outbox** file in the app's private, not-backed-up storage. It goes out **oldest first** once the network is back, or after a backoff (15 s, 30 s, 1 min … up to 15 min). At most 50 wait (the oldest is dropped beyond that), and none longer than a day. | `Outbox`, `Courier`, `Watcher` |
-| The server answers 5xx or times out | Same as no network: retried later, the backoff growing. | `Courier` |
-| The server answers 429 | Waits as long as its `Retry-After` says. A new message does not cut that wait short. | `Courier` |
-| The server answers 401 | The phone was removed on the web app. It unpairs, drops what waits, and shows "Pause Button stopped checking messages". It does not retry. | `Courier`, `Watcher` |
-| The server refuses one message (another 4xx) | That message is dropped and the rest go on. | `Courier` |
-| The app is killed, the phone restarts | The outbox and the list of messages already sent are files, so nothing is lost and nothing is sent twice. After a reboot or an update, `BootReceiver` asks Android to rebind the listener, which then sends what waited. When the listener is cut off, it asks to be rebound. | `Outbox`, `SeenStore`, `BootReceiver`, `MessageWatcherService` |
-| The same message again (chat apps re-post notifications) | Not sent again within 10 minutes. Only a salted hash of each message is kept, never its text. | `SeenStore` |
-| A busy group chat | At most 4 a minute from one chat, 12 a minute in all, 300 a day. Beyond that, messages are skipped and counted, not queued. A stranger's message still gets through while a group is busy. | `RateGate` |
-| A message from a saved contact, or from an app the person does not watch | Stays on the phone. The phone learns the person's choices (Settings › Watch my messages) from the server and applies them before sending. An SMS header such as `VM-HDFCBK` is a business, never a contact, so a bank lookalike is always checked. | `WatchRules` |
-| "Disconnect this phone" on the phone | Forgets the connection and what waits at once, and tells the server (`POST /api/device/disconnect`), now or once the network is back, so the web app forgets the phone too. | `Watcher` |
-
-**What we saw today** (Connect screen): how many messages were read, sent, waiting, kept on the phone (contacts, apps not watched), repeats, skipped as too many, and dropped. Counts only, never senders or text.
-
-## Tests
-
-```bash
-cd android
-./gradlew testDebugUnitTest            # the watcher's rules on the JVM: outbox, dedup, retries, rate cap, contacts (src/test)
-./gradlew connectedDebugAndroidTest    # on a device or emulator: dedup and the outbox across a restart, pairing,
-                                       # removal on the web app, disconnect on the phone (src/androidTest)
-```
-
-CI runs both: the unit tests in "Android APK (debug)", the device tests on an Android 14 emulator in "Android message watcher on an emulator".
-
-**On a real phone, before a release** (things an emulator test cannot do):
-1. Connect the phone, agree, allow notification access. Send yourself an SMS from another phone: it shows in Pause Button within seconds, and the Connect screen counts it.
-2. Turn on airplane mode, send two SMS, wait a minute, turn it off: both arrive, oldest first. The Connect screen shows "waiting for the internet" while offline.
-3. Reboot the phone and send an SMS without opening the app: it arrives. Then `adb shell am kill ai.apty.pausebutton` and send another: it arrives.
-4. With battery optimisation on for the app ("Optimised"), leave the phone locked for 30 minutes, then send an SMS. If it does not arrive, the Connect screen's battery step is what fixes it.
-5. In a busy WhatsApp group, at most 4 messages a minute are sent; an SMS from an unknown number still arrives.
-6. Remove the phone on the web app: the phone shows "Pause Button stopped checking messages". Connect again, then "Disconnect this phone" on the phone: the web app no longer lists it.
+1. **Fresh install.** Uninstall, install, open: the app opens straight on the site, with the Pause Button icon and name, no address bar. Sign in.
+2. **Deny everything.** Say no to notifications (twice, so Android remembers), skip notification access and battery. The app still works: paste a message and get a verdict. The app does not ask for notifications again; it offers Android's settings instead.
+3. **Grant everything.** Allow notifications, agree on the consent screen and allow notification access, allow background running. Send yourself an SMS from another phone: it shows in Pause Button within seconds, and the Connect screen counts it.
+4. **Revoke in Settings.** Switch off notification access and notifications for the app in Android's settings, return to the app: the Connect screen says so (and the web app's list of phones shows it), with a way back.
+5. **Offline.** Turn on airplane mode, send two SMS, wait a minute, turn it off: both arrive, oldest first, once each. The Connect screen shows "waiting for the internet" while offline.
+6. **Reboot.** Reboot the phone and send an SMS without opening the app: it arrives. Within 30 minutes (with a network) the phone reports in by itself: the server records its last sync, and does not mark it "not syncing".
+7. **App killed, then a scam SMS.** `adb shell am kill ai.apty.pausebutton` (or swipe it away), lock both phones, send a scam SMS to Mr Rao's phone: the family phone gets the alert on its lock screen with the app closed, and **Block payment** there works without unlocking (with a paused payment).
+8. **Battery.** With battery optimisation on for the app ("Optimised"), leave the phone locked for 30 minutes, then send an SMS. If it does not arrive, the battery step is what fixes it.
+9. **Busy group.** In a busy WhatsApp group, at most 4 messages a minute are sent; an SMS from an unknown number still arrives.
+10. **Removal.** Remove the phone on the web app: the phone shows "Pause Button stopped checking messages". Connect again, then disconnect on the phone: the web app no longer lists it.
 
 ## Privacy
 

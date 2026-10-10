@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/icons";
-import { clockTime, HighlightedText, LoadingScreen, Marks, Screen, SignalBars, SignalRows, useCall, useCountdown, useToast, VerdictPill, type SignalWords } from "@/components/ui";
+import { clockTime, HighlightedText, holdTotalMs, LoadingScreen, Marks, Screen, SignalBars, SignalRows, useCall, useCountdown, useToast, VerdictPill, type SignalWords } from "@/components/ui";
 import { rupees } from "@/lib/check/copy";
 import { keyPhrases } from "@/lib/check/phrases";
 import { SIGNAL_TYPES, type SignalType } from "@/lib/check/types";
@@ -17,7 +17,7 @@ import { canSpeak, speak, stopSpeaking } from "@/lib/client/speech";
 import type { CheckView } from "@/lib/views";
 import { HELPLINE } from "@/lib/phone";
 import { appLabel } from "./share";
-import { useHelper, useJoinNames, useLang, useT } from "./shell";
+import { useHelper, useJoinNames, useLang, useRao, useT } from "./shell";
 
 export function useCheck(id: string) {
   return useQuery({ queryKey: ["check", id], queryFn: () => api<CheckView>(`/api/me/checks/${id}`), refetchInterval: 3000 });
@@ -163,9 +163,10 @@ export function VerdictScreen() {
   const call = useRaoCall();
   const toast = useToast();
   const helper = useHelper();
+  const rao = useRao();
   const { data: c, error } = useCheck(id);
   const [dismissed, setDismissed] = useState(false);
-  const holdClock = useCountdown(c?.hold?.status === "pending" ? c.hold.expiresAt : undefined, undefined, (c?.hold?.holdMinutes ?? 10) * 60_000);
+  const holdClock = useCountdown(c?.hold?.status === "pending" ? c.hold.expiresAt : undefined, rao.data?.serverNow, holdTotalMs(c?.hold));
   // He is looking at it: the "Possible scam from …" notification about this message is no longer needed.
   useEffect(() => {
     void closeNotifications((tag) => tag === `check-${id}`);
@@ -191,8 +192,15 @@ export function VerdictScreen() {
   const text = c.simText ?? c.messageText ?? loadMessage(id);
   const verdictLabel = (v: "SCAM" | "SUSPICIOUS" | "SAFE") => t(`verdictLabel.${v}`);
 
+  // "Ask" / "Ask anyway" / "Tell": on every verdict, whatever the check said. Family is
+  // alerted by itself only about a scam; anything else reaches them when he asks.
   async function ask() {
-    await post(`/api/me/checks/${id}/ask`, { text: loadMessage(id) ?? undefined });
+    try {
+      await post(`/api/me/checks/${id}/ask`, { text: loadMessage(id) ?? undefined });
+    } catch (e) {
+      toast({ title: t("call.couldNotTell"), sub: helper.all.length ? (e as Error).message : t("hold.addTrusted"), icon: "warn", tone: "red" });
+      return;
+    }
     await queryClient.invalidateQueries({ queryKey: ["check", id] });
     toast({ title: t("verdict.askedToast", { name: helper.first }), sub: t("verdict.answerShows"), icon: "bell" });
   }

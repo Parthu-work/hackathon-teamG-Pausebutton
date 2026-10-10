@@ -105,10 +105,10 @@ describe("messages from the Android watcher", () => {
   it("a message that is not checked is not stored at all, not even who sent it", async () => {
     const { papa } = await household();
     const contact = await deliverMessage(db, papa, { channel: "sms", sender: "Meera (saved)", fromContact: true, text: "Papa, dinner at 8?" });
-    expect(contact).toEqual({ id: null, checkId: null });
+    expect(contact).toEqual({ id: null, checkId: null, status: "skipped", duplicate: false });
     await db.update(schema.users).set({ watchWhatsapp: false }).where(eq(schema.users.id, papa.id));
     const unwatched = await deliverMessage(db, { ...papa, watchWhatsapp: false }, { channel: "whatsapp", sender: "+91 90000 11111", fromContact: false, text: text("cbi") });
-    expect(unwatched).toEqual({ id: null, checkId: null });
+    expect(unwatched).toEqual({ id: null, checkId: null, status: "skipped", duplicate: false });
 
     expect(await inboxRows(papa.id)).toEqual([]);
     expect(await db.query.checks.findMany({ where: eq(schema.checks.userId, papa.id) })).toEqual([]);
@@ -128,6 +128,31 @@ describe("messages from the Android watcher", () => {
 
     await purgeSharedText(db);
     expect((await inboxRows(papa.id))[0].text).toBeNull();
+  });
+
+  it("a message we could not check keeps its text until it is checked, 24 hours at most, and never shows it", async () => {
+    const { papa } = await household();
+    const row = (sender: string, status: "failed" | "received", hours: number) => ({
+      userId: papa.id, channel: "sms" as const, sender, text: text("cbi"), status, attempts: 1, createdAt: new Date(Date.now() - hours * HOUR),
+    });
+    await db.insert(schema.simMessages).values([row("fresh-failed", "failed", 2), row("old-failed", "failed", 25), row("old-received", "received", 25), row("fresh-received", "received", 1)]);
+    // Mr Rao's inbox never shows the kept text: it is there only to check the message.
+    const before = await listInbox(db, papa.id);
+    expect(before.every((m) => m.text === null)).toBe(true);
+    expect(before.find((m) => m.sender === "fresh-failed")).toMatchObject({ status: "failed", verdict: null, canRetry: true });
+
+    const counts = await purgeSharedText(db);
+    expect(counts.inboxText).toBeGreaterThanOrEqual(2);
+    const rows = await inboxRows(papa.id);
+    const of = (sender: string) => rows.find((r) => r.sender === sender)!;
+    expect(of("fresh-failed")).toMatchObject({ status: "failed", text: text("cbi") });
+    expect(of("fresh-received")).toMatchObject({ status: "received", text: text("cbi") });
+    // Past 24 hours the text goes; it stays "could not check", with nothing left to try again.
+    expect(of("old-failed")).toMatchObject({ status: "failed", text: null });
+    expect(of("old-received")).toMatchObject({ status: "failed", text: null, error: "expired" });
+    const after = await listInbox(db, papa.id);
+    expect(after.find((m) => m.sender === "old-failed")).toMatchObject({ status: "failed", canRetry: false, text: null, verdict: null });
+    expect(after.find((m) => m.sender === "fresh-failed")?.canRetry).toBe(true);
   });
 
   it("made-up demo messages keep their text, and the purge leaves them alone", async () => {
@@ -153,11 +178,17 @@ describe("the hourly purge", () => {
       { userId: son.id, tag: "old", endpoint: "https://push.example/old", status: "sent", createdAt: longAgo },
       { userId: son.id, tag: "new", endpoint: "https://push.example/new", status: "sent" },
     ]);
+    const [, newRun] = await db
+      .insert(schema.syncRuns)
+      .values([{ startedAt: longAgo, finishedAt: longAgo }, { startedAt: new Date(), finishedAt: new Date() }])
+      .returning();
 
     const counts = await purgeExpired(db);
     expect(counts.checkText).toBeGreaterThanOrEqual(1);
     expect(counts.events).toBeGreaterThanOrEqual(1);
     expect(counts.pushDeliveries).toBeGreaterThanOrEqual(1);
+    expect(counts.syncRuns).toBe(1);
+    expect((await db.query.syncRuns.findMany()).map((r) => r.id)).toEqual([newRun.id]);
     expect((await checkRow(old.checkId)).messageText).toBeNull();
     expect((await checkRow(fresh.checkId)).messageText).toBe(text("cbi"));
     const lines = (await eventsOf(papa.id)).map((e) => e.message);
@@ -186,7 +217,27 @@ describe("the hourly purge", () => {
     expect((await purgePost(req("/api/cron/purge", { headers: { authorization: "Bearer nope" } }), ctx)).status).toBe(401);
     const ok = await purgePost(req("/api/cron/purge", { headers: { authorization: "Bearer a-long-random-purge-key" } }), ctx);
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toMatchObject({ checkText: expect.any(Number), inboxText: expect.any(Number), events: expect.any(Number), pushDeliveries: expect.any(Number) });
+    expect(await ok.json()).toMatchObject({
+      checkText: expect.any(Number),
+      inboxText: expect.any(Number),
+      events: expect.any(Number),
+      pushDeliveries: expect.any(Number),
+      syncRuns: expect.any(Number),
+      otpCodes: expect.any(Number),
+    });
+  });
+
+  it("sweeps sign-in codes older than a day", async () => {
+    const phone = "+91 98100 77001";
+    const old = new Date(Date.now() - 25 * HOUR);
+    await db.insert(schema.otpCodes).values([
+      { phone, codeHash: "old", expiresAt: new Date(old.getTime() + 5 * 60_000), createdAt: old },
+      { phone, codeHash: "new", expiresAt: new Date(Date.now() + 5 * 60_000) },
+    ]);
+    const counts = await purgeExpired(db);
+    expect(counts.otpCodes).toBeGreaterThanOrEqual(1);
+    const left = await db.query.otpCodes.findMany({ where: eq(schema.otpCodes.phone, phone) });
+    expect(left.map((c) => c.codeHash)).toEqual(["new"]);
   });
 });
 

@@ -21,10 +21,16 @@
     "env:check": "tsx scripts/check-env.ts",
     "e2e:headed": "next build && HEADED=1 playwright test",
     "push:keys": "tsx scripts/push-keys.ts",
+    "cap:sync": "cap sync android",
+    "android:build": "cap sync android && cd android && ./gradlew assembleDebug",
     "share": "cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/push-notifications": "8.1.3",
     "@electric-sql/pglite": "^0.5.8",
     "@tanstack/react-query": "^5.104.1",
     "drizzle-orm": "^0.45.3",
@@ -37,6 +43,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.3",
     "@playwright/test": "^1.64.0",
     "@types/node": "^24.19.1",
     "@types/pg": "^8.23.1",

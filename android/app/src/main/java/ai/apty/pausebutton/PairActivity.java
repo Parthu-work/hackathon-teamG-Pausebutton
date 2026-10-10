@@ -6,7 +6,6 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.PowerManager;
 import android.provider.Settings;
 import android.text.InputType;
 import android.util.TypedValue;
@@ -18,19 +17,19 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import androidx.core.app.NotificationManagerCompat;
-
 import java.text.DateFormat;
 import java.util.Date;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * "Connect this phone" (screens M2 and M3). Opened from the web app's
- * pausebutton://pair?code=…&host=… link, or from the app drawer. Trades the
- * pairing code for this phone's token, then helps the person agree to what
- * the watcher does (ConsentActivity), allow notification access and
- * background running, and shows what it saw today.
+ * "Connect this phone" (screens M2 and M3) for a pairing link opened outside
+ * the app: the web app's pausebutton://pair?code=…&host=… link, tapped in a
+ * browser or scanned. (Inside the app, the web app's own Connect screen does
+ * the same through PauseButtonNativePlugin.) Trades the pairing code for this
+ * phone's token, then helps the person agree to what the watcher does
+ * (ConsentActivity), allow notification access and background running, and
+ * shows what it saw today.
  */
 public class PairActivity extends Activity {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -59,21 +58,36 @@ public class PairActivity extends Activity {
         refresh();
         reportListener();
         // Access is on but Android has not bound the listener (after an update, or killed on some phones): ask again.
-        if (Prefs.consented(this) && listenerEnabled() && !Prefs.listenerConnected(this)) MessageWatcherService.requestRebindQuietly(this);
+        if (Prefs.consented(this) && Watcher.listenerEnabled(this) && !Prefs.listenerConnected(this)) MessageWatcherService.requestRebindQuietly(this);
         Watcher.get(this).kick();
     }
 
-    /** pausebutton://pair?code=ABC123&host=https://… from the web app. */
+    /**
+     * pausebutton://pair?code=ABC123&host=https://… from the web app: fills in
+     * the code (and the address), and the person taps Connect. Anyone can send
+     * such a link, so it never connects by itself, never replaces a connection,
+     * and says so when it names another server than this app's own site: a
+     * link in a scammer's message must not quietly send this phone's messages
+     * (OTPs included) to someone else.
+     */
     private void readLink(Intent intent) {
         Uri data = intent != null ? intent.getData() : null;
         if (data == null) return;
+        if (Prefs.token(this) != null) return; // already connected: "Disconnect this phone" first
         String code = data.getQueryParameter("code");
         String host = data.getQueryParameter("host");
         if (host != null && !host.isEmpty()) hostField.setText(host);
-        if (code != null && !code.isEmpty()) {
-            codeField.setText(code);
-            connect();
-        }
+        if (code != null && !code.isEmpty()) codeField.setText(code);
+        status.setText(knownHost(host, Prefs.site(), Prefs.host(this))
+                ? "Tap Connect to let Pause Button check this phone's messages."
+                : "This link is for " + host + ", not " + Prefs.site() + ". Tap Connect only if you trust it.");
+    }
+
+    /** A link's host is the app's own site or the person's earlier choice (no host: the address field keeps theirs). */
+    static boolean knownHost(String linkHost, String site, String chosen) {
+        if (linkHost == null || linkHost.trim().isEmpty()) return true;
+        String host = Prefs.trimSlash(linkHost.trim());
+        return host.equalsIgnoreCase(Prefs.trimSlash(site)) || host.equalsIgnoreCase(Prefs.trimSlash(chosen));
     }
 
     private void connect() {
@@ -104,22 +118,13 @@ public class PairActivity extends Activity {
 
     /** Tells the server whether notification access is on (the web app shows it), and learns the watch settings. */
     private void reportListener() {
-        Watcher.get(this).reportStatus(listenerEnabled());
+        Watcher.get(this).reportStatus(Watcher.listenerEnabled(this));
     }
 
     /** Agreeing comes first; after that this opens Android's notification access settings. */
     private void allowAccess() {
         if (!Prefs.consented(this)) startActivity(new Intent(this, ConsentActivity.class));
         else startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
-    }
-
-    private boolean listenerEnabled() {
-        return NotificationManagerCompat.getEnabledListenerPackages(this).contains(getPackageName());
-    }
-
-    private boolean batteryUnrestricted() {
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
     }
 
     private void refresh() {
@@ -133,14 +138,14 @@ public class PairActivity extends Activity {
             status.setText("On the phone you are protecting, open Settings › Watch my messages › Connect this phone, then tap the link or type the code here.");
         }
 
-        boolean on = listenerEnabled();
+        boolean on = Watcher.listenerEnabled(this);
         boolean agreed = Prefs.consented(this);
         watcherStatus.setText(!agreed ? (on ? "!  Paused: read what Pause Button does and agree first" : "!  Not watching yet")
                 : on ? "✓  Notification access is on" : "!  Notification access is off");
         watcherStatus.setTextColor(agreed && on ? 0xFF1F6B49 : 0xFFB3291E);
         allowButton.setText(!agreed ? "See what is read, and agree" : on ? "Notification access settings" : "Allow notification access");
 
-        boolean battery = batteryUnrestricted();
+        boolean battery = Watcher.batteryUnrestricted(this);
         batteryStatus.setText(battery ? "✓  Allowed to run in the background" : "!  The phone may stop the watcher to save battery");
         batteryStatus.setTextColor(battery ? 0xFF1F6B49 : 0xFFB3291E);
         batteryButton.setVisibility(battery ? View.GONE : View.VISIBLE);
@@ -246,7 +251,7 @@ public class PairActivity extends Activity {
         deliveryStatus = text("", 15, false, 0xFF14202B);
         root.addView(deliveryStatus);
 
-        openButton = button("Open Pause Button", true, v -> startActivity(new Intent(this, LauncherActivity.class)));
+        openButton = button("Open Pause Button", true, v -> startActivity(new Intent(this, MainActivity.class)));
         root.addView(openButton);
         disconnectButton = button("Disconnect this phone", false, v -> disconnect());
         root.addView(disconnectButton);
@@ -256,6 +261,8 @@ public class PairActivity extends Activity {
         root.addView(foot);
 
         ScrollView scroll = new ScrollView(this);
+        // Android 15+ draws every screen of this app edge to edge: keep clear of the status and navigation bars.
+        scroll.setFitsSystemWindows(true);
         scroll.addView(root);
         setContentView(scroll);
     }

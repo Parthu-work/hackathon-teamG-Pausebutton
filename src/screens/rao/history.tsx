@@ -6,16 +6,18 @@ import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
 import { Icon } from "@/components/icons";
 import { Avatar, clockTime, Marks, RaoTabs, Screen, Sheet, TitleRow, Toggle, useToast, VerdictPill } from "@/components/ui";
+import { HOLD_CHOICES } from "@/lib/check/config";
 import { LANGUAGES } from "@/lib/i18n";
 import type { CheckRow } from "@/lib/server/checks";
 import { deleteMyAccount } from "@/lib/client/account";
 import { api, ApiError } from "@/lib/client/api";
 import { forgetMessages } from "@/lib/client/messages";
-import { pushPermission, subscribeToPush, unsubscribeFromPush } from "@/lib/client/push";
+import { isNativeApp } from "@/lib/client/native";
+import { pushPermission, subscribePushPermission, unsubscribeFromPush } from "@/lib/client/push";
 import { signOut } from "@/lib/client/sign-out";
+import { NativeNotificationsBanner, useAskNotifications } from "@/components/native-notifications";
 import { useRao, useT } from "./shell";
 
-const noSubscribe = () => () => {};
 const pushPermissionNow = () => pushPermission();
 const pushPermissionServer = () => "" as const;
 
@@ -155,9 +157,10 @@ export function SettingsScreen() {
   const toast = useToast();
   const tabs = useRaoTabs("settings");
   const { data } = useRao();
-  // Reads Notification.permission on every render; "" while rendering on the server.
-  const permission = useSyncExternalStore(noSubscribe, pushPermissionNow, pushPermissionServer);
+  // Reads Notification.permission (in the Android app, Android's) on every render; "" while rendering on the server.
+  const permission = useSyncExternalStore(subscribePushPermission, pushPermissionNow, pushPermissionServer);
   const [, bump] = useState(0);
+  const askNotifications = useAskNotifications("rao");
   const save = useMutation({
     mutationFn: (body: Record<string, unknown>) => api("/api/me/settings", { method: "PATCH", body }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["rao-state"] }),
@@ -169,13 +172,16 @@ export function SettingsScreen() {
   const lang = LANGUAGES.find((l) => l.code === data.me.language) ?? LANGUAGES[0];
 
   // K2 · Notifications on his own phone: a message the watcher caught, the family's decision.
+  // In the Android app they are blocked for the app, not for a site.
+  const native = isNativeApp();
+  const blocked = native ? "settings.notifyAppOff" : "settings.notifyBlocked";
   const notifyText =
     !permission || !data.me.alertNotify
       ? t("settings.notifySub")
       : permission === "granted"
         ? t("settings.notifyOn")
         : permission === "denied"
-          ? t("settings.notifyBlocked")
+          ? t(blocked)
           : permission === "needs-install"
             ? t("settings.notifyInstall")
             : permission === "unsupported"
@@ -183,13 +189,15 @@ export function SettingsScreen() {
               : t("settings.notifyAsk");
   async function onNotify(on: boolean) {
     if (on) {
-      const result = await subscribeToPush("rao"); // asks the phone's permission: must follow the tap
+      const result = await askNotifications(); // asks the phone's permission (the app says why first): must follow the tap
+      if (!result) return; // "Not now"
       const key =
         result === "subscribed" ? "settings.notifyOn"
-        : result === "denied" ? "settings.notifyBlocked"
+        : result === "denied" ? blocked
         : result === "needs-install" ? "settings.notifyInstall"
         : result === "unsupported" ? "settings.notifyUnsupported"
         : result === "off" ? "settings.notifyOff"
+        : native ? "settings.notifyErrorApp"
         : "settings.notifyError";
       toast({ title: t("settings.notify"), sub: t(key), icon: result === "subscribed" ? "bell" : "warn", tone: result === "subscribed" ? undefined : "red" });
       bump((n) => n + 1); // re-read the permission
@@ -215,6 +223,18 @@ export function SettingsScreen() {
           <p className="sm">{data.people.length > 1 ? t("settings.yourTrustedN", { n: data.people.length }) : t("settings.yourTrusted")}</p>
         </div>
         <button className="ghost" onClick={() => router.push("/settings/people")}>{t("settings.change")}</button>
+      </div>
+      {/* D2 · how long a paused payment waits for the family; a running one keeps its time. */}
+      <div className="card" data-testid="hold-time">
+        <div className="lbl">{t("settings.holdTime")}</div>
+        <p className="sm">{t("settings.holdTimeSub")}</p>
+        <div className="row wrap" style={{ gap: 8 }} role="group" aria-label={t("settings.holdTime")}>
+          {HOLD_CHOICES.map((n) => (
+            <button key={n} className={`chip ${data.me.holdMinutes === n ? "on" : ""}`} aria-pressed={data.me.holdMinutes === n} onClick={() => save.mutate({ holdMinutes: n })}>
+              {t("settings.holdTimeMinutes", { n })}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="card">
         <div className="lbl">{t("settings.textSize")}</div>
@@ -250,6 +270,7 @@ export function SettingsScreen() {
         </div>
         <Toggle on={data.me.alertNotify} label={t("settings.notify")} onChange={(v) => void onNotify(v)} />
       </div>
+      <NativeNotificationsBanner />
       <Link href="/privacy" className="card row-card" style={{ textDecoration: "none" }}>
         <div className="grow"><b style={{ fontSize: 17 }}>{t("settings.whatWeKeep")}</b><p className="sm">{t("settings.privacySub")}</p></div>
         <Icon name="chev" />
@@ -300,7 +321,7 @@ export function PrivacyScreen() {
   }
 
   // Every line here is in docs/retention.md: change both together.
-  const keep = [t("privacy.keep1"), t("privacy.keep2"), t("privacy.keep3", { helper }), t("privacy.keep4", { helper }), t("privacy.keep5")];
+  const keep = [t("privacy.keep1"), t("privacy.keep2"), t("privacy.keep3", { helper }), t("privacy.keep4", { helper }), t("privacy.keep5"), t("privacy.keep6")];
   const never = [t("privacy.never1", { helper }), t("privacy.never2"), t("privacy.never3")];
   return (
     <Screen

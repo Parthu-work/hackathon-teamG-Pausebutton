@@ -7,8 +7,9 @@ name: Uptime
 # the first good check closes it.
 #
 # The same run calls the scheduled purge (POST /api/cron/purge, docs/retention.md):
-# message text past 24 hours, activity and push logs past 30 days. It needs
-# the CRON_SECRET repository secret, set to the server's CRON_SECRET.
+# message text past 24 hours, sign-in codes past a day, activity, push and sync
+# logs past 30 days. It needs the CRON_SECRET repository secret, set to the
+# server's CRON_SECRET (the Sync workflow, sync.yml, uses the same one).
 #
 # Hourly keeps it inside the free Actions minutes of a private repo (each run
 # bills a minute; every 15 minutes would use about 2,900 a month).
@@ -48,6 +49,7 @@ jobs:
 
       - name: Run the scheduled purge
         if: ${{ !cancelled() }}
+        shell: bash
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |

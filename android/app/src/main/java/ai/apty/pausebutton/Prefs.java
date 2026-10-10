@@ -21,10 +21,19 @@ public final class Prefs {
         return c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
     }
 
-    /** The web app's address; the build's default until the person connects to another host. */
+    /**
+     * The site the app shows (capacitor.config.ts server.url; the build checks
+     * it equals PB_HOST). Push comes from it, a notification opens it, and the
+     * WebView's sign-in cookie belongs to it.
+     */
+    public static String site() {
+        return BuildConfig.DEFAULT_HOST;
+    }
+
+    /** Where the message watcher sends messages: the site, unless the phone was connected to another host. */
     public static String host(Context c) {
         String h = get(c).getString("host", null);
-        return (h == null || h.isEmpty()) ? BuildConfig.DEFAULT_HOST : h;
+        return (h == null || h.isEmpty()) ? site() : h;
     }
 
     public static void setHost(Context c, String host) {
@@ -146,6 +155,26 @@ public final class Prefs {
 
     public static void count(Context c, String what, int n) {
         get(c).edit().putString("dayCounts", today(c).add(what, n).save()).apply();
+    }
+
+    // ---------------------------------------------------------------- the notification permission (Android 13+)
+
+    /** Whether the app has asked for the permission before (a first dismissal is not a refusal). */
+    public static boolean notificationsAsked(Context c) {
+        return get(c).getBoolean("notificationsAsked", false);
+    }
+
+    public static void setNotificationsAsked(Context c) {
+        get(c).edit().putBoolean("notificationsAsked", true).apply();
+    }
+
+    /** The person refused for good ("Don't allow" twice): the app never asks again, it only offers Android's settings. */
+    public static boolean notificationsRefused(Context c) {
+        return get(c).getBoolean("notificationsRefused", false);
+    }
+
+    public static void setNotificationsRefused(Context c, boolean refused) {
+        get(c).edit().putBoolean("notificationsRefused", refused).apply();
     }
 
     // ---------------------------------------------------------------- a disconnect the server has not heard yet

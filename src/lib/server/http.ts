@@ -12,6 +12,7 @@ export function route<T>(fn: (req: Request, params: Record<string, string>) => P
     await connection(); // every API call is per-request: never prerender at build time
     try {
       const data = await fn(req, ctx?.params ? await ctx.params : {});
+      if (data instanceof Response) return data; // a handler that chose its own status (e.g. 202)
       return Response.json(data ?? { ok: true });
     } catch (error) {
       unstable_rethrow(error);

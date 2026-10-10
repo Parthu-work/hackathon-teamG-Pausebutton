@@ -7,7 +7,9 @@ import java.util.Random;
  * Takes the outbox to the server, oldest first, one message at a time, and
  * decides what each answer means:
  * <ul>
- *   <li>2xx: delivered.</li>
+ *   <li>2xx: delivered. That includes 202, the server's "I have it, but my
+ *       check failed": its own sync job checks it again, so the phone must
+ *       not send it twice. A repeat the server already had is a 200.</li>
  *   <li>401: this phone was disconnected (from the web app, or its token is
  *       gone). Stop, drop what waits, and say so: retrying can never help.</li>
  *   <li>429: the server asks the phone to slow down. Wait as long as it says.</li>
@@ -39,7 +41,7 @@ public final class Courier {
         }
     }
 
-    /** Sends one message to POST /api/device/inbox. */
+    /** Sends one message to POST /api/device/inbox, with its Idempotency-Key ({@link Outbox.Entry#headers()}). */
     public interface Transport {
         Reply send(Outbox.Entry message) throws IOException;
     }

@@ -1,1 +1,1 @@
-# Nothing to shrink in this app yet.
+# Nothing to shrink in this app yet (minifyEnabled false).

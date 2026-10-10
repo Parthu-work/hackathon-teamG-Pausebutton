@@ -6,7 +6,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.json.JSONArray;
@@ -19,7 +21,9 @@ import org.json.JSONObject;
  * battery loses nothing, and go out oldest first once the server can be
  * reached. At most {@link #MAX} wait (beyond that the oldest is dropped) and
  * none for longer than {@link #MAX_AGE_MS}: a day-old warning helps nobody,
- * and message text should not sit on the phone.
+ * and message text should not sit on the phone. Each message keeps the id it
+ * got when it was seen through every retry and restart, so the server can
+ * tell a retry from a new message and checks each one once.
  */
 public final class Outbox {
     public static final int MAX = 50;
@@ -27,6 +31,7 @@ public final class Outbox {
 
     /** One waiting message. */
     public static final class Entry {
+        /** A random UUID, the same on every try: the message's Idempotency-Key. */
         public final String id;
         public final String channel;
         public final String sender;
@@ -50,9 +55,14 @@ public final class Outbox {
             this.nextAttemptAt = nextAttemptAt;
         }
 
-        /** What POST /api/device/inbox expects. */
+        /** What POST /api/device/inbox expects (messageId repeats the Idempotency-Key, for a proxy that drops headers). */
         public JSONObject body() throws JSONException {
-            return new JSONObject().put("channel", channel).put("sender", sender).put("fromContact", fromContact).put("text", text);
+            return new JSONObject().put("channel", channel).put("sender", sender).put("fromContact", fromContact).put("text", text).put("messageId", id);
+        }
+
+        /** Sent with every try of this message, so the server never checks one message twice. */
+        public Map<String, String> headers() {
+            return Collections.singletonMap("Idempotency-Key", id);
         }
 
         Entry retryAt(long at) {
@@ -64,7 +74,8 @@ public final class Outbox {
         }
 
         JSONObject toJson() throws JSONException {
-            return body().put("id", id).put("seenAt", seenAt).put("attempts", attempts).put("nextAttemptAt", nextAttemptAt);
+            return new JSONObject().put("id", id).put("channel", channel).put("sender", sender).put("fromContact", fromContact).put("text", text)
+                    .put("seenAt", seenAt).put("attempts", attempts).put("nextAttemptAt", nextAttemptAt);
         }
 
         static Entry fromJson(JSONObject o) throws JSONException {

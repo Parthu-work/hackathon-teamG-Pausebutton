@@ -396,7 +396,7 @@ test("a paused payment is released only when Arjun and Meera both approve", asyn
   await rao.getByRole("button", { name: "Check this message" }).click();
   await rao.getByRole("button", { name: "I will not do anything" }).click();
   await rao.getByRole("link", { name: /payment paused/ }).click();
-  // F13: two keys on Papa's screen too, with the hour-long ring.
+  // F13: two keys on Papa's screen too; the ring counts down his usual hold time (10 minutes by default).
   await expect(rao.getByTestId("two-keys")).toBeVisible();
 
   await openAlert(arjun, "Papa got a scam message");
@@ -681,7 +681,10 @@ test("Delete my account: a shared demo account cannot be deleted; a real one can
   const ctx = await newContext(browser);
   const page = await ctx.newPage();
   const phoneNumber = `9${Math.floor(100_000_000 + Math.random() * 899_999_999)}`;
-  expect((await ctx.request.post("/api/auth/sign-in", { data: { phone: phoneNumber, code: "1234" } })).ok()).toBeTruthy();
+  const sent = await ctx.request.post("/api/auth/code", { data: { phone: phoneNumber } });
+  expect(sent.ok(), await sent.text()).toBeTruthy();
+  const { demoCode } = (await sent.json()) as { demoCode: string };
+  expect((await ctx.request.post("/api/auth/sign-in", { data: { phone: phoneNumber, code: demoCode } })).ok()).toBeTruthy();
   expect((await ctx.request.post("/api/auth/role", { data: { role: "protected", name: "Test Person" } })).ok()).toBeTruthy();
   await page.goto("/privacy");
   await page.getByTestId("delete-account").click();

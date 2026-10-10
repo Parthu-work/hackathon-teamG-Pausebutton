@@ -3,14 +3,17 @@ import { defineConfig, devices } from "@playwright/test";
 // Three-phone end-to-end test (Mr Rao, Arjun, Meera) against a fresh in-memory database.
 //   pnpm e2e          headless (CI); run `pnpm build` first
 //   pnpm e2e:headed   builds, then opens the three phones as visible windows, slowed down
-const PORT = 3300;
+// E2E_PORT: run two suites side by side (each starts its own server).
+const PORT = Number(process.env.E2E_PORT ?? 3300);
 const HEADED = !!process.env.HEADED;
 
 export default defineConfig({
   testDir: "e2e",
   timeout: HEADED ? 180_000 : 60_000,
   retries: process.env.CI ? 1 : 0,
-  workers: HEADED ? 1 : undefined,
+  // One test at a time: the specs share one server and one demo household,
+  // and each test resets it (POST /api/demo/reset) before it starts.
+  workers: 1,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL: `http://localhost:${PORT}`,

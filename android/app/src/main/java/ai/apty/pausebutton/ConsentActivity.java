@@ -34,7 +34,7 @@ public class ConsentActivity extends Activity {
             {"What Pause Button keeps",
                     "The verdict and the warning phrases of each check. Everything it keeps, and for how long, is listed in Pause Button under Settings › What we keep."},
             {"You can stop at any time",
-                    "Tap “Disconnect this phone” here, or remove the phone in Pause Button (Settings › Watch my messages). "
+                    "Disconnect this phone in Pause Button (Settings › Watch my messages). "
                             + "Switching off notification access in Android’s settings stops all reading."},
     };
 
@@ -62,6 +62,8 @@ public class ConsentActivity extends Activity {
         root.addView(button("Not now", false, this::finish));
 
         ScrollView scroll = new ScrollView(this);
+        // Android 15+ draws every screen of this app edge to edge: keep clear of the status and navigation bars.
+        scroll.setFitsSystemWindows(true);
         scroll.addView(root);
         setContentView(scroll);
     }

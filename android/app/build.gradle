@@ -1,36 +1,41 @@
-plugins {
-    id "com.android.application"
+apply plugin: 'com.android.application'
+
+// The site the app opens and the message watcher talks to. "pnpm cap:sync" copies
+// capacitor.config.ts (server.url, from PB_HOST) into src/main/assets/capacitor.config.json;
+// the build reads the same address, so the WebView and the native code never disagree.
+def syncedConfig = file("src/main/assets/capacitor.config.json")
+def syncedHost = syncedConfig.exists() ? new groovy.json.JsonSlurper().parse(syncedConfig).server?.url?.toString()?.replaceAll('/+$', '') : null
+def host = (project.findProperty("PB_HOST") ?: syncedHost ?: "https://hackathon-teamg-pausebutton-production.up.railway.app").toString().replaceAll('/+$', '')
+if (syncedHost && syncedHost != host) {
+    throw new GradleException("PB_HOST is " + host + " but the app would open " + syncedHost + ". Run: PB_HOST=" + host + " pnpm cap:sync")
 }
 
-def host = (project.findProperty("PB_HOST") ?: "https://hackathon-teamg-pausebutton-production.up.railway.app").toString().replaceAll('/+$', '')
-def assetStatements = '[{"relation": ["delegate_permission/common.handle_all_urls"], "target": {"namespace": "web", "site": "' + host + '"}}]'
-
 android {
-    namespace "ai.apty.pausebutton"
-    compileSdk 37
-    compileSdkMinor 2
-
+    namespace = "ai.apty.pausebutton"
+    compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "ai.apty.pausebutton"
-        minSdk 26
-        targetSdk 36
-        versionCode 2
-        versionName "0.2.0"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 3
+        versionName "0.3.0"
         buildConfigField "String", "DEFAULT_HOST", '"' + host + '"'
         resValue "string", "default_host", host
-        // Digital Asset Links: lets Android open the site full screen once the
-        // site serves /.well-known/assetlinks.json with this app's signing key.
-        resValue "string", "asset_statements", assetStatements.replace('"', '\\"')
         // On a device or emulator: ./gradlew connectedDebugAndroidTest (src/androidTest).
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
     }
 
     signingConfigs {
         // One shared debug key, committed (android/debug.keystore, the standard
         // debug password), so every build, on any laptop or CI run, has the same
-        // signature: a newer APK installs over an older one, and the site's
-        // assetlinks.json (ANDROID_CERT_SHA256) can name it for full screen.
-        // Anyone with the repo can sign with it: use PB_KEYSTORE for a public release.
+        // signature and a newer APK installs over an older one, the 0.2 builds
+        // (before Capacitor) included. Anyone with the repo can sign with it: use
+        // PB_KEYSTORE for a public release.
         debug {
             storeFile rootProject.file("debug.keystore")
             storePassword "android"
@@ -54,11 +59,13 @@ android {
 
     buildTypes {
         debug {
-            // Lets a debug build talk to http://10.0.2.2:3000 (emulator) or a LAN address.
+            // Lets a debug build talk to http://10.0.2.2:3000 (emulator) or a LAN address
+            // (with PB_CLEARTEXT=1 for the WebView, see capacitor.config.ts).
             manifestPlaceholders = [cleartext: "true"]
         }
         release {
             minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             manifestPlaceholders = [cleartext: "false"]
             signingConfig signingConfigs.release
         }
@@ -68,24 +75,44 @@ android {
         buildConfig true
         resValues true
     }
+}
 
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
     }
 }
 
 dependencies {
-    // Trusted Web Activity launcher (opens the web app in Chrome, full screen).
-    implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.7.4"
-    implementation "androidx.browser:browser:1.10.0"
-    implementation "androidx.core:core:1.19.1"
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.core:core:$androidxCoreVersion"
+    // The 30-minute sync (SyncWorker).
+    implementation "androidx.work:work-runtime:$androidxWorkVersion"
+    // PauseMessagingService extends the push plugin's Firebase service, so the app compiles against Firebase too.
+    implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
+    implementation project(':capacitor-android')
+    implementation project(':capacitor-cordova-android-plugins')
 
     // The message watcher's rules on the JVM: ./gradlew testDebugUnitTest (src/test).
     // org.json is only a stub in the unit-test android.jar, so the real one comes in.
-    testImplementation "junit:junit:4.13.2"
+    testImplementation "junit:junit:$junitVersion"
     testImplementation "org.json:json:20250517"
     // On a device or emulator (src/androidTest).
-    androidTestImplementation "androidx.test.ext:junit:1.2.1"
-    androidTestImplementation "androidx.test:runner:1.6.2"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test:runner:$androidxTestRunnerVersion"
+    androidTestImplementation "androidx.work:work-testing:$androidxWorkVersion"
+}
+
+apply from: 'capacitor.build.gradle'
+
+// Firebase (push for the Android app) only in a build made with app/google-services.json.
+// Without it everything else works, but alerts reach the phone only while the app is open.
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }

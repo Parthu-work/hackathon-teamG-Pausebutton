@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { Icon } from "@/components/icons";
-import { HighlightedText, LoadingScreen, Marks, Screen, TitleRow, useCountdown, useToast, VerdictPill } from "@/components/ui";
+import { HighlightedText, LoadingScreen, Marks, Screen, TitleRow, holdTotalMs, useCountdown, useToast, VerdictPill } from "@/components/ui";
 import { DO_LIST, DONT_LIST, rupees } from "@/lib/check/copy";
 import { keyPhrases } from "@/lib/check/phrases";
 import type { HardRule, SignalType } from "@/lib/check/types";
@@ -12,7 +12,7 @@ import { ApiError, post } from "@/lib/client/api";
 import { loadMessage } from "@/lib/client/messages";
 import { HELPLINE } from "@/lib/phone";
 import type { HoldStatus } from "@/lib/views";
-import { useHelper, useJoinNames, useLang, useT } from "./shell";
+import { useHelper, useJoinNames, useLang, useRao, useT } from "./shell";
 import { useCheck, useRaoCall } from "./verdict";
 
 const FLOOR_KEY: Record<HardRule, "why.floorSecrecy" | "why.floorCredential" | "why.floorLink" | "why.floorCall"> = {
@@ -208,6 +208,7 @@ export function PayScreen() {
   const call = useRaoCall();
   const toast = useToast();
   const helper = useHelper();
+  const rao = useRao();
   const { data: c, error, refetch } = useCheck(id);
   const open = useMutation({ mutationFn: () => post<{ holdId: string; status: HoldStatus }>(`/api/me/checks/${id}/pay`) });
   const cancel = useMutation({
@@ -240,7 +241,7 @@ export function PayScreen() {
   }, [holdId, holdState, router]);
 
   const hold = c?.hold?.status === "pending" ? c.hold : null;
-  const clock = useCountdown(hold?.expiresAt, undefined, (hold?.holdMinutes ?? 10) * 60_000);
+  const clock = useCountdown(hold?.expiresAt, rao.data?.serverNow, holdTotalMs(hold));
 
   // F14a: the app cannot be reached and we have nothing to show. The money stays held either way.
   const unreachable = (error instanceof ApiError && error.status === 0) || (open.isError && open.error instanceof ApiError && open.error.status === 0);
@@ -303,7 +304,7 @@ export function PayScreen() {
       {hold?.twoKeys && (
         <div className="card" style={{ border: "2px solid var(--text)", gap: 4 }}>
           <b style={{ fontSize: 16 }}>{t("hold.twoKeys")}</b>
-          <p className="sm">{t("hold.twoKeysBody")}</p>
+          <p className="sm">{t("hold.twoKeysBody", { minutes: hold.holdMinutes })}</p>
         </div>
       )}
       <div className="spacer" />

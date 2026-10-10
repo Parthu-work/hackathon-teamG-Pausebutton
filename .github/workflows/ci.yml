@@ -63,22 +63,48 @@ jobs:
           pnpm eval --ai haiku
 
   android-apk:
-    name: Android APK (debug)
+    name: Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+    env:
+      # Where the web app is deployed (set a repository variable): the site the app opens.
+      PB_HOST: ${{ vars.PB_HOST || 'https://hackathon-teamg-pausebutton-production.up.railway.app' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version comes from "packageManager" in package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-      - uses: android-actions/setup-android@v3
+          java-version: 21
+      - uses: android-actions/setup-android@v3 # accepts the SDK licences, so Gradle can fetch what else it needs
         with:
-          packages: platform-tools platforms;android-37.2 build-tools;36.0.0
-      - name: Unit tests (the message watcher's rules) and the debug APK
-        # PB_HOST: where the web app is deployed (set a repository variable); the person can change it in the app.
-        run: cd android && chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest assembleDebug -PPB_HOST="${{ vars.PB_HOST || 'https://hackathon-teamg-pausebutton-production.up.railway.app' }}"
+          packages: platform-tools platforms;android-36 build-tools;35.0.0 build-tools;36.0.0
+      - name: Firebase for push (the GOOGLE_SERVICES_JSON secret, raw or base64)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::warning::No GOOGLE_SERVICES_JSON secret: this APK has no push, so alerts reach the phone only while the app is open. See docs/deploy.md."
+            exit 0
+          fi
+          out=android/app/google-services.json
+          case "$(printf '%s' "$GOOGLE_SERVICES_JSON" | tr -d ' \t\r\n' | head -c 1)" in
+            "{") printf '%s' "$GOOGLE_SERVICES_JSON" > "$out" ;;
+            *) printf '%s' "$GOOGLE_SERVICES_JSON" | base64 -d > "$out" ;;
+          esac
+          python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert any(c["client_info"]["android_client_info"]["package_name"] == "ai.apty.pausebutton" for c in d["client"])' "$out" \
+            || { echo "::error::GOOGLE_SERVICES_JSON is not a google-services.json with the Android app ai.apty.pausebutton."; exit 1; }
+      - name: The site the app opens (capacitor.config.ts → the Android project)
+        run: pnpm cap:sync
+      - name: Unit tests (the message watcher, sync and push rules), debug and release APKs
+        run: cd android && chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleRelease -PPB_HOST="$PB_HOST"
       - name: Signed with the shared debug key (android/debug.keystore)
+        # The debug APK is the one published at /pause-button.apk.
         run: bash scripts/check-apk-signer.sh android/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
@@ -94,24 +120,34 @@ jobs:
 
   android-device-tests:
     name: Android message watcher on an emulator
-    # Dedup and the offline queue across a restart, pairing, revocation: android/app/src/androidTest.
+    # Dedup and the offline queue across a restart, the Idempotency-Key, pairing, revocation,
+    # and the 30-minute sync through WorkManager: android/app/src/androidTest.
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       - uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools platforms;android-37.2 build-tools;36.0.0
+          packages: platform-tools platforms;android-36 build-tools;35.0.0 build-tools;36.0.0
+      - name: The Android project's generated parts (Capacitor)
+        run: pnpm cap:sync
       - name: Let the emulator use KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Instrumentation tests on an Android 14 emulator
+        # :app only: Capacitor's library modules have no device tests, and the Cordova shim's test classpath carries a duplicate kotlin-stdlib.
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -120,7 +156,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: android
-          script: chmod +x gradlew && ./gradlew --no-daemon connectedDebugAndroidTest
+          script: chmod +x gradlew && ./gradlew --no-daemon :app:connectedDebugAndroidTest
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

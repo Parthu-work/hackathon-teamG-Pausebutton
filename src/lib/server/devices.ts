@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, asc, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import type { DeviceView } from "@/lib/views";
@@ -10,7 +10,9 @@ import { deliverMessage, type SimInput } from "./sim";
 // The Android app's message watcher (screens M1–M4). The web app shows a
 // pairing code; the phone exchanges it for a token it keeps for good, then
 // posts every incoming SMS / WhatsApp notification to /api/device/inbox,
-// which runs the same check as a pasted message.
+// which runs the same check as a pasted message. Every 30 minutes its
+// SyncWorker posts what is still waiting and reports in (/api/device/status
+// with sync); the server's sync job flags a phone that stops reporting.
 
 type User = typeof schema.users.$inferSelect;
 type Device = typeof schema.devices.$inferSelect;
@@ -34,7 +36,17 @@ export function toDeviceView(d: Device): DeviceView {
     lastMessageAt: d.lastMessageAt?.toISOString() ?? null,
     listenerOn: d.listenerOn,
     messagesSeen: d.messagesSeen,
+    notSyncing: !!d.notSyncingSince,
+    lastSyncAt: d.lastSyncAt?.toISOString() ?? null,
+    waiting: d.waiting,
   };
+}
+
+/** How a person's watcher looks to their family: no phone paired, fine, or quiet (no report for over an hour). */
+export function watcherStatus(paired: Pick<Device, "pairedAt" | "notSyncingSince">[]): "none" | "ok" | "quiet" {
+  const phones = paired.filter((d) => d.pairedAt);
+  if (!phones.length) return "none";
+  return phones.every((d) => d.notSyncingSince) ? "quiet" : "ok";
 }
 
 /** M2 "Connect this phone": a code (and a link that opens the app) valid for 15 minutes. */
@@ -79,17 +91,28 @@ export async function deviceByToken(db: Db, authorization: string | null) {
   const device = await db.query.devices.findFirst({ where: and(eq(schema.devices.tokenHash, hash(token)), isNotNull(schema.devices.pairedAt)) });
   if (!device) throw new HttpError(401, "This phone is no longer connected. Connect it again.");
   const user = (await db.query.users.findFirst({ where: eq(schema.users.id, device.userId) }))!;
-  await db.update(schema.devices).set({ lastSeenAt: new Date() }).where(eq(schema.devices.id, device.id));
-  return { device, user };
+  // Heard from: if the sync job had marked it quiet, it is syncing again.
+  const [seen] = await db
+    .update(schema.devices)
+    .set({ lastSeenAt: new Date(), notSyncingSince: null })
+    .where(eq(schema.devices.id, device.id))
+    .returning();
+  return { device: seen ?? device, user };
 }
 
-/** A real message the phone saw. Same path as the simulated inbox. */
-export async function deviceInbox(db: Db, device: Device, user: User, msg: SimInput) {
-  const row = await deliverMessage(db, user, msg);
-  await db
-    .update(schema.devices)
-    .set({ lastMessageAt: new Date(), messagesSeen: device.messagesSeen + 1 })
-    .where(eq(schema.devices.id, device.id));
+/**
+ * A real message the phone saw. Same path as the simulated inbox.
+ * deviceMessageId is the phone's own id for it (its Idempotency-Key): a
+ * repeated post returns the first result and counts nothing twice.
+ */
+export async function deviceInbox(db: Db, device: Device, user: User, msg: SimInput, deviceMessageId?: string | null) {
+  const row = await deliverMessage(db, user, msg, { deviceMessageId });
+  if (!row.duplicate) {
+    await db
+      .update(schema.devices)
+      .set({ lastMessageAt: new Date(), messagesSeen: sql`${schema.devices.messagesSeen} + 1` })
+      .where(eq(schema.devices.id, device.id));
+  }
   return row;
 }
 
@@ -108,8 +131,44 @@ export async function disconnectDevice(db: Db, device: Device, owner: User) {
   await logEvent(db, owner.id, owner.name, "device_removed", `${owner.name}'s Android phone (${device.name}) disconnected itself`);
 }
 
-export async function setDeviceStatus(db: Db, device: Device, status: { listenerOn: boolean }) {
-  await db.update(schema.devices).set({ listenerOn: status.listenerOn }).where(eq(schema.devices.id, device.id));
+/**
+ * The phone's report: whether notification access is on, how many messages
+ * wait in its outbox, and (sync) that its 30-minute SyncWorker just ran.
+ */
+export async function setDeviceStatus(db: Db, device: Device, status: { listenerOn: boolean; waiting?: number; sync?: boolean }) {
+  const [row] = await db
+    .update(schema.devices)
+    .set({
+      listenerOn: status.listenerOn,
+      ...(status.waiting !== undefined ? { waiting: status.waiting } : {}),
+      ...(status.sync ? { lastSyncAt: new Date() } : {}),
+    })
+    .where(eq(schema.devices.id, device.id))
+    .returning();
+  return row ?? device;
+}
+
+/** A paired phone that has not reported for this long (two missed 30-minute syncs) is "not syncing". */
+export const QUIET_AFTER_MINUTES = 60;
+
+/**
+ * The sync job's check on the phones: each paired phone that went quiet is
+ * flagged once (notSyncingSince; deviceByToken clears it when the phone is
+ * heard from again), and its household's log says so.
+ */
+export async function markQuietDevices(db: Db, now = new Date()) {
+  const d = schema.devices;
+  const cutoff = new Date(now.getTime() - QUIET_AFTER_MINUTES * 60_000);
+  const quiet = await db
+    .update(d)
+    .set({ notSyncingSince: now })
+    .where(and(isNotNull(d.pairedAt), isNull(d.notSyncingSince), or(lt(d.lastSeenAt, cutoff), and(isNull(d.lastSeenAt), lt(d.pairedAt, cutoff)))))
+    .returning();
+  for (const device of quiet) {
+    const owner = await db.query.users.findFirst({ where: eq(schema.users.id, device.userId) });
+    if (owner) await logEvent(db, owner.id, "Sync job", "device_quiet", `${owner.name}'s Android phone stopped syncing`);
+  }
+  return quiet;
 }
 
 export async function listDevices(db: Db, owner: User): Promise<DeviceView[]> {
@@ -127,10 +186,9 @@ export async function removeDevice(db: Db, owner: User, id: string) {
 }
 
 /**
- * Digital Asset Links: tells Android that the app may open this site full
- * screen (no browser bar). Fingerprints come from the signing keys
- * (`ANDROID_CERT_SHA256`, comma-separated); without them the list is empty
- * and the app still works, just with Chrome's bar visible.
+ * Digital Asset Links for phones still on the 0.2 app (a Trusted Web Activity
+ * that opened the site in Chrome). The current app needs none. Fingerprints
+ * come from `ANDROID_CERT_SHA256` (comma-separated); without it the list is empty.
  */
 export function assetLinks() {
   const prints = (process.env.ANDROID_CERT_SHA256 ?? "")

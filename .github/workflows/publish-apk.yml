@@ -4,13 +4,14 @@ name: Publish APK to the website
 # public/pause-button.apk, so <site>/download serves it to anyone who scans the
 # QR code. Then waits for the site to redeploy and checks, from the outside,
 # that the health check, the download page, the QR and the APK all work.
-# Runs by itself when android/ changes on main, and from the Actions tab
-# (e.g. after changing the deployment address). Its own commit only touches
-# public/, so it never triggers itself.
+# Runs by itself when the app changes on main (android/, its Capacitor config
+# and placeholder page, or package.json with the Capacitor versions), and from
+# the Actions tab (e.g. after changing the deployment address). Its own commit
+# only touches public/, so it never triggers itself.
 on:
   push:
     branches: [main]
-    paths: ["android/**"]
+    paths: ["android/**", "capacitor.config.ts", "capacitor/**", "package.json"]
   workflow_dispatch:
     inputs:
       host:
@@ -51,22 +52,47 @@ jobs:
           done
 
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version comes from "packageManager" in package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-      - uses: android-actions/setup-android@v3
+          java-version: 21
+      - uses: android-actions/setup-android@v3 # accepts the SDK licences, so Gradle can fetch what else it needs
         with:
-          packages: platform-tools platforms;android-37.2 build-tools;36.0.0
+          packages: platform-tools platforms;android-36 build-tools;35.0.0 build-tools;36.0.0
+
+      - name: Firebase for push (the GOOGLE_SERVICES_JSON secret, raw or base64)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::warning::No GOOGLE_SERVICES_JSON secret: this APK has no push, so alerts reach the phone only while the app is open. See docs/deploy.md."
+            exit 0
+          fi
+          out=android/app/google-services.json
+          case "$(printf '%s' "$GOOGLE_SERVICES_JSON" | tr -d ' \t\r\n' | head -c 1)" in
+            "{") printf '%s' "$GOOGLE_SERVICES_JSON" > "$out" ;;
+            *) printf '%s' "$GOOGLE_SERVICES_JSON" | base64 -d > "$out" ;;
+          esac
+          python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert any(c["client_info"]["android_client_info"]["package_name"] == "ai.apty.pausebutton" for c in d["client"])' "$out" \
+            || { echo "::error::GOOGLE_SERVICES_JSON is not a google-services.json with the Android app ai.apty.pausebutton."; exit 1; }
 
       - name: Build the APK
-        run: cd android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug -PPB_HOST="${HOST%/}"
+        run: |
+          export PB_HOST="${HOST%/}"
+          pnpm cap:sync
+          cd android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug -PPB_HOST="$PB_HOST"
 
       - name: The APK opens this site
         run: |
           apk=android/app/build/outputs/apk/debug/app-debug.apk
           ls -l "$apk"
-          unzip -p "$apk" resources.arsc | strings | grep -F "${HOST%/}" || { echo "::error::The APK does not contain $HOST"; exit 1; }
+          unzip -p "$apk" assets/capacitor.config.json | grep -F "\"url\": \"${HOST%/}\"" || { echo "::error::The APK does not open $HOST"; exit 1; }
 
       - name: The APK is signed with the shared debug key
         # Same key every build, so a newer APK installs over an older one.
@@ -105,14 +131,3 @@ jobs:
           done
           echo "::error::$HOST still does not serve the new APK after 20 minutes. Check that Railway deploys main automatically, and its latest deployment's logs."
           exit 1
-
-      - name: Full screen (the site vouches for the app's key)
-        # A warning, not a failure: without it the app works, with Chrome's address bar.
-        run: |
-          HOST="${HOST%/}"
-          print=$(keytool -list -v -keystore android/debug.keystore -storepass android -alias androiddebugkey | sed -n 's/.*SHA256: //p' | tr -d ' ')
-          if curl -s -m 30 "$HOST/.well-known/assetlinks.json" | grep -qF "$print"; then
-            echo "$HOST/.well-known/assetlinks.json lists $print: the app opens full screen."
-          else
-            echo "::warning::$HOST/.well-known/assetlinks.json does not list $print. Set ANDROID_CERT_SHA256=$print on the host; until then the app shows Chrome's address bar."
-          fi
