@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { Fresh } from "@/components/fresh";
 import { getDb, schema } from "@/lib/db";
@@ -15,6 +16,7 @@ async function Role() {
     if (await sessionUserId("family")) redirect("/family");
     redirect("/welcome");
   }
+  await connection(); // the database read happens per request, never in a prefetched shell
   const db = await getDb();
   const user = await db.query.users.findFirst({ where: eq(schema.users.id, id) });
   return (
