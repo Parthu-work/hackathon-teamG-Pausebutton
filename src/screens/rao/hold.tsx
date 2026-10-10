@@ -150,7 +150,7 @@ export function HoldScreen() {
       {hold.twoKeys && (
         <div className="card" style={{ border: "2px solid #14202B", gap: 4 }} data-testid="two-keys">
           <div className="row"><Icon name="people" /><b style={{ fontSize: 17 }}>{t("hold.twoKeys")}</b></div>
-          <p className="sm" style={{ color: "var(--text)" }}>{t("hold.twoKeysBody")}</p>
+          <p className="sm" style={{ color: "var(--text)" }}>{t("hold.twoKeysBody", { minutes: hold.holdMinutes })}</p>
         </div>
       )}
       <div className="card">

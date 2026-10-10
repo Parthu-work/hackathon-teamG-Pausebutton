@@ -8,6 +8,7 @@ import {
   Avatar, BackButton, clockTime, FamilyTabs, HighlightedText, LoadingScreen, Marks, Screen, Sheet, StatusPill, TitleRow, Toggle,
   holdTotalMs, useCall, useCountdown, useLeaveIfGone, useToast, VerdictPill,
 } from "@/components/ui";
+import { HOLD_CHOICES } from "@/lib/check/config";
 import { ADVICE_PRESETS, rupees, whatToSay } from "@/lib/check/copy";
 import { playAlarm, unlockAudio } from "@/lib/client/alarm";
 import { closeNotifications, pushPermission, pushStatusText, subscribeToPush, unsubscribeFromPush, type PushStatus } from "@/lib/client/push";
@@ -665,12 +666,12 @@ export function FamilyHoldScreen() {
 
   return (
     <Screen overlay={confirm && <ApproveSheet hold={hold} callName={callName} onKeep={() => setConfirm(false)} onApprove={() => decide.mutate("approve")} others={others} />}>
-      <TitleRow title={`${callName}'s payment`} back="/family" right={<span className="pill medium ink">{clock.label}</span>} />
+      <TitleRow title={`${callName}'s payment`} back="/family" right={<span className="pill medium ink">{clock.label} left</span>} />
       <div className="row"><VerdictPill verdict={hold.verdict} size="medium" icon={false} /><span style={{ fontWeight: 800, fontSize: 18 }}>{amount} paused</span></div>
       {hold.twoKeys && (
         <div className="card" style={{ border: "2px solid var(--text)", gap: 6 }} data-testid="two-keys">
           <div className="row"><Icon name="people" /><b style={{ fontSize: 17 }}>This one needs two of you</b></div>
-          <p className="sm">Above Rs 50,000 we hold for an hour and ask two trusted people, the way a bank asks two signatures. One tired person should not carry this alone.</p>
+          <p className="sm">Above Rs 50,000 we hold for {hold.holdMinutes} minutes and ask two trusted people, the way a bank asks two signatures. One tired person should not carry this alone.</p>
         </div>
       )}
       {told}
@@ -1021,6 +1022,17 @@ export function FamilySettingsScreen() {
     await queryClient.invalidateQueries();
     if ((data?.people.length ?? 0) <= 1) router.push("/family/join");
   }
+  /** D2 · how long their paused payments wait for the family. A hold already running keeps its time. */
+  async function setHoldTime(p: ProtectedView, minutes: number) {
+    try {
+      await api("/api/family/settings", { method: "PATCH", body: { hold: { protectedId: p.id, minutes } } });
+    } catch (e) {
+      toast({ title: "Could not change the hold time", sub: (e as Error).message, icon: "warn", tone: "red" });
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: ["family-state"] });
+    toast({ title: `${p.callName}'s hold time is ${minutes} minutes`, sub: "From the next paused payment", icon: "clock" });
+  }
   async function leave() {
     await signOut("family");
     queryClient.clear();
@@ -1075,6 +1087,23 @@ export function FamilySettingsScreen() {
         </div>
       ))}
       <button className="btn line md-btn" onClick={() => router.push("/family/join")}><Icon name="plus" />Link another person</button>
+      {!!data?.people.length && (
+        <div className="card" style={{ gap: 14 }} data-testid="hold-time">
+          {data.people.map((p) => (
+            <div key={p.id} role="group" aria-label={`${p.callName}'s payment hold time`} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <b style={{ fontSize: 17 }}>{p.callName}&apos;s payment hold time</b>
+              <div className="row wrap" style={{ gap: 8 }}>
+                {HOLD_CHOICES.map((n) => (
+                  <button key={n} className={`chip ${p.holdMinutes === n ? "on" : ""}`} aria-pressed={p.holdMinutes === n} onClick={() => void setHoldTime(p, n)}>
+                    {n} min
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <p className="sm">How long a paused payment waits for the family to decide. A change applies to the next payment. Above Rs 50,000 everyone must still approve.</p>
+        </div>
+      )}
       <div className="card" style={{ gap: 14 }}>
         <div className="lbl">Alerts</div>
         <AlertToggles />

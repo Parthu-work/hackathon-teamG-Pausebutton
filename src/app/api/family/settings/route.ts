@@ -23,8 +23,12 @@ export const PATCH = route(async (req) => {
   const { hold, ...own } = body;
   if (hold) {
     await assertLinked(db, user, hold.protectedId);
-    const [owner] = await db.update(schema.users).set({ holdMinutes: hold.minutes }).where(eq(schema.users.id, hold.protectedId)).returning();
-    await logEvent(db, owner.id, user.name, "hold_minutes", `${user.name} set ${owner.name}'s payment hold time to ${hold.minutes} minutes`);
+    // Applies to their next paused payment; one already running keeps its time.
+    const owner = (await db.query.users.findFirst({ where: eq(schema.users.id, hold.protectedId) }))!;
+    if (owner.holdMinutes !== hold.minutes) {
+      await db.update(schema.users).set({ holdMinutes: hold.minutes }).where(eq(schema.users.id, owner.id));
+      await logEvent(db, owner.id, user.name, "hold_minutes", `${user.name} set ${owner.name}'s payment hold time to ${hold.minutes} minutes`);
+    }
   }
   if (Object.keys(own).length) await db.update(schema.users).set(own).where(eq(schema.users.id, user.id));
 });

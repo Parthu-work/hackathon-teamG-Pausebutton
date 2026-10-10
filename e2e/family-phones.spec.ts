@@ -396,7 +396,7 @@ test("a paused payment is released only when Arjun and Meera both approve", asyn
   await rao.getByRole("button", { name: "Check this message" }).click();
   await rao.getByRole("button", { name: "I will not do anything" }).click();
   await rao.getByRole("link", { name: /payment paused/ }).click();
-  // F13: two keys on Papa's screen too, with the hour-long ring.
+  // F13: two keys on Papa's screen too; the ring counts down his usual hold time (10 minutes by default).
   await expect(rao.getByTestId("two-keys")).toBeVisible();
 
   await openAlert(arjun, "Papa got a scam message");

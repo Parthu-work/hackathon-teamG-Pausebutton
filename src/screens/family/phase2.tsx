@@ -290,7 +290,7 @@ export function MonthScreen() {
           <div className="lbl" style={{ color: "var(--green-ink)" }}>The fastest you answered</div>
           <b className="display" style={{ fontSize: 28 }}>{duration(ledger.fastest.ms)}</b>
           <p className="sm" style={{ color: "var(--text)" }}>
-            On the {ledger.fastest.title.toLowerCase()}. The scam needed ten minutes of them being alone. They had {ledger.fastest.by === me ? "you" : ledger.fastest.by} in {duration(ledger.fastest.ms)}.
+            On the {ledger.fastest.title.toLowerCase()}. The scam needed them to be alone. They had {ledger.fastest.by === me ? "you" : ledger.fastest.by} in {duration(ledger.fastest.ms)}.
           </p>
         </div>
       )}

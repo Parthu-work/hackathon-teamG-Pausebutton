@@ -518,7 +518,6 @@ export const hi: Dict = {
     notInContacts: "आपके संपर्कों में नहीं",
     forwardHint: "संदेश को देर तक दबाइए, Share दबाइए, Pause Button चुनिए।",
     forwardedFrom: "{app} से फ़ॉरवर्ड",
-    pausedFor: "{amount} {n} मिनट के लिए रोके गए हैं। {time} पर अपने आप भेजा गया।",
   },
   speak: {
     title: "बताइए उन्होंने क्या कहा",
