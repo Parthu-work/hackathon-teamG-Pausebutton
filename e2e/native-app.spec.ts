@@ -138,6 +138,7 @@ test("in the Android app, Mr Rao's phone connects itself, and asks for each perm
   await page.getByRole("button", { name: "Connect this phone" }).click();
   await expect(page.getByTestId("this-phone")).toContainText("Connected as Lakshmi");
   await expect(page.getByTestId("phone-card")).toContainText("Test phone"); // the server knows it too
+  await expect(page.getByTestId("other-account")).toHaveCount(0); // its own account: no warning
   await expect(page.getByText("Message reading is off")).toBeVisible();
   expect((await native(page)).calls).toContain("pair");
 
@@ -278,4 +279,21 @@ test("in a browser, Connect this phone still gives a code and the app's link, an
   await expect(card.getByTestId("not-syncing")).toContainText("Open the Pause Button app on that phone.");
   await expect(card.getByTestId("phone-sync")).toContainText("Last sync at");
   await expect(card.getByTestId("phone-sync")).toContainText("3 messages waiting to be sent");
+});
+
+test("in the Android app, a phone still connected to someone else says so, and moves to Mr Rao's account in one tap", async ({ browser }) => {
+  const page = await appPhone(browser, { notifications: { permission: "granted", canAskAgain: true }, answer: "granted" });
+  await signUp(page, randomPhone(), "protected", "Lakshmi");
+  await page.goto("/watch/connect");
+  // The watcher was connected while another person was signed in on this phone.
+  await page.evaluate(() => Object.assign((window as unknown as { __pbNative: Record<string, unknown> }).__pbNative, { paired: true, userName: "Test account", token: "old-token" }));
+  await resume(page);
+  await expect(page.getByTestId("other-account")).toContainText("This phone sends its messages to Test account, not to you.");
+
+  await page.getByRole("button", { name: "Connect to my account" }).click();
+  await expect(page.getByTestId("this-phone")).toContainText("Connected as Lakshmi");
+  await expect(page.getByTestId("other-account")).toHaveCount(0);
+  await expect(page.getByTestId("phone-card")).toContainText("Test phone"); // Mr Rao's account lists it now
+  const calls = (await native(page)).calls;
+  expect(calls.indexOf("disconnect")).toBeLessThan(calls.lastIndexOf("pair"));
 });

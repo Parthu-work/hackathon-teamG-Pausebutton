@@ -129,7 +129,7 @@ function usePhones() {
   );
   const paired = (devices.data ?? []).filter((d) => d.paired);
   const cards = paired.map((d) => <PhoneCard key={d.id} d={d} onDisconnect={() => setRemoving(d)} />);
-  return { paired, cards, sheet };
+  return { paired, cards, sheet, loaded: devices.isSuccess };
 }
 
 /** One connected phone: on or off, notification access, what it checked, and whether it still syncs. */
@@ -268,7 +268,8 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
   const router = useRouter();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { cards, sheet } = usePhones();
+  const { cards, sheet, paired: accountPhones, loaded } = usePhones();
+  const { data: rao } = useRao();
   const watcher = useQuery({ queryKey: ["native-watcher"], queryFn: () => bridge.watcherStatus(), refetchInterval: 3000 });
   const [explain, setExplain] = useState<"reading" | "battery" | "disconnect" | null>(null);
   const [cameBack, setCameBack] = useState(false);
@@ -287,15 +288,28 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
   async function refresh() {
     await Promise.all([queryClient.invalidateQueries({ queryKey: ["native-watcher"] }), queryClient.invalidateQueries({ queryKey: ["devices"] })]);
   }
+  async function pairHere() {
+    const { code } = await post<Pairing>("/api/me/devices");
+    const result = await bridge.pair({ code, host: window.location.origin });
+    if (!result.ok) throw new Error(result.error || "The phone could not connect. Try again.");
+  }
   const connect = useMutation({
-    mutationFn: async () => {
-      const { code } = await post<Pairing>("/api/me/devices");
-      const result = await bridge.pair({ code, host: window.location.origin });
-      if (!result.ok) throw new Error(result.error || "The phone could not connect. Try again.");
-    },
+    mutationFn: pairHere,
     onSuccess: async () => {
       await refresh();
       toast({ title: "This phone is connected", sub: "Now allow message reading", icon: "check" });
+    },
+    onError: (e) => toast({ title: "Could not connect this phone", sub: e.message, icon: "warn", tone: "red" }),
+  });
+  // The phone keeps sending to whoever connected it, even after someone else signs in here: move it to this account.
+  const reconnect = useMutation({
+    mutationFn: async () => {
+      await bridge.disconnect();
+      await pairHere();
+    },
+    onSuccess: async () => {
+      await refresh();
+      toast({ title: "This phone is now connected to you", sub: "Its messages are checked for you", icon: "check" });
     },
     onError: (e) => toast({ title: "Could not connect this phone", sub: e.message, icon: "warn", tone: "red" }),
   });
@@ -331,6 +345,8 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
   }
   if (!w) return <LoadingScreen />;
   const reading = w.consented && w.listenerOn;
+  // Connected, but to another account: this account lists no connected phone, or the name differs.
+  const otherAccount = w.paired && loaded && !!rao && (accountPhones.length === 0 || (!!w.userName && w.userName !== rao.me.name));
   // Unknown in apps from before it was reported: say it, worded as an "if".
   const mayBeRestricted = w.mayBeRestricted ?? true;
 
@@ -381,6 +397,15 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
       {w.paired ? (
         <div className="card" style={{ gap: 12 }} data-testid="this-phone">
           <div className="lbl">This phone</div>
+          {otherAccount && (
+            <div className="card tint-red" style={{ gap: 8, boxShadow: "none" }} data-testid="other-account">
+              <b style={{ fontSize: 16 }}>This phone sends its messages to {w.userName || "another account"}, not to you.</b>
+              <p className="sm" style={{ color: "var(--text)" }}>It was connected before you signed in here. Connect it to your account so its messages are checked for you and your family is told.</p>
+              <button className="btn amber sm-btn" disabled={reconnect.isPending} onClick={() => reconnect.mutate()}>
+                {reconnect.isPending ? "Connecting…" : "Connect to my account"}
+              </button>
+            </div>
+          )}
           <div className="row">
             <span className="ok"><Icon name="check" /></span>
             <b className="grow" style={{ fontSize: 16 }}>Connected{w.userName ? ` as ${w.userName}` : ""}</b>
