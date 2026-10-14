@@ -38,6 +38,8 @@ final class Watcher {
     private static final String NOTICE_CHANNEL = "watcher";
     private static final int NOTICE_DISCONNECTED = 1;
     private static final String STATUS = "/api/device/status";
+    /** Also set by the listener itself, which stops before the watcher when the person has not agreed. */
+    static final String NOT_CONSENTED = "you have not agreed to what Pause Button reads yet";
 
     private static Watcher instance;
 
@@ -92,26 +94,37 @@ final class Watcher {
      */
     void onMessage(String pkg, String channel, String sender, String text) {
         io.execute(() -> {
-            if (!Prefs.consented(app)) return; // nothing is read before the person agreed
+            if (!Prefs.consented(app)) { // nothing is read before the person agreed
+                Prefs.setLastSkip(app, NOT_CONSENTED);
+                return;
+            }
             long now = System.currentTimeMillis();
             if (!seen.firstTime(pkg, sender, text, now)) {
                 Prefs.count(app, DayCounts.REPEAT, 1);
+                Prefs.setLastSkip(app, "the same message was already read in the last " + SeenStore.WINDOW_MS / 60_000 + " minutes");
                 return;
             }
             Prefs.count(app, DayCounts.SEEN, 1);
             if (Prefs.token(app) == null) {
                 Prefs.setLastError(app, "This phone is not connected yet");
+                Prefs.setLastSkip(app, "this phone is not connected yet");
                 return;
             }
             String skip = Prefs.watchRules(app).skipReason(channel, sender);
             if (skip != null) {
                 Prefs.count(app, skip, 1);
+                Prefs.setLastSkip(app, DayCounts.OFF.equals(skip)
+                        ? ("sms".equals(channel) ? "SMS" : "WhatsApp") + " is switched off in Watch my messages"
+                        : "the sender shows as a name (a saved contact) and only unknown senders are checked");
                 return;
             }
             if (!gate.allow(sender, now)) {
                 Prefs.count(app, DayCounts.BUSY, 1);
+                Prefs.setLastSkip(app, "too many at once (more than " + RateGate.PER_SENDER + " a minute from one sender, "
+                        + RateGate.PER_MINUTE + " a minute, or " + RateGate.PER_DAY + " a day)");
                 return;
             }
+            Prefs.setLastSkip(app, null);
             int dropped = outbox.add(channel, sender, WatchRules.isSavedContact(channel, sender), text, now);
             if (dropped > 0) Prefs.count(app, DayCounts.DROPPED, dropped);
             schedule(courier.retryNow(now));

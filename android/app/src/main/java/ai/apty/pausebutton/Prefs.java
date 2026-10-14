@@ -49,7 +49,7 @@ public final class Prefs {
     }
 
     public static void setPaired(Context c, String token, String userName) {
-        get(c).edit().putString("token", token).putString("userName", userName).putString("lastError", null).apply();
+        get(c).edit().putString("token", token).putString("userName", userName).putString("lastError", null).remove("lastSkip").remove("lastSkipAt").apply();
     }
 
     public static void clearPairing(Context c) {
@@ -80,6 +80,19 @@ public final class Prefs {
         get(c).edit().putString("lastError", error).apply();
     }
 
+    /** Which gate kept the last message read on the phone, in plain words (never its sender or text); null once one got through. */
+    public static String lastSkip(Context c) {
+        return get(c).getString("lastSkip", null);
+    }
+
+    public static long lastSkipAt(Context c) {
+        return get(c).getLong("lastSkipAt", 0);
+    }
+
+    public static void setLastSkip(Context c, String why) {
+        get(c).edit().putString("lastSkip", why).putLong("lastSkipAt", why == null ? 0 : System.currentTimeMillis()).apply();
+    }
+
     public static boolean listenerConnected(Context c) {
         return get(c).getBoolean("listenerConnected", false);
     }
@@ -100,7 +113,7 @@ public final class Prefs {
     }
 
     public static void setConsent(Context c, long at) {
-        get(c).edit().putLong("consentAt", at).apply();
+        get(c).edit().putLong("consentAt", at).remove("lastSkip").remove("lastSkipAt").apply();
     }
 
     // ---------------------------------------------------------------- what to watch

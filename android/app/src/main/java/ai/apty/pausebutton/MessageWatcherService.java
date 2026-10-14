@@ -67,7 +67,11 @@ public class MessageWatcherService extends NotificationListenerService {
     public void onNotificationPosted(StatusBarNotification sbn) {
         String pkg = sbn.getPackageName();
         String channel = channelFor(pkg);
-        if (channel == null || !Prefs.consented(this)) return; // other apps, or before the person agreed: not read
+        if (channel == null) return; // other apps: not read
+        if (!Prefs.consented(this)) { // before the person agreed: not read, only noted for the Connect screen
+            Prefs.setLastSkip(this, Watcher.NOT_CONSENTED);
+            return;
+        }
         Notification n = sbn.getNotification();
         if (n == null || n.extras == null) return;
         if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return; // "3 new messages", not a message

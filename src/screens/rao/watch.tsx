@@ -333,6 +333,11 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
   const reading = w.consented && w.listenerOn;
   // Unknown in apps from before it was reported: say it, worded as an "if".
   const mayBeRestricted = w.mayBeRestricted ?? true;
+  const lastSkip = w.lastSkip && (
+    <p className="sm" data-testid="last-skip">
+      Last message not sent{w.lastSkipAt ? ` (${clockTime(new Date(w.lastSkipAt).toISOString())})` : ""}: {w.lastSkip}.
+    </p>
+  );
 
   const overlay =
     (explain === "reading" && (
@@ -408,6 +413,7 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
             </p>
           )}
           {w.today && <p className="sm">{w.today}</p>}
+          {lastSkip}
           <button className="ghost" style={{ alignSelf: "flex-start" }} onClick={() => setExplain("disconnect")}>Disconnect this phone</button>
         </div>
       ) : (
@@ -417,6 +423,7 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
             <b style={{ fontSize: 17 }}>Android asks you first</b>
             <p className="sm">After connecting, allow message reading and running in the background. We say why before each one.</p>
           </div>
+          {lastSkip}
         </>
       )}
 

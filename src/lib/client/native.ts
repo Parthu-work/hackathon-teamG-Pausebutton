@@ -35,6 +35,12 @@ export type WatcherStatus = {
   lastError: string | null;
   /** When a message last reached the server (ms since 1970). */
   lastDeliveredAt: number | null;
+  /**
+   * Which gate kept the last message read on the phone, in plain words (never
+   * its sender or text); null once one got through. Missing in apps from before it was reported.
+   */
+  lastSkip?: string | null;
+  lastSkipAt?: number | null;
   /** What the watcher did today, in counts only. */
   today: string;
 };

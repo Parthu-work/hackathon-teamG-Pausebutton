@@ -84,6 +84,7 @@ public class PauseButtonNativePlugin extends Plugin {
     public void watcherStatus(PluginCall call) {
         int waiting = Watcher.get(getContext()).waiting();
         long lastDeliveredAt = Prefs.lastDeliveredAt(getContext());
+        long lastSkipAt = Prefs.lastSkipAt(getContext());
         JSObject r = new JSObject();
         r.put("paired", Prefs.token(getContext()) != null);
         r.put("userName", orNull(Prefs.userName(getContext())));
@@ -94,6 +95,8 @@ public class PauseButtonNativePlugin extends Plugin {
         r.put("waiting", waiting);
         r.put("lastError", orNull(Prefs.lastError(getContext())));
         r.put("lastDeliveredAt", lastDeliveredAt > 0 ? (Object) lastDeliveredAt : JSONObject.NULL);
+        r.put("lastSkip", orNull(Prefs.lastSkip(getContext())));
+        r.put("lastSkipAt", lastSkipAt > 0 ? (Object) lastSkipAt : JSONObject.NULL);
         r.put("today", Prefs.today(getContext()).describe(waiting));
         call.resolve(r);
     }
