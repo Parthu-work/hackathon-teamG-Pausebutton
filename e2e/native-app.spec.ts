@@ -27,6 +27,8 @@ function fakeAndroidApp(fake: Fake) {
     waiting: 0,
     lastError: null,
     lastDeliveredAt: null,
+    lastSkip: null as string | null,
+    lastSkipAt: null as number | null,
     today: "",
     notifications: fake.notifications,
     calls: [] as string[],
@@ -67,9 +69,9 @@ function fakeAndroidApp(fake: Fake) {
           return { ok: true, userName: body.userName };
         }
         case "watcherStatus": {
-          const { paired, userName, consented, listenerOn, batteryUnrestricted, waiting, lastError, lastDeliveredAt, today } = state;
+          const { paired, userName, consented, listenerOn, batteryUnrestricted, waiting, lastError, lastDeliveredAt, lastSkip, lastSkipAt, today } = state;
           // Android 13+, installed from the downloaded APK: notification access may be locked.
-          return { paired, userName, consented, listenerOn, batteryUnrestricted, mayBeRestricted: true, waiting, lastError, lastDeliveredAt, today };
+          return { paired, userName, consented, listenerOn, batteryUnrestricted, mayBeRestricted: true, waiting, lastError, lastDeliveredAt, lastSkip, lastSkipAt, today };
         }
         case "openListenerSettings":
           state.consented = true; // agreed on the consent screen, then left Android's list without switching it on
@@ -154,6 +156,15 @@ test("in the Android app, Mr Rao's phone connects itself, and asks for each perm
   await expect(page.getByTestId("cannot-read")).toContainText("Allow restricted settings");
   await page.getByTestId("open-app-info").click();
   expect((await native(page)).calls).toContain("openAppInfo");
+
+  // A message the watcher read but kept on the phone: the screen says which gate stopped it.
+  await page.evaluate(() => {
+    const s = (window as unknown as { __pbNative: Record<string, unknown> }).__pbNative;
+    s.lastSkip = "Not sent: from a saved contact, and only unknown senders are checked";
+    s.lastSkipAt = Date.now();
+  });
+  await resume(page);
+  await expect(page.getByTestId("last-skip")).toContainText("from a saved contact, and only unknown senders are checked");
 
   // Running in the background: "Not now" asks Android nothing; Continue opens its prompt.
   await page.getByRole("button", { name: "Allow running in the background" }).click();

@@ -49,7 +49,9 @@ public final class Prefs {
     }
 
     public static void setPaired(Context c, String token, String userName) {
-        get(c).edit().putString("token", token).putString("userName", userName).putString("lastError", null).apply();
+        // A new connection starts clean: no "not connected" note or delivery time left from before.
+        get(c).edit().putString("token", token).putString("userName", userName).putString("lastError", null)
+                .remove("lastSkip").remove("lastSkipAt").remove("lastDeliveredAt").apply();
     }
 
     public static void clearPairing(Context c) {
@@ -78,6 +80,19 @@ public final class Prefs {
 
     public static void setLastError(Context c, String error) {
         get(c).edit().putString("lastError", error).apply();
+    }
+
+    /** Why the last message notification did not leave the phone (DayCounts.whyNotSent), and when. */
+    public static String lastSkip(Context c) {
+        return get(c).getString("lastSkip", null);
+    }
+
+    public static long lastSkipAt(Context c) {
+        return get(c).getLong("lastSkipAt", 0);
+    }
+
+    public static void setLastSkip(Context c, String why) {
+        get(c).edit().putString("lastSkip", why).putLong("lastSkipAt", System.currentTimeMillis()).apply();
     }
 
     public static boolean listenerConnected(Context c) {

@@ -67,15 +67,20 @@ public class MessageWatcherService extends NotificationListenerService {
     public void onNotificationPosted(StatusBarNotification sbn) {
         String pkg = sbn.getPackageName();
         String channel = channelFor(pkg);
-        if (channel == null || !Prefs.consented(this)) return; // other apps, or before the person agreed: not read
+        if (channel == null) return; // other apps: not read
         Notification n = sbn.getNotification();
         if (n == null || n.extras == null) return;
         if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return; // "3 new messages", not a message
 
         Bundle ex = n.extras;
+        // Shaped like a message (its category, or chat-style): only these may say why they stayed on the phone.
+        boolean messageLike = Notification.CATEGORY_MESSAGE.equals(n.category) || ex.getParcelableArray(Notification.EXTRA_MESSAGES) != null;
         // An app read only for its messages (the default SMS app, Truecaller): not its calls or other notices.
-        if (!WHATSAPP.contains(pkg) && !SMS.contains(pkg) && !"com.android.shell".equals(pkg)
-                && !Notification.CATEGORY_MESSAGE.equals(n.category) && ex.getParcelableArray(Notification.EXTRA_MESSAGES) == null) return;
+        if (!WHATSAPP.contains(pkg) && !SMS.contains(pkg) && !"com.android.shell".equals(pkg) && !messageLike) return;
+        if (!Prefs.consented(this)) { // before the person agreed: not read, and the Connect screen says so
+            if (messageLike) Watcher.get(this).onSkipped(DayCounts.NO_CONSENT, channel);
+            return;
+        }
         String sender = str(ex.getCharSequence(Notification.EXTRA_TITLE));
         String text = str(ex.getCharSequence(Notification.EXTRA_BIG_TEXT));
         if (text.isEmpty()) text = str(ex.getCharSequence(Notification.EXTRA_TEXT));
@@ -89,7 +94,11 @@ public class MessageWatcherService extends NotificationListenerService {
             if (!t.isEmpty()) text = t;
             if (sender.isEmpty() && !s.isEmpty()) sender = s;
         }
-        if (sender.isEmpty() || text.isEmpty() || looksLikeSummary(text)) return;
+        if (sender.isEmpty() || text.isEmpty()) { // e.g. a message whose content the phone hid: say so
+            if (messageLike) Watcher.get(this).onSkipped(DayCounts.NO_TEXT, channel);
+            return;
+        }
+        if (looksLikeSummary(text)) return;
         Watcher.get(this).onMessage(pkg, channel, sender, text);
     }
 

@@ -92,30 +92,46 @@ final class Watcher {
      */
     void onMessage(String pkg, String channel, String sender, String text) {
         io.execute(() -> {
-            if (!Prefs.consented(app)) return; // nothing is read before the person agreed
+            if (!Prefs.consented(app)) { // nothing is read before the person agreed
+                skipped(DayCounts.NO_CONSENT, channel);
+                return;
+            }
             long now = System.currentTimeMillis();
             if (!seen.firstTime(pkg, sender, text, now)) {
                 Prefs.count(app, DayCounts.REPEAT, 1);
+                skipped(DayCounts.REPEAT, channel);
                 return;
             }
             Prefs.count(app, DayCounts.SEEN, 1);
             if (Prefs.token(app) == null) {
                 Prefs.setLastError(app, "This phone is not connected yet");
+                skipped(DayCounts.UNPAIRED, channel);
                 return;
             }
             String skip = Prefs.watchRules(app).skipReason(channel, sender);
             if (skip != null) {
                 Prefs.count(app, skip, 1);
+                skipped(skip, channel);
                 return;
             }
             if (!gate.allow(sender, now)) {
                 Prefs.count(app, DayCounts.BUSY, 1);
+                skipped(DayCounts.BUSY, channel);
                 return;
             }
             int dropped = outbox.add(channel, sender, WatchRules.isSavedContact(channel, sender), text, now);
             if (dropped > 0) Prefs.count(app, DayCounts.DROPPED, dropped);
             schedule(courier.retryNow(now));
         });
+    }
+
+    /**
+     * A message notification the listener could not hand over (before the
+     * person agreed, or with no sender or text). Recorded on the watcher's
+     * thread, so the Connect screen's "last skipped" keeps the order messages came in.
+     */
+    void onSkipped(String reason, String channel) {
+        io.execute(() -> skipped(reason, channel));
     }
 
     /**
@@ -235,6 +251,11 @@ final class Watcher {
     }
 
     // ---------------------------------------------------------------- on the io thread
+
+    /** A message that stays on the phone: the Connect screen says why (never who sent it or what it said). */
+    private void skipped(String reason, String channel) {
+        Prefs.setLastSkip(app, DayCounts.whyNotSent(reason, channel));
+    }
 
     private void schedule(long at) {
         if (nextFlush != null) nextFlush.cancel(false);

@@ -408,6 +408,13 @@ function ConnectInApp({ bridge }: { bridge: PauseButtonNativePlugin }) {
             </p>
           )}
           {w.today && <p className="sm">{w.today}</p>}
+          {w.lastDeliveredAt && <p className="sm">Last message sent to be checked: {when(new Date(w.lastDeliveredAt).toISOString())}</p>}
+          {w.lastSkip && w.lastSkipAt && (!w.lastDeliveredAt || w.lastSkipAt > w.lastDeliveredAt) && (
+            <p className="sm" data-testid="last-skip">Last skipped ({when(new Date(w.lastSkipAt).toISOString())}): {w.lastSkip}</p>
+          )}
+          {reading && !w.lastDeliveredAt && !w.lastSkip && w.waiting === 0 && (
+            <p className="sm" data-testid="nothing-read">Nothing has reached the watcher yet. Send this phone an SMS from a number that is not in your contacts.</p>
+          )}
           <button className="ghost" style={{ alignSelf: "flex-start" }} onClick={() => setExplain("disconnect")}>Disconnect this phone</button>
         </div>
       ) : (

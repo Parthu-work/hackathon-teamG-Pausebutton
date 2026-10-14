@@ -94,6 +94,9 @@ public class PauseButtonNativePlugin extends Plugin {
         r.put("waiting", waiting);
         r.put("lastError", orNull(Prefs.lastError(getContext())));
         r.put("lastDeliveredAt", lastDeliveredAt > 0 ? (Object) lastDeliveredAt : JSONObject.NULL);
+        long lastSkipAt = Prefs.lastSkipAt(getContext());
+        r.put("lastSkip", orNull(Prefs.lastSkip(getContext())));
+        r.put("lastSkipAt", lastSkipAt > 0 ? (Object) lastSkipAt : JSONObject.NULL);
         r.put("today", Prefs.today(getContext()).describe(waiting));
         call.resolve(r);
     }
