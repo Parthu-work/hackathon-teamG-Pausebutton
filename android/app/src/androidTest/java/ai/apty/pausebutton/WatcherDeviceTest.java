@@ -129,6 +129,7 @@ public class WatcherDeviceTest {
         message("+91 90000 00002", "Pay Rs 5000 now");
         assertEquals(Arrays.asList("Pay Rs 5000 now"), sentTexts());
         assertEquals(1, Prefs.today(ctx).get(DayCounts.REPEAT));
+        assertEquals(DayCounts.whyNotSent(DayCounts.REPEAT, "whatsapp"), Prefs.lastSkip(ctx));
         String seen = new String(Files.readAllBytes(new File(ctx.getNoBackupFilesDir(), "seen.json").toPath()), StandardCharsets.UTF_8);
         assertFalse(seen.contains("Pay Rs"));
         assertFalse(seen.contains("+91"));
@@ -230,6 +231,16 @@ public class WatcherDeviceTest {
         message("+91 90000 00041", "Sir this is CBI Mumbai");
         assertEquals(0, server.requests(INBOX).size());
         assertEquals(0, Prefs.today(ctx).get(DayCounts.SEEN));
+        assertEquals(DayCounts.whyNotSent(DayCounts.NO_CONSENT, "whatsapp"), Prefs.lastSkip(ctx));
+    }
+
+    @Test
+    public void aPhoneThatIsNotConnectedSaysSo() throws Exception {
+        Prefs.clearPairing(ctx);
+        message("+91 90000 00042", "Your KYC is blocked");
+        assertEquals(0, server.requests(INBOX).size());
+        assertEquals(DayCounts.whyNotSent(DayCounts.UNPAIRED, "whatsapp"), Prefs.lastSkip(ctx));
+        assertTrue(Prefs.lastSkipAt(ctx) > 0);
     }
 
     @Test
@@ -237,6 +248,8 @@ public class WatcherDeviceTest {
         message("Arjun", "Dinner at 8?");
         assertEquals(0, server.requests(INBOX).size());
         assertEquals(1, Prefs.today(ctx).get(DayCounts.CONTACT));
+        assertEquals(DayCounts.whyNotSent(DayCounts.CONTACT, "whatsapp"), Prefs.lastSkip(ctx));
+        assertFalse(Prefs.lastSkip(ctx).contains("Arjun")); // never who sent it
         // The server's answer can switch it off; then contacts are checked too.
         Prefs.saveWatchRules(ctx, "{\"settings\":{\"watchSms\":true,\"watchWhatsapp\":true,\"unknownOnly\":false}}");
         message("Arjun", "Send me the OTP");

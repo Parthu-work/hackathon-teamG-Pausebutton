@@ -27,4 +27,16 @@ public class DayCountsTest {
     public void aDamagedSaveStartsFromZero() {
         assertEquals(0, DayCounts.load("{oops", "2026-10-10").get(DayCounts.SEEN));
     }
+
+    @Test
+    public void eachGateSaysWhyAMessageStayedOnThePhone() {
+        assertEquals("Not read: message reading was not agreed to on this phone yet", DayCounts.whyNotSent(DayCounts.NO_CONSENT, "sms"));
+        assertEquals("Not sent: this phone is not connected yet", DayCounts.whyNotSent(DayCounts.UNPAIRED, "sms"));
+        assertEquals("Seen again, not sent twice: the same message was already handled", DayCounts.whyNotSent(DayCounts.REPEAT, "whatsapp"));
+        assertEquals("Not sent: from a saved contact, and only unknown senders are checked", DayCounts.whyNotSent(DayCounts.CONTACT, "sms"));
+        assertEquals("Not sent: SMS is switched off in Watch my messages", DayCounts.whyNotSent(DayCounts.OFF, "sms"));
+        assertEquals("Not sent: WhatsApp is switched off in Watch my messages", DayCounts.whyNotSent(DayCounts.OFF, "whatsapp"));
+        assertEquals("Not sent: too many messages at once from one chat", DayCounts.whyNotSent(DayCounts.BUSY, "whatsapp"));
+        assertEquals("Not read: the SMS notification showed no sender or text", DayCounts.whyNotSent(DayCounts.NO_TEXT, "sms"));
+    }
 }

@@ -28,6 +28,32 @@ public final class DayCounts {
     /** Could not be sent within a day, or the server refused it: dropped. */
     public static final String DROPPED = "dropped";
 
+    // Why a message stayed on the phone, for the Connect screen (Prefs.lastSkip); not counted.
+    /** The person has not agreed on the consent screen: nothing is read. */
+    public static final String NO_CONSENT = "noconsent";
+    /** No device token: the phone was never connected, or was disconnected. */
+    public static final String UNPAIRED = "unpaired";
+    /** The notification had no sender or no text to read. */
+    public static final String NO_TEXT = "notext";
+
+    /**
+     * The Connect screen's line for the last message that did not leave the
+     * phone, and why, in plain words. Never the sender or the text.
+     */
+    public static String whyNotSent(String reason, String channel) {
+        String app = "whatsapp".equals(channel) ? "WhatsApp" : "SMS";
+        switch (reason) {
+            case NO_CONSENT: return "Not read: message reading was not agreed to on this phone yet";
+            case UNPAIRED: return "Not sent: this phone is not connected yet";
+            case REPEAT: return "Seen again, not sent twice: the same message was already handled";
+            case CONTACT: return "Not sent: from a saved contact, and only unknown senders are checked";
+            case OFF: return "Not sent: " + app + " is switched off in Watch my messages";
+            case BUSY: return "Not sent: too many messages at once from one chat";
+            case NO_TEXT: return "Not read: the " + app + " notification showed no sender or text";
+            default: return "Not sent: " + reason;
+        }
+    }
+
     private final String day;
     private final Map<String, Integer> counts;
 

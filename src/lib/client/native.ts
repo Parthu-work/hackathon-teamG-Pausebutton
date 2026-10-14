@@ -35,6 +35,9 @@ export type WatcherStatus = {
   lastError: string | null;
   /** When a message last reached the server (ms since 1970). */
   lastDeliveredAt: number | null;
+  /** Why the last message notification stayed on the phone, in plain words (never sender or text), and when. Missing in older apps. */
+  lastSkip?: string | null;
+  lastSkipAt?: number | null;
   /** What the watcher did today, in counts only. */
   today: string;
 };
