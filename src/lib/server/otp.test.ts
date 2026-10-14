@@ -26,6 +26,8 @@ import { POST as codePost } from "@/app/api/auth/code/route";
 import { GET as offerGet } from "@/app/api/auth/demo/route";
 import { POST as rolePost } from "@/app/api/auth/role/route";
 import { POST as signInPost } from "@/app/api/auth/sign-in/route";
+import { PATCH as familySettingsPatch } from "@/app/api/family/settings/route";
+import { PATCH as raoSettingsPatch } from "@/app/api/me/settings/route";
 import { issueCode, OTP_EXPIRED, OTP_FORMAT, OTP_LOCKED, OTP_NONE, OTP_WRONG, sweepOtpCodes, verifyCode } from "./otp";
 import { TOO_MANY } from "./ratelimit";
 import { sessionToken } from "./session";
@@ -305,5 +307,38 @@ describe("A2 · the name at sign-up (POST /api/auth/role)", () => {
   it("needs a pending sign-in", async () => {
     const res = await role({ role: "family", name: "Arjun" });
     expect(res.status).toBe(401);
+  });
+});
+
+describe("an account from before the name was asked for (still \"Guest\")", () => {
+  /** An old account: it has a role, so sign-in goes straight home and never asks for the name. */
+  async function oldAccount(role: "protected" | "family") {
+    process.env.DEMO_SIGNIN = "on";
+    const phone = newNumber();
+    const { demoCode } = await (await askCode(phone)).json();
+    await signIn(phone, demoCode);
+    const user = (await db.query.users.findFirst({ where: eq(schema.users.phone, phone) }))!;
+    await db.update(schema.users).set({ role, name: "Guest" }).where(eq(schema.users.id, user.id));
+    scope.cookies.clear();
+    const again = await askCode(phone, "10.9.0.7");
+    const res = await signIn(phone, (await again.json()).demoCode, "10.9.0.7");
+    expect(await res.json()).toEqual({ redirect: role === "protected" ? "/" : "/family" });
+    return user;
+  }
+  const patch = (handler: typeof raoSettingsPatch, path: string, body: unknown) =>
+    handler(new Request(`http://localhost${path}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), ctx);
+
+  it("Mr Rao's home can save his real name, and never \"Guest\" again", async () => {
+    const user = await oldAccount("protected");
+    expect((await patch(raoSettingsPatch, "/api/me/settings", { name: "guest" })).status).toBe(400);
+    expect((await patch(raoSettingsPatch, "/api/me/settings", { name: "  Varun " })).status).toBe(200);
+    expect((await db.query.users.findFirst({ where: eq(schema.users.id, user.id) }))!.name).toBe("Varun");
+  });
+
+  it("a family member's home can save theirs too", async () => {
+    const user = await oldAccount("family");
+    expect((await patch(familySettingsPatch, "/api/family/settings", { name: "" })).status).toBe(400);
+    expect((await patch(familySettingsPatch, "/api/family/settings", { name: "Madhav" })).status).toBe(200);
+    expect((await db.query.users.findFirst({ where: eq(schema.users.id, user.id) }))!.name).toBe("Madhav");
   });
 });

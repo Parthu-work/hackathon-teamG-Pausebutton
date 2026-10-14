@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/icons";
+import { NamePrompt } from "@/components/name-prompt";
 import { NativeNotificationsBanner } from "@/components/native-notifications";
 import { RaoTabs, Screen, useCall, useClientValue, useToast } from "@/components/ui";
 import examples from "@/data/examples.json";
@@ -162,6 +163,7 @@ export function HomeScreen() {
       {!ready && (
         <>
           <h1 className="h1" style={{ marginTop: 6 }}>{t(greetingKey(hour ?? 12, !!name), { name: name ?? "" })}</h1>
+          <NamePrompt name={data?.me.name} endpoint="/api/me/settings" queryKey={["rao-state"]} />
           <p className="p">{t("home.startHere")}</p>
         </>
       )}
