@@ -3,7 +3,7 @@ import { z } from "zod";
 import { schema } from "@/lib/db";
 import { readBody, route } from "@/lib/server/http";
 import { logEvent } from "@/lib/server/events";
-import { holdMinutesField } from "@/lib/server/schemas";
+import { holdMinutesField, nameField } from "@/lib/server/schemas";
 import { requireUser } from "@/lib/server/session";
 
 export const PATCH = route(async (req) => {
@@ -19,6 +19,8 @@ export const PATCH = route(async (req) => {
       autoTellFamily: z.boolean().optional(),
       alertNotify: z.boolean().optional(),
       holdMinutes: holdMinutesField.optional(),
+      /** An account from before sign-up asked for a name is still "Guest": the home screen asks once. */
+      name: nameField.optional(),
     }),
   );
   await db.update(schema.users).set(body).where(eq(schema.users.id, user.id));

@@ -4,7 +4,7 @@ import { schema } from "@/lib/db";
 import { readBody, route } from "@/lib/server/http";
 import { logEvent } from "@/lib/server/events";
 import { assertLinked } from "@/lib/server/holds";
-import { holdMinutesField } from "@/lib/server/schemas";
+import { holdMinutesField, nameField } from "@/lib/server/schemas";
 import { requireUser } from "@/lib/server/session";
 
 export const PATCH = route(async (req) => {
@@ -16,6 +16,8 @@ export const PATCH = route(async (req) => {
       alertSound: z.boolean().optional(),
       alertVibrate: z.boolean().optional(),
       alertsReady: z.boolean().optional(),
+      /** An account from before sign-up asked for a name is still "Guest": the home screen asks once. */
+      name: nameField.optional(),
       /** Payment hold time for one person this member protects. */
       hold: z.object({ protectedId: z.string(), minutes: holdMinutesField }).optional(),
     }),
